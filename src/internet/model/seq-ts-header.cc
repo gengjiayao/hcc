@@ -59,6 +59,14 @@ SeqTsHeader::GetPG (void) const
 	return m_pg;
 }
 
+void SeqTsHeader::SetIsRequest(uint16_t is_request) {
+  m_is_request = is_request;
+}
+
+uint16_t SeqTsHeader::GetIsRequest(void) const {
+  return m_is_request;
+}
+
 Time
 SeqTsHeader::GetTs (void) const
 {
@@ -93,7 +101,14 @@ SeqTsHeader::GetSerializedSize (void) const
 	return GetHeaderSize();
 }
 uint32_t SeqTsHeader::GetHeaderSize(void){
-	return 6 + IntHeader::GetStaticSize();
+  // homa
+  if (IntHeader::mode == 2) {
+    return 6 + IntHeader::GetStaticSize() + sizeof(m_is_request);
+  }
+  // other
+  else {
+    return 6 + IntHeader::GetStaticSize();
+  }
 }
 
 void
@@ -102,6 +117,10 @@ SeqTsHeader::Serialize (Buffer::Iterator start) const
   Buffer::Iterator i = start;
   i.WriteHtonU32 (m_seq);
   i.WriteHtonU16 (m_pg);
+
+  if (IntHeader::mode == 2) {
+    i.WriteHtonU16 (m_is_request);
+  }
 
   // write IntHeader
   ih.Serialize(i);
@@ -112,6 +131,10 @@ SeqTsHeader::Deserialize (Buffer::Iterator start)
   Buffer::Iterator i = start;
   m_seq = i.ReadNtohU32 ();
   m_pg =  i.ReadNtohU16 ();
+
+  if (IntHeader::mode == 2) {
+    m_is_request = i.ReadNtohU16();
+  }
 
   // read IntHeader
   ih.Deserialize(i);

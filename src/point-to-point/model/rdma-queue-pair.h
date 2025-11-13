@@ -100,6 +100,14 @@ class RdmaQueuePair : public Object {
         } hopState[IntHeader::maxHop];
     } hp;
     struct {
+        bool is_request_package; // for homa's first packet
+        DataRate m_curRate;
+        uint64_t m_bdp;
+        uint64_t m_request_bytes;
+        uint64_t m_unscheduled_bytes;
+        uint64_t m_credit_package;  // runtime credit packages
+    } homa;
+    struct {
         uint32_t m_lastUpdateSeq;
         DataRate m_curRate;
         uint32_t m_incStage;

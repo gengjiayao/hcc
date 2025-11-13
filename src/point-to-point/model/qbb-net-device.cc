@@ -117,11 +117,14 @@ int RdmaEgressQueue::GetNextQindex(bool paused[]) {
             (!qp->IsWinBound() && (!qp->irn.m_enabled || qp->CanIrnTransmit(m_mtu)));
         bool cond2 = (qp->GetBytesLeft() > 0 && cond_window_allowed);
 
+        // Don't have rest bytes to send but not marked finished yet, waiting for ack.
         if (!cond2 && !m_qpGrp->IsQpFinished((qIndex + m_rrlast) % fcount)) {
             if (qp->IsFinishedConst()) {
                 m_qpGrp->SetQpFinished((qIndex + m_rrlast) % fcount);
             }
         }
+
+        // paused by PFC but has rest bytes to send
         if (!cond1 && cond2) {
             if (m_qpGrp->Get((qIndex + m_rrlast) % fcount)->m_nextAvail.GetTimeStep() >
                 Simulator::Now().GetTimeStep()) {
@@ -132,10 +135,17 @@ int RdmaEgressQueue::GetNextQindex(bool paused[]) {
                 if (!MAP_KEY_EXISTS(current_pause_time, flowid))
                     current_pause_time[flowid] = Simulator::Now();
             }
-        } else if (cond1 && cond2) {
-            if (m_qpGrp->Get((qIndex + m_rrlast) % fcount)->m_nextAvail.GetTimeStep() >
-                Simulator::Now().GetTimeStep())  // not available now
+        }
+
+        // don't paused by PFC and has rest bytes to send
+        else if (cond1 && cond2) {
+            bool time_cond = m_qpGrp->Get((qIndex + m_rrlast) % fcount)->m_nextAvail.GetTimeStep() <= Simulator::Now().GetTimeStep();
+
+            if (!time_cond || (IntHeader::mode == 2 && qp->homa.m_credit_package == 0)) {
+                // 1. Homa: time not arrived or no credit
+                // 2. other modes: time not arrived
                 continue;
+            }
             // Check if the flow has been blocked by PFC
             {
                 int32_t flowid = m_qpGrp->Get((qIndex + m_rrlast) % fcount)->m_flow_id;

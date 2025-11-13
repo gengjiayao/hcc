@@ -8,6 +8,8 @@
 
 #include <unordered_map>
 #include <unordered_set>
+#include <memory>
+#include <queue>
 
 #include "qbb-net-device.h"
 #include "rdma-queue-pair.h"
@@ -80,6 +82,7 @@ class RdmaHw : public Object {
     int ReceiveUdp(Ptr<Packet> p, CustomHeader &ch);
     int ReceiveCnp(Ptr<Packet> p, CustomHeader &ch);
     int ReceiveAck(Ptr<Packet> p, CustomHeader &ch);  // handle both ACK and NACK
+    int ReceiveHomaCredit(Ptr<Packet> p, CustomHeader &ch); // handle HOMA Credit
     int Receive(Ptr<Packet> p,
                 CustomHeader &
                     ch);  // callback function that the QbbNetDevice should use when receive
@@ -150,6 +153,170 @@ class RdmaHw : public Object {
     // For an HCA requester using Reliable Connection service, to detect missing responses,
     // every Send queue is required to implement a Transport Timer to time outstanding requests.
     Time m_waitAckTimeout;
+
+    /***********************
+     * Homa CC
+     ***********************/
+    enum HomaFlowState {
+        HOMA_FLOW_IDLE = 0,
+        HOMA_FLOW_ACTIVE = 1,
+        HOMA_FLOW_WAITING = 2
+    };
+
+    struct HomaFlow {
+        HomaFlowState state;
+        uint16_t pg;
+        uint64_t bdp;
+        uint64_t token_bucket;
+        uint64_t requset_bytes;
+        Ptr<RdmaRxQueuePair> rx_qp;
+
+        // for priority queue
+        bool operator < (const HomaFlow &other) const {
+            if (pg != other.pg) {
+                return pg < other.pg; // upper pg has higher priority
+            } else {
+                return requset_bytes > other.requset_bytes; // smaller request bytes has higher priority
+            }
+        }
+    };
+
+    class HomaPriorityQueue {
+    private:
+        std::vector<HomaFlow*> heap;
+        std::unordered_map<RdmaRxQueuePair*, int> map;
+
+        inline RdmaRxQueuePair* _getKey(HomaFlow* flow) const {
+            return PeekPointer(flow->rx_qp);
+        }
+
+        void _swap(int i, int j) {
+            std::swap(heap[i], heap[j]);
+            map[_getKey(heap[i])] = i;
+            map[_getKey(heap[j])] = j;
+        }
+
+        void _shift_up(int i) {
+            int parent = (i - 1) / 2;
+            while (i > 0 && *heap[parent] < *heap[i]) {
+                _swap(i, parent);
+                i = parent;
+                parent = (i - 1) / 2;
+            }
+        }
+
+        void _shift_down(int i) {
+            int left = 2 * i + 1;
+            int right = 2 * i + 2;
+            int target = i;
+            if (left < heap.size() && *heap[target] < *heap[left]) {
+                target = left;
+            }
+            if (right < heap.size() && *heap[target] < *heap[right]) {
+                target = right;
+            }
+            if (target != i) {
+                _swap(i, target);
+                _shift_down(target);
+            }
+        }
+
+    public:
+        HomaPriorityQueue() {}
+
+        bool empty() const { return heap.empty(); }
+        int size() const { return heap.size(); }
+
+        bool find(RdmaRxQueuePair* key) const {
+            return map.count(key);
+        }
+
+        void insert(HomaFlow* flow) {
+            RdmaRxQueuePair* key = _getKey(flow);
+            NS_ASSERT_MSG(!find(key), "Flow with this key already exists. Use update().");
+
+            heap.push_back(flow);
+            map[key] = heap.size() - 1;
+            _shift_up(heap.size() - 1);
+        }
+
+        HomaFlow* pop() {
+            NS_ASSERT_MSG(!empty(), "HomaPriorityQueue is empty.");
+            HomaFlow* flowToReturn = heap[0];
+            RdmaRxQueuePair* key = _getKey(flowToReturn);
+
+            _swap(0, heap.size() - 1);
+            heap.pop_back();
+            map.erase(key);
+
+            if (!empty()) {
+                _shift_down(0);
+            }
+            return flowToReturn;
+        }
+
+        const HomaFlow* top() const {
+            NS_ASSERT_MSG(!empty(), "HomaPriorityQueue is empty.");
+            return heap[0];
+        }
+
+        void delete_by_key(RdmaRxQueuePair* key) {
+            if (!find(key)) {
+                throw std::runtime_error("Key not found in priority queue.");
+            }
+            int index = map.at(key);
+            _swap(index, heap.size() - 1);
+            heap.pop_back();
+            map.erase(key);
+
+            if (index < heap.size()) {
+                int parent = (index - 1) / 2;
+                if (index > 0 && *heap[parent] < *heap[index]) {
+                    _shift_up(index);
+                } else {
+                    _shift_down(index);
+                }
+            }
+        }
+
+        void PriorityUpdated(RdmaRxQueuePair* key) {
+            if (!find(key)) {
+                return;
+            }
+
+            int index = map.at(key);
+
+            int parent = (index - 1) / 2;
+            if (index > 0 && *heap[parent] < *heap[index]) {
+                _shift_up(index);
+            } else {
+                _shift_down(index);
+            }
+        }
+    };
+
+    class HomaScheduler {
+    public:
+        HomaScheduler(RdmaHw* hw);
+        ~HomaScheduler();
+        void SetPacingInterval(Ptr<Packet> p);
+        void AddHomaFlow(HomaFlow &flow, Ptr<Packet> p, CustomHeader &ch);
+        void ScheduleHoma();
+        void SendHomaCreditPackage(HomaFlow &flow);
+        void UpdateFlowState(HomaFlow* flow);
+
+        RdmaHw* rdma_hw;
+        bool is_scheduled;
+        uint64_t pacing_interval;
+        HomaPriorityQueue active_flow;
+        std::unordered_set<HomaFlow*> wait_flow;
+        std::unordered_map<RdmaRxQueuePair*, std::unique_ptr<HomaFlow>> flow_hash;
+    };
+
+    HomaScheduler homa_scheduler;
+    Ptr<Packet> GetNxtPacketHoma(Ptr<RdmaQueuePair> qp);
+    void ReceiveHomaRequest(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch);
+    void ReceiveHomaData(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch);
 
     /***********************
      * High Precision CC

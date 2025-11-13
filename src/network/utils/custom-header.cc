@@ -161,6 +161,17 @@ void CustomHeader::Serialize (Buffer::Iterator start) const{
 		  // SeqTsHeader
 		  i.WriteHtonU32 (udp.seq);
 		  i.WriteHtonU16 (udp.pg);
+		  // Homa request flag
+		  if (IntHeader::mode == 2) {
+			i.WriteHtonU16 (udp.is_request_package);
+		  }
+		  // HomaHeader
+		  if (IntHeader::mode == 2 && udp.is_request_package == 1) {
+			i.WriteHtonU64 (udp.bdp);
+			i.WriteHtonU64 (udp.homa_requset);
+			i.WriteHtonU64 (udp.homa_unscheduled);
+		  }
+
 		  udp.ih.Serialize(i);
 	  }else if (l3Prot == 0xFF){ // CNP
 		  i.WriteU8(cnp.qIndex);
@@ -168,7 +179,7 @@ void CustomHeader::Serialize (Buffer::Iterator start) const{
 		  i.WriteU8(cnp.ecnBits);
 		  i.WriteU16(cnp.qfb);
 		  i.WriteU16(cnp.total);
-	  }else if (l3Prot == 0xFC || l3Prot == 0xFD){ // ACK or NACK
+	  }else if (l3Prot == 0xFB || l3Prot == 0xFC || l3Prot == 0xFD){ // Homa or ACK or NACK
 		  i.WriteU16(ack.sport);
 		  i.WriteU16(ack.dport);
 		  i.WriteU16(ack.flags);
@@ -295,10 +306,26 @@ CustomHeader::Deserialize (Buffer::Iterator start)
 		  // SeqTsHeader
 		  udp.seq = i.ReadNtohU32 ();
 		  udp.pg =  i.ReadNtohU16 ();
+
+		  // Homa request flag
+		  if (IntHeader::mode == 2) {
+			udp.is_request_package = i.ReadNtohU16 ();
+		  }
+		  // HomaHeader
+		  if (IntHeader::mode == 2 && udp.is_request_package == 1) {
+			udp.bdp = i.ReadNtohU64();
+			udp.homa_requset = i.ReadNtohU64();
+			udp.homa_unscheduled = i.ReadNtohU64();
+		  }
+
 		  if (getInt)
 			  udp.ih.Deserialize(i);
 
 		  l4Size = GetUdpHeaderSize();
+		  // Add HomaHeader size.
+		  if (IntHeader::mode == 2 && udp.is_request_package == 1) {
+			l4Size += sizeof(udp.bdp) + sizeof(udp.homa_requset) + sizeof(udp.homa_unscheduled);
+		  }
 	  }else if (l3Prot == 0xFF){
 		  cnp.qIndex = i.ReadU8();
 		  cnp.fid = i.ReadU16();
@@ -306,7 +333,7 @@ CustomHeader::Deserialize (Buffer::Iterator start)
 		  cnp.qfb = i.ReadU16();
 		  cnp.total = i.ReadU16();
 		  l4Size = 8;
-	  }else if (l3Prot == 0xFC || l3Prot == 0xFD){ // ACK or NACK
+	  }else if (l3Prot == 0xFB || l3Prot == 0xFC || l3Prot == 0xFD){ // ACK or NACK
 		  ack.sport = i.ReadU16();
 		  ack.dport = i.ReadU16();
 		  ack.flags = i.ReadU16();
@@ -337,7 +364,10 @@ uint32_t CustomHeader::GetAckSerializedSize(void){
 }
 
 uint32_t CustomHeader::GetUdpHeaderSize(void){
-	return 8 + sizeof(udp.pg) + sizeof(udp.seq) + IntHeader::GetStaticSize();
+	if (IntHeader::mode == 2) // homa
+		return 8 + sizeof(udp.pg) + sizeof(udp.seq) + IntHeader::GetStaticSize() + sizeof(udp.is_request_package);
+	else
+		return 8 + sizeof(udp.pg) + sizeof(udp.seq) + IntHeader::GetStaticSize();
 }
 
 uint32_t CustomHeader::GetStaticWholeHeaderSize(void){

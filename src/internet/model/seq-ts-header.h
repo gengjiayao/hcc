@@ -54,6 +54,9 @@ public:
   void SetPG (uint16_t pg);
   uint16_t GetPG () const;
 
+  void SetIsRequest (uint16_t is_request);
+  uint16_t GetIsRequest () const;
+
   static TypeId GetTypeId (void);
   virtual TypeId GetInstanceTypeId (void) const;
   virtual void Print (std::ostream &os) const;
@@ -65,6 +68,7 @@ private:
 
   uint32_t m_seq;
   uint16_t m_pg;
+  uint16_t m_is_request; // for homa
 public:
   IntHeader ih;
 };

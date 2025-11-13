@@ -99,6 +99,7 @@ cc_modes = {
     "hpcc": 3,
     "timely": 7,
     "dctcp": 8,
+    "homa": 10,
 }
 
 lb_modes = {

@@ -20,6 +20,7 @@
 #include "ns3/uinteger.h"
 #include "ppp-header.h"
 #include "qbb-header.h"
+#include "homa-header.h"
 
 namespace ns3 {
 
@@ -131,7 +132,7 @@ TypeId RdmaHw::GetTypeId(void) {
     return tid;
 }
 
-RdmaHw::RdmaHw() {
+RdmaHw::RdmaHw(): homa_scheduler(this) {
     cnp_total = 0;
     cnp_by_ecn = 0;
     cnp_by_ooo = 0;
@@ -150,7 +151,10 @@ void RdmaHw::Setup(QpCompleteCallback cb) {
         dev->m_rdmaPktSent = MakeCallback(&RdmaHw::PktSent, this);
         // config NIC
         dev->m_rdmaEQ->m_mtu = m_mtu;
-        dev->m_rdmaEQ->m_rdmaGetNxtPkt = MakeCallback(&RdmaHw::GetNxtPacket, this);
+        if (IntHeader::mode == 2)   // Homa
+            dev->m_rdmaEQ->m_rdmaGetNxtPkt = MakeCallback(&RdmaHw::GetNxtPacketHoma, this);
+        else
+            dev->m_rdmaEQ->m_rdmaGetNxtPkt = MakeCallback(&RdmaHw::GetNxtPacket, this);
     }
     // setup qp complete callback
     m_qpCompleteCallback = cb;
@@ -180,6 +184,8 @@ Ptr<RdmaQueuePair> RdmaHw::GetQp(uint64_t key) {
 
     return NULL;
 }
+
+#define unsigned_max(a,b) (((a) > (b)) ? ((a) - (b)): 0)
 void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Address dip,
                           uint16_t sport, uint16_t dport, uint32_t win, uint64_t baseRtt,
                           int32_t flow_id) {
@@ -218,6 +224,19 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
         }
     } else if (m_cc_mode == 7) {
         qp->tmly.m_curRate = m_bps;
+    } else if (m_cc_mode == 10) {
+        qp->homa.m_curRate = m_bps;
+        qp->homa.is_request_package = true; // for homa's first packet
+        uint64_t bdp = baseRtt * m_bps.GetBitRate() / 8000000000lu;
+
+        // unscheduled credit (one credit = one packet)
+        qp->homa.m_credit_package = (std::min(bdp, size) + m_mtu - 1) / m_mtu;
+        // bytes need to grant
+        qp->homa.m_request_bytes = unsigned_max(size, bdp);
+        // homa unscheduled bytes
+        qp->homa.m_unscheduled_bytes = size < bdp ? unsigned_max(size, m_mtu) : unsigned_max(bdp, m_mtu);
+        // bdp
+        qp->homa.m_bdp = bdp;
     }
 
     // Notify Nic
@@ -292,6 +311,7 @@ void RdmaHw::DeleteRxQp(uint32_t dip, uint16_t dport, uint16_t sport, uint16_t p
 int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
     uint8_t ecnbits = ch.GetIpv4EcnBits();
 
+    // payload size = mtu (1000)
     uint32_t payload_size = p->GetSize() - ch.GetSerializedSize();
 
     // find corresponding rx queue pair
@@ -380,6 +400,15 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
         m_nic[nic_idx].dev->RdmaEnqueueHighPrioQ(newp);
         m_nic[nic_idx].dev->TriggerTransmit();
     }
+
+    if (IntHeader::mode == 2) {
+        if (ch.udp.is_request_package) {
+            ReceiveHomaRequest(rxQp, p, ch);
+        } else {
+            ReceiveHomaData(rxQp, p, ch);
+        }
+    }
+
     return 0;
 }
 
@@ -434,8 +463,35 @@ int RdmaHw::ReceiveCnp(Ptr<Packet> p, CustomHeader &ch) {
             }
         } else if (m_cc_mode == 7) {
             qp->tmly.m_curRate = dev->GetDataRate();
+        } else if (m_cc_mode == 10) {
+            qp->homa.m_curRate = dev->GetDataRate();
         }
     }
+    return 0;
+}
+
+int RdmaHw::ReceiveHomaCredit(Ptr<Packet> p, CustomHeader &ch) {
+    uint16_t qIndex = ch.ack.pg;
+    uint16_t port = ch.ack.dport;   // sport for this host
+    uint16_t sport = ch.ack.sport;  // dport for this host (sport of ACK packet)
+
+    uint64_t key = GetQpKey(ch.sip, port, sport, qIndex);
+    Ptr<RdmaQueuePair> qp = GetQp(key);
+    if (qp == NULL) {
+        if (akashic_Qp.find(key) != akashic_Qp.end()) {
+            return 1;
+        } else {
+            printf("ERROR: Node: %u %s - NIC cannot find the flow, key: %lu\n", m_node->GetId(), "Homa Credit", key);
+            exit(1);
+            return 1;
+        }
+    }
+
+    qp->homa.m_credit_package++;
+
+    uint32_t nic_idx = GetNicIdxOfQp(qp);
+    Ptr<QbbNetDevice> dev = m_nic[nic_idx].dev;
+    dev->TriggerTransmit();
     return 0;
 }
 
@@ -583,6 +639,8 @@ int RdmaHw::Receive(Ptr<Packet> p, CustomHeader &ch) {
         return ReceiveAck(p, ch);
     } else if (ch.l3Prot == 0xFC) {  // ACK
         return ReceiveAck(p, ch);
+    } else if (ch.l3Prot == 0xFB) {  // HOMA
+        return ReceiveHomaCredit(p, ch);
     }
     return 0;
 }
@@ -750,6 +808,98 @@ void RdmaHw::RedistributeQp() {
         // Notify Nic
         m_nic[nic_idx].dev->ReassignedQp(qp);
     }
+}
+
+Ptr<Packet> RdmaHw::GetNxtPacketHoma(Ptr<RdmaQueuePair> qp) {
+    uint32_t payload_size = qp->GetBytesLeft();
+    if (m_mtu < payload_size) {  // possibly last packet
+        payload_size = m_mtu;
+    }
+    uint32_t seq = (uint32_t)qp->snd_nxt;
+    bool proceed_snd_nxt = true;
+    qp->stat.txTotalPkts += 1;
+    qp->stat.txTotalBytes += payload_size;
+
+    Ptr<Packet> p = Create<Packet>(payload_size);
+    // add HomaHeader
+    if (qp->homa.is_request_package) {
+        HomaHeader homaHeader;
+        homaHeader.SetHomaRequest(qp->homa.m_request_bytes);
+        homaHeader.SetHomaUnscheduled(qp->homa.m_unscheduled_bytes);
+        homaHeader.SetBdp(qp->homa.m_bdp);
+        p->AddHeader(homaHeader);
+    }
+    qp->homa.m_credit_package--;
+    // add SeqTsHeader
+    SeqTsHeader seqTs;
+    seqTs.SetSeq(seq);
+    seqTs.SetPG(qp->m_pg);
+    seqTs.SetIsRequest(qp->homa.is_request_package); // indicate if this is request packet
+
+    // only the first packet is request packet
+    if (qp->homa.is_request_package) {
+        qp->homa.is_request_package = false;
+    }
+
+    p->AddHeader(seqTs);
+    // add udp header
+    UdpHeader udpHeader;
+    udpHeader.SetDestinationPort(qp->dport);
+    udpHeader.SetSourcePort(qp->sport);
+    p->AddHeader(udpHeader);
+    // add ipv4 header
+    Ipv4Header ipHeader;
+    ipHeader.SetSource(qp->sip);
+    ipHeader.SetDestination(qp->dip);
+    ipHeader.SetProtocol(0x11);
+    ipHeader.SetPayloadSize(p->GetSize());
+    ipHeader.SetTtl(64);
+    ipHeader.SetTos(0);
+    ipHeader.SetIdentification(qp->m_ipid);
+    p->AddHeader(ipHeader);
+    // add ppp header
+    PppHeader ppp;
+    ppp.SetProtocol(0x0021);  // EtherToPpp(0x800), see point-to-point-net-device.cc
+    p->AddHeader(ppp);
+
+    // attach Stat Tag
+    uint8_t packet_pos = UINT8_MAX;
+    {
+        FlowIDNUMTag fint;
+        if (!p->PeekPacketTag(fint)) {
+            fint.SetId(qp->m_flow_id);
+            fint.SetFlowSize(qp->m_size);
+            p->AddPacketTag(fint);
+        }
+        FlowStatTag fst;
+        uint64_t size = qp->m_size;
+        if (!p->PeekPacketTag(fst)) {
+            if (size < m_mtu && qp->snd_nxt + payload_size >= qp->m_size) {
+                fst.SetType(FlowStatTag::FLOW_START_AND_END);
+            } else if (qp->snd_nxt + payload_size >= qp->m_size) {
+                fst.SetType(FlowStatTag::FLOW_END);
+            } else if (qp->snd_nxt == 0) {
+                fst.SetType(FlowStatTag::FLOW_START);
+            } else {
+                fst.SetType(FlowStatTag::FLOW_NOTEND);
+            }
+            packet_pos = fst.GetType();
+            fst.setInitiatedTime(Simulator::Now().GetSeconds());
+            p->AddPacketTag(fst);
+        }
+    }
+
+    if (qp->irn.m_enabled) {
+        if (qp->irn.m_max_seq < seq) qp->irn.m_max_seq = seq;
+    }
+
+    // // update state
+    if (proceed_snd_nxt) qp->snd_nxt += payload_size;
+
+    qp->m_ipid++;
+
+    // return
+    return p;
 }
 
 Ptr<Packet> RdmaHw::GetNxtPacket(Ptr<RdmaQueuePair> qp) {
@@ -1040,6 +1190,167 @@ void RdmaHw::HyperIncreaseMlx(Ptr<RdmaQueuePair> q) {
     printf("(%.3lf %.3lf)\n", q->mlx.m_targetRate.GetBitRate() * 1e-9,
            q->m_rate.GetBitRate() * 1e-9);
 #endif
+}
+
+/***********************
+ * HOMA CC
+ ***********************/
+RdmaHw::HomaScheduler::HomaScheduler(RdmaHw* hw): rdma_hw(hw) {
+    is_scheduled = false;
+}
+
+RdmaHw::HomaScheduler::~HomaScheduler() {};
+
+void RdmaHw::HomaScheduler::SetPacingInterval(Ptr<Packet> p) {
+    // first packet is request packet with HomaHeader
+    uint64_t interval = p->GetSize() - HomaHeader::GetHeaderSize();
+    // get qp rate
+    uint32_t nic_idx = rdma_hw->GetNicIdxOfRxQp(active_flow.top()->rx_qp);
+    Ptr<QbbNetDevice> dev = rdma_hw->m_nic[nic_idx].dev;
+    DataRate qp_rate = dev->GetDataRate(); // assume full rate for homa credit sender
+    // calculate pacing interval
+    this->pacing_interval = (uint64_t)(1e9 * 8 * interval / qp_rate.GetBitRate()); // in ns
+}
+
+void RdmaHw::HomaScheduler::SendHomaCreditPackage(HomaFlow &flow) {
+    qbbHeader seqh;
+    seqh.SetSeq(flow.rx_qp->ReceiverNextExpectedSeq);
+    seqh.SetPG(flow.pg);
+    seqh.SetSport(flow.rx_qp->sport);
+    seqh.SetDport(flow.rx_qp->dport);
+    seqh.SetCnp();
+
+    Ptr<Packet> newp = Create<Packet>(std::max(60 - 14 - 20 - (int)seqh.GetSerializedSize(), 0));
+    newp->AddHeader(seqh);
+
+    Ipv4Header head;  // Prepare IPv4 header
+    head.SetDestination(Ipv4Address(flow.rx_qp->dip));
+    head.SetSource(Ipv4Address(flow.rx_qp->sip));
+    head.SetProtocol(0xFB);  // ack=0xFC nack=0xFD
+    head.SetTtl(64);
+    head.SetPayloadSize(newp->GetSize());
+    head.SetIdentification(flow.rx_qp->m_ipid++);
+
+    newp->AddHeader(head);
+    rdma_hw->AddHeader(newp, 0x800);  // Attach PPP header
+
+    // send
+    uint32_t nic_idx = rdma_hw->GetNicIdxOfRxQp(flow.rx_qp);
+    rdma_hw->m_nic[nic_idx].dev->RdmaEnqueueHighPrioQ(newp);
+    rdma_hw->m_nic[nic_idx].dev->TriggerTransmit();
+}
+
+void RdmaHw::HomaScheduler::UpdateFlowState(HomaFlow* flow) {
+    // update token bucket
+    flow->token_bucket += rdma_hw->m_mtu;
+    // update request bytes
+    if (flow->requset_bytes >= rdma_hw->m_mtu) {
+        flow->requset_bytes -= rdma_hw->m_mtu;
+    } else {
+        flow->requset_bytes = 0;
+    }
+
+    if (flow->requset_bytes > 0 && flow->token_bucket < flow->bdp) {
+        flow->state = HOMA_FLOW_ACTIVE;
+        active_flow.insert(flow);
+    } else if (flow->requset_bytes > 0 && flow->token_bucket >= flow->bdp) {
+        flow->state = HOMA_FLOW_WAITING;
+        wait_flow.insert(flow);
+    } else if (flow->requset_bytes == 0) {
+        flow_hash.erase(PeekPointer(flow->rx_qp));
+    }
+}
+
+void RdmaHw::HomaScheduler::ScheduleHoma() {
+    if (flow_hash.size() == 0) {
+        is_scheduled = false;
+        return; // no flow to schedule
+    }
+
+    if (!active_flow.empty()) {
+        HomaFlow* priority_flow = active_flow.pop();
+
+        SendHomaCreditPackage(*priority_flow);
+        UpdateFlowState(priority_flow);
+        Simulator::Schedule(NanoSeconds(this->pacing_interval), &RdmaHw::HomaScheduler::ScheduleHoma, this);
+    } else {
+        is_scheduled = false;
+    }
+}
+
+void RdmaHw::HomaScheduler::AddHomaFlow(HomaFlow &flow_template, Ptr<Packet> p, CustomHeader &ch) {
+    std::unique_ptr<HomaFlow> new_flow_ptr(new HomaFlow(flow_template));
+    HomaFlow* p_flow = new_flow_ptr.get();
+
+    if (p_flow->token_bucket >= p_flow->bdp) {
+        p_flow->state = HomaFlowState::HOMA_FLOW_WAITING;
+        wait_flow.insert(p_flow);
+    } else {
+        p_flow->state = HomaFlowState::HOMA_FLOW_ACTIVE;
+        active_flow.insert(p_flow);
+    }
+
+    flow_hash[PeekPointer(p_flow->rx_qp)] = std::move(new_flow_ptr);
+
+    // receiver schedule if not yet
+    if (!is_scheduled) {
+        is_scheduled = true;
+        if (p_flow->state == HOMA_FLOW_ACTIVE) {
+            SetPacingInterval(p);
+        } else {
+            NS_ASSERT_MSG(p_flow->state == HOMA_FLOW_ACTIVE, "Scheduler started with no active flows and no p_interval");
+            SetPacingInterval(p);
+        }
+        ScheduleHoma();
+    }
+}
+
+// one flow just enable once.
+void RdmaHw::ReceiveHomaRequest(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch) {
+    // std::cout << "[ " << Simulator::Now() << " ] "
+    //           << "ReceiveHomaRequest" << "\t"
+    //           << "qp: " << qp << "\t"
+    //           << "bdp: " << ch.udp.bdp << "\t"
+    //           << "homa_request: " << ch.udp.homa_requset << "\t"
+    //           << "homa_unscheduled: " << ch.udp.homa_unscheduled << "\t"
+    //           << "sip: " << Settings::ip_to_node_id(Ipv4Address(qp->sip)) << "\t"
+    //           << "dip: " << Settings::ip_to_node_id(Ipv4Address(qp->dip)) << "\t"
+    //           << "sport: " << qp->sport << "\t"
+    //           << "dport: " << qp->dport << std::endl;
+
+    HomaFlow homa_flow;
+    homa_flow.state = HOMA_FLOW_IDLE;
+    homa_flow.rx_qp = qp; // this value can hash flow -> cridit sender qp.
+    homa_flow.requset_bytes = ch.udp.homa_requset;
+    homa_flow.token_bucket = ch.udp.homa_unscheduled;
+    homa_flow.pg = ch.udp.pg;
+    homa_flow.bdp = ch.udp.bdp;
+
+    // push into homa_scheduler
+    homa_scheduler.AddHomaFlow(homa_flow, p, ch);
+}
+
+void RdmaHw::ReceiveHomaData(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch) {
+    auto it = homa_scheduler.flow_hash.find(PeekPointer(qp));
+
+    if (it == homa_scheduler.flow_hash.end()) {
+        return;
+    }
+
+    HomaFlow* p_flow = it->second.get();
+    p_flow->token_bucket -= homa_scheduler.rdma_hw->m_mtu;
+
+    if (p_flow->state == HomaFlowState::HOMA_FLOW_WAITING) {
+        if (p_flow->token_bucket < p_flow->bdp) {
+            homa_scheduler.wait_flow.erase(p_flow);
+            p_flow->state = HomaFlowState::HOMA_FLOW_ACTIVE;
+            homa_scheduler.active_flow.insert(p_flow);
+            if (!homa_scheduler.is_scheduled) {
+                homa_scheduler.is_scheduled = true;
+                Simulator::Schedule(NanoSeconds(0), &RdmaHw::HomaScheduler::ScheduleHoma, &this->homa_scheduler);
+            }
+        }
+    }
 }
 
 /***********************
