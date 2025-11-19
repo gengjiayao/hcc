@@ -896,11 +896,6 @@ void RdmaHw::ChangeRate(Ptr<RdmaQueuePair> qp, DataRate new_rate) {
 
     // change to new rate
     qp->m_rate = new_rate;
-    std::cout << "[UpdataRate] "
-              << "Time: " << Simulator::Now().GetNanoSeconds() - 2000000000 << "ns\t"
-              << "QP: " << Settings::ip_to_node_id(qp->sip) << "\t"
-              << "New Rate: " << qp->m_rate.GetBitRate() * 1e-9 << "Gbps"
-              << std::endl;
 }
 
 #define PRINT_LOG 0
