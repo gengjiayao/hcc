@@ -96,7 +96,7 @@ RANDOM_SEED 1
 # LB/CC mode matching
 cc_modes = {
     "dcqcn": 1,
-    "hpcc": 3,
+    "rate": 3,
     "timely": 7,
     "dctcp": 8,
 }

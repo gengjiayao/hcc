@@ -216,6 +216,8 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
         if (m_multipleRate) {
             for (uint32_t i = 0; i < IntHeader::maxHop; i++) qp->hp.hopState[i].Rc = m_bps;
         }
+        // grantRate initialization
+        qp->hp.m_grantRate = m_bps;
     } else if (m_cc_mode == 7) {
         qp->tmly.m_curRate = m_bps;
     }
@@ -327,12 +329,20 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
     bool cnp_check = false;
     int x = ReceiverCheckSeq(ch.udp.seq, rxQp, payload_size, cnp_check);
 
+    uint64_t flow_size = -1;
+
     if (x == 1 || x == 2 || x == 6) {  // generate ACK or NACK
         qbbHeader seqh;
         seqh.SetSeq(rxQp->ReceiverNextExpectedSeq);
         seqh.SetPG(ch.udp.pg);
         seqh.SetSport(ch.udp.dport);
         seqh.SetDport(ch.udp.sport);
+
+        // check nhop, if more than 1, remove the last hop info
+        if (ch.udp.ih.nhop > 1) {
+            int last_hop = --ch.udp.ih.nhop;
+            memset(&ch.udp.ih.hop[last_hop], 0, sizeof(ch.udp.ih.hop[last_hop]));
+        }
         seqh.SetIntHeader(ch.udp.ih);
 
         if (m_irn) {
@@ -369,6 +379,7 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
             FlowIDNUMTag fit;
             if (p->PeekPacketTag(fit)) {
                 newp->AddPacketTag(fit);
+                flow_size = fit.GetFlowSize();
             }
         }
 
@@ -380,6 +391,28 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
         m_nic[nic_idx].dev->RdmaEnqueueHighPrioQ(newp);
         m_nic[nic_idx].dev->TriggerTransmit();
     }
+
+    FlowStatTag fst;
+    p->PeekPacketTag(fst);
+    if (flow_size == -1) {
+        std::cout << "ERROR: flow_size==-1 in ReceiveUdp\n";
+        exit(1);
+    }
+
+    uint64_t bdp = 104000;
+
+    // just for flow_start, ignore flow_star_end.
+    if (fst.GetType() == FlowStatTag::FLOW_START) {
+        if (flow_size > 2 * bdp) {
+            HandleRccRequest(rxQp, p, ch);
+        }
+    }
+
+    uint32_t currentSeq = rxQp->ReceiverNextExpectedSeq;
+    if (currentSeq + bdp >= flow_size) {
+        HandleRccRemove(rxQp, p, ch);
+    }
+
     return 0;
 }
 
@@ -436,6 +469,39 @@ int RdmaHw::ReceiveCnp(Ptr<Packet> p, CustomHeader &ch) {
             qp->tmly.m_curRate = dev->GetDataRate();
         }
     }
+    return 0;
+}
+
+int RdmaHw::ReceiveRate(Ptr<Packet> p, CustomHeader &ch) {
+    // find qp
+    uint16_t pg = ch.ack.pg;
+    uint16_t dport = ch.ack.dport;
+    uint16_t sport = ch.ack.sport;
+    uint64_t key = GetQpKey(ch.sip, dport, sport, pg);
+    Ptr<RdmaQueuePair> qp = GetQp(key);
+
+    if (qp == NULL) {
+        if (akashic_Qp.find(key) != akashic_Qp.end()) {
+            // std::cout << "[ReceiveRate] Grant packet for completed flow, ignoring. "
+            //           << "sip: " << Settings::ip_to_node_id(Ipv4Address(ch.sip)) << ", sport: " << sport
+            //           << ", dip: " << Settings::ip_to_node_id(Ipv4Address(ch.dip)) << ", dport: " << dport << std::endl;
+        } else {
+            // std::cout << "[ReceiveRate] QP not found and not in Akashic record! "
+            //           << "sip: " << Settings::ip_to_node_id(Ipv4Address(ch.sip)) << ", sport: " << sport
+            //           << ", dip: " << Settings::ip_to_node_id(Ipv4Address(ch.dip)) << ", dport: " << dport
+            //           << " - This might indicate a race condition." << std::endl;
+        }
+        return 0;
+    }
+
+    uint32_t received_val = ch.ack.seq;
+
+    // Use string constructor to avoid overflow
+    std::string rate_str = std::to_string(received_val) + "Mbps";
+    DataRate curRate(rate_str);
+
+    qp->hp.m_grantRate = curRate;
+
     return 0;
 }
 
@@ -583,6 +649,8 @@ int RdmaHw::Receive(Ptr<Packet> p, CustomHeader &ch) {
         return ReceiveAck(p, ch);
     } else if (ch.l3Prot == 0xFC) {  // ACK
         return ReceiveAck(p, ch);
+    } else if (ch.l3Prot == 0xFB) {  // Rate
+        return ReceiveRate(p, ch);
     }
     return 0;
 }
@@ -846,7 +914,7 @@ void RdmaHw::PktSent(Ptr<RdmaQueuePair> qp, Ptr<Packet> pkt, Time interframeGap)
             if (qp->m_retransmit.IsRunning()) qp->m_retransmit.Cancel();
             qp->m_retransmit = Simulator::Schedule(qp->GetRto(m_mtu), &RdmaHw::HandleTimeout, this,
                                                    qp, qp->GetRto(m_mtu));
-        } else if (ch.l3Prot == 0xFC || ch.l3Prot == 0xFD || ch.l3Prot == 0xFF) {  // ACK, NACK, CNP
+        } else if (ch.l3Prot == 0xFB || ch.l3Prot == 0xFC || ch.l3Prot == 0xFD || ch.l3Prot == 0xFF) {  // ACK, NACK, CNP
         } else if (ch.l3Prot == 0xFE) {                                            // PFC
         }
     }
@@ -896,11 +964,6 @@ void RdmaHw::ChangeRate(Ptr<RdmaQueuePair> qp, DataRate new_rate) {
 
     // change to new rate
     qp->m_rate = new_rate;
-    std::cout << "[UpdataRate] "
-              << "Time: " << Simulator::Now().GetNanoSeconds() - 2000000000 << "ns\t"
-              << "QP: " << Settings::ip_to_node_id(qp->sip) << "\t"
-              << "New Rate: " << qp->m_rate.GetBitRate() * 1e-9 << "Gbps"
-              << std::endl;
 }
 
 #define PRINT_LOG 0
@@ -1045,6 +1108,69 @@ void RdmaHw::HyperIncreaseMlx(Ptr<RdmaQueuePair> q) {
     printf("(%.3lf %.3lf)\n", q->mlx.m_targetRate.GetBitRate() * 1e-9,
            q->m_rate.GetBitRate() * 1e-9);
 #endif
+}
+
+/***********************
+ * Rate CC
+ ***********************/
+void RdmaHw::HandleRccRequest(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomHeader &ch) {
+    if (m_rate_flow_ctl_set.find(PeekPointer(rx_qp)) != m_rate_flow_ctl_set.end()) {
+        std::cout << "Warning: duplicated RCC request for flow!" << std::endl;
+        exit(1);
+    }
+    m_rate_flow_ctl_set.emplace(PeekPointer(rx_qp));
+
+    // TODO: this is send rate, not receive rate
+    uint32_t nic_idx = GetNicIdxOfRxQp(rx_qp);
+    DataRate rate = m_nic[nic_idx].dev->GetDataRate() / m_rate_flow_ctl_set.size();
+    uint32_t rate_data = rate.GetBitRate() / 1000000; // in Mbps
+
+    for (auto &it : m_rate_flow_ctl_set) {
+        SendRateControlPacket(it, ch, rate_data);
+    }
+}
+
+void RdmaHw::HandleRccRemove(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomHeader &ch) {
+    if (m_rate_flow_ctl_set.find(PeekPointer(rx_qp)) == m_rate_flow_ctl_set.end()) {
+        return;
+    }
+    m_rate_flow_ctl_set.erase(PeekPointer(rx_qp));
+
+    // TODO: this is send rate, not receive rate
+    uint32_t nic_idx = GetNicIdxOfRxQp(rx_qp);
+    DataRate rate = m_nic[nic_idx].dev->GetDataRate() / m_rate_flow_ctl_set.size();
+    uint32_t rate_data = rate.GetBitRate() / 1000000; // in Mbps
+
+    for (auto &it : m_rate_flow_ctl_set) {
+        SendRateControlPacket(it, ch, rate_data);
+    }
+}
+
+void RdmaHw::SendRateControlPacket(Ptr<RdmaRxQueuePair> rx_qp, CustomHeader &ch, uint32_t rate_data) {
+    qbbHeader seqh;
+    seqh.SetSeq(rate_data); // PS: send rate in Mbps, used field: seq
+    seqh.SetPG(ch.udp.pg);
+    seqh.SetSport(rx_qp->sport);
+    seqh.SetDport(rx_qp->dport);
+
+    Ptr<Packet> newp = Create<Packet>(std::max(60 - 14 - 20 - (int)seqh.GetSerializedSize(), 0));
+    newp->AddHeader(seqh);
+
+    Ipv4Header head;  // Prepare IPv4 header
+    head.SetDestination(Ipv4Address(rx_qp->dip));
+    head.SetSource(Ipv4Address(rx_qp->sip));
+    head.SetProtocol(0xFB);  // 0xFB rate grant
+    head.SetTtl(64);
+    head.SetPayloadSize(newp->GetSize());
+    head.SetIdentification(rx_qp->m_ipid++);
+
+    newp->AddHeader(head);
+    AddHeader(newp, 0x800);  // Attach PPP header
+
+    // send
+    uint32_t nic_idx = GetNicIdxOfRxQp(rx_qp);
+    m_nic[nic_idx].dev->RdmaEnqueueHighPrioQ(newp);
+    m_nic[nic_idx].dev->TriggerTransmit();
 }
 
 /***********************
@@ -1198,7 +1324,14 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
                 printf("\n");
 #endif
             }
-            if (updated_any) ChangeRate(qp, new_rate);
+
+            // rcc + hpcc
+            DataRate final_rate = new_rate;
+            if (qp->hp.m_grantRate < new_rate) final_rate = qp->hp.m_grantRate;
+            if (final_rate < m_minRate) final_rate = m_minRate;
+
+            // update to the nic rate
+            if (updated_any) ChangeRate(qp, final_rate);
             if (!fast_react) {
                 if (updated_any) {
                     qp->hp.m_curRate = new_rate;

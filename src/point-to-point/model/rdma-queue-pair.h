@@ -88,6 +88,7 @@ class RdmaQueuePair : public Object {
     struct {
         uint32_t m_lastUpdateSeq;
         DataRate m_curRate;
+        DataRate m_grantRate;
         IntHop hop[IntHeader::maxHop];
         uint32_t keep[IntHeader::maxHop];
         uint32_t m_incStage;

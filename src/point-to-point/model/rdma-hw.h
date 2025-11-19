@@ -80,6 +80,7 @@ class RdmaHw : public Object {
     int ReceiveUdp(Ptr<Packet> p, CustomHeader &ch);
     int ReceiveCnp(Ptr<Packet> p, CustomHeader &ch);
     int ReceiveAck(Ptr<Packet> p, CustomHeader &ch);  // handle both ACK and NACK
+    int ReceiveRate(Ptr<Packet> p, CustomHeader &ch); // handle rate control packet
     int Receive(Ptr<Packet> p,
                 CustomHeader &
                     ch);  // callback function that the QbbNetDevice should use when receive
@@ -150,6 +151,14 @@ class RdmaHw : public Object {
     // For an HCA requester using Reliable Connection service, to detect missing responses,
     // every Send queue is required to implement a Transport Timer to time outstanding requests.
     Time m_waitAckTimeout;
+
+    /***********************
+     * Rate CC
+     ***********************/
+    std::unordered_set<RdmaRxQueuePair*> m_rate_flow_ctl_set;
+    void HandleRccRequest(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch);
+    void HandleRccRemove(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch);
+    void SendRateControlPacket(Ptr<RdmaRxQueuePair> qp, CustomHeader &ch, uint32_t rate);
 
     /***********************
      * High Precision CC
