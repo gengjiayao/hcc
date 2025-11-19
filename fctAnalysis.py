@@ -209,7 +209,7 @@ if __name__=="__main__":
 	# 	for bkt in fct_cdf:
 	# 		var = str(bkt[0]) + " " + str(bkt[1]) + " " + str(bkt[2]) + " " + str(bkt[3]) + "\n"
 	# 		outfile_fct_all_slowdown.write(var)
-# ==================== 替换开始 ====================
+
 	with open(output_fct_all_slowdown_cdf, "w") as outfile_fct_all_slowdown:
 		if 'aa' not in locals():
 			aa = output_slowdown.decode("utf-8").split('\n')[:-2]
