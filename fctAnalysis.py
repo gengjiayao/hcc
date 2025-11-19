@@ -197,18 +197,73 @@ if __name__=="__main__":
 
 
 
+	# with open(output_fct_all_slowdown_cdf, "w") as outfile_fct_all_slowdown:
+	# 	# up to here, `output` should be a string of multiple lines, each line is: fct, size
+	# 	aa = output_slowdown.decode("utf-8").split('\n')[:-2]
+	# 	print("output_slowdown number:", len(aa))
+	# 	########################
+	# 	### SLOWDOWN CDF ALL ###
+	# 	########################
+	# 	fct_arr = [float(x.split(" ")[0]) for x in aa]
+	# 	fct_cdf = getCdfFromArray(fct_arr)
+	# 	for bkt in fct_cdf:
+	# 		var = str(bkt[0]) + " " + str(bkt[1]) + " " + str(bkt[2]) + " " + str(bkt[3]) + "\n"
+	# 		outfile_fct_all_slowdown.write(var)
+
 	with open(output_fct_all_slowdown_cdf, "w") as outfile_fct_all_slowdown:
-		# up to here, `output` should be a string of multiple lines, each line is: fct, size
-		aa = output_slowdown.decode("utf-8").split('\n')[:-2]
-		print("output_slowdown number:", len(aa))
-		########################
-		### SLOWDOWN CDF ALL ###
-		########################
-		fct_arr = [float(x.split(" ")[0]) for x in aa]
-		fct_cdf = getCdfFromArray(fct_arr)
-		for bkt in fct_cdf:
-			var = str(bkt[0]) + " " + str(bkt[1]) + " " + str(bkt[2]) + " " + str(bkt[3]) + "\n"
-			outfile_fct_all_slowdown.write(var)
+		if 'aa' not in locals():
+			aa = output_slowdown.decode("utf-8").split('\n')[:-2]
+        
+		data_pairs = []
+		for x in aa:
+			parts = x.split(" ")
+			if len(parts) >= 2:
+				val_slowdown = float(parts[0])
+				val_size = int(parts[1])
+				data_pairs.append((val_slowdown, val_size))
+        
+		data_pairs.sort(key=lambda x: x[0])
+
+		total_flows = len(data_pairs)
+		if total_flows > 0:
+			outfile_fct_all_slowdown.write("# Slowdown Count AccumPct AvgSize MaxSize\n")
+
+			current_slowdown = data_pairs[0][0]
+			count = 0
+			accum_count = 0
+			size_sum = 0
+			max_size = 0
+
+			for i in range(total_flows):
+				sl, sz = data_pairs[i]
+				
+				# 如果遇到新的 Slowdown 值，先结算上一个 bucket
+				if sl != current_slowdown:
+					# 计算之前那个 Slowdown 的统计信息
+					pct = float(accum_count) / total_flows
+					avg_size = size_sum / count if count > 0 else 0
+					
+					# 写入文件
+					# 格式: Slowdown 频次 累积概率CDF 平均大小 最大大小
+					outfile_fct_all_slowdown.write(f"{current_slowdown} {count} {pct:.6f} {avg_size:.1f} {max_size}\n")
+					
+					# 重置 bucket
+					current_slowdown = sl
+					count = 0
+					size_sum = 0
+					max_size = 0
+				
+				# 累加当前流
+				count += 1
+				accum_count += 1  # 注意：CDF是基于 rank 的，这里我们简单用 accum/total
+				size_sum += sz
+				if sz > max_size:
+					max_size = sz
+			
+			# 循环结束后，别忘了写入最后一行
+			pct = float(accum_count) / total_flows
+			avg_size = size_sum / count if count > 0 else 0
+			outfile_fct_all_slowdown.write(f"{current_slowdown} {count} {pct:.6f} {avg_size:.1f} {max_size}\n")
 
 	with open(output_fct_small_slowdown_cdf, "w") as outfile_fct_small_slowdown:
 		# up to here, `output` should be a string of multiple lines, each line is: fct, size
