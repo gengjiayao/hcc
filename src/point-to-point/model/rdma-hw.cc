@@ -319,17 +319,18 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
     rxQp->m_ecn_source.total++;
     rxQp->m_milestone_rx = m_ack_interval;
 
-    if (rxQp->m_flow_id < 0) {
-        FlowIDNUMTag fit;
-        if (p->PeekPacketTag(fit)) {
+    uint64_t flow_size = 0;
+    FlowIDNUMTag fit;
+    bool has_flow_tag = p->PeekPacketTag(fit);
+    if (has_flow_tag) {
+        if (rxQp->m_flow_id < 0) {
             rxQp->m_flow_id = fit.GetId();
         }
+        flow_size = fit.GetFlowSize();
     }
 
     bool cnp_check = false;
     int x = ReceiverCheckSeq(ch.udp.seq, rxQp, payload_size, cnp_check);
-
-    uint64_t flow_size = -1;
 
     if (x == 1 || x == 2 || x == 6) {  // generate ACK or NACK
         qbbHeader seqh;
@@ -375,12 +376,8 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
         head.SetPayloadSize(newp->GetSize());
         head.SetIdentification(rxQp->m_ipid++);
 
-        {
-            FlowIDNUMTag fit;
-            if (p->PeekPacketTag(fit)) {
-                newp->AddPacketTag(fit);
-                flow_size = fit.GetFlowSize();
-            }
+        if (has_flow_tag) {
+            newp->AddPacketTag(fit);
         }
 
         newp->AddHeader(head);
@@ -392,21 +389,24 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
         m_nic[nic_idx].dev->TriggerTransmit();
     }
 
-    FlowStatTag fst;
-    p->PeekPacketTag(fst);
-    if (flow_size == -1) {
-        std::cout << "ERROR: flow_size==-1 in ReceiveUdp\n";
+    if (flow_size == 0) {
+        std::cout << "ERROR: flow_size==0 in ReceiveUdp\n";
         exit(1);
     }
 
     uint64_t bdp = 104000;
-
     uint64_t avg = m_rate_flow_ctl_set.empty() ? 1 : m_rate_flow_ctl_set.size();
-    // just for flow_start, ignore flow_star_end.
-    if (fst.GetType() == FlowStatTag::FLOW_START) {
-        if (flow_size > bdp) {
-            HandleRccRequest(rxQp, p, ch);
+    FlowStatTag fst;
+    if (p->PeekPacketTag(fst)) {
+        // just for flow_start, ignore flow_star_end.
+        if (fst.GetType() == FlowStatTag::FLOW_START) {
+            if (flow_size > bdp) {
+                HandleRccRequest(rxQp, p, ch);
+            }
         }
+    } else {
+        std::cout << "ERROR: no FlowStatTag in ReceiveUdp\n";
+        exit(1);
     }
 
     uint32_t currentSeq = rxQp->ReceiverNextExpectedSeq;
