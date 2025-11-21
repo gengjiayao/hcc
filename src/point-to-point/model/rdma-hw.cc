@@ -401,15 +401,16 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
 
     uint64_t bdp = 104000;
 
+    uint64_t avg = m_rate_flow_ctl_set.empty() ? 1 : m_rate_flow_ctl_set.size();
     // just for flow_start, ignore flow_star_end.
     if (fst.GetType() == FlowStatTag::FLOW_START) {
-        if (flow_size > 2 * bdp) {
+        if (flow_size > bdp) {
             HandleRccRequest(rxQp, p, ch);
         }
     }
 
     uint32_t currentSeq = rxQp->ReceiverNextExpectedSeq;
-    if (currentSeq + bdp >= flow_size) {
+    if (currentSeq + bdp / avg >= flow_size) {
         HandleRccRemove(rxQp, p, ch);
     }
 
