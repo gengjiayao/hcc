@@ -180,6 +180,15 @@ Ptr<RdmaQueuePair> RdmaHw::GetQp(uint64_t key) {
 
     return NULL;
 }
+
+void print_rate(RdmaQueuePair *qp) {
+    std::cout << Settings::ip_to_node_id(qp->sip) << "\t"
+              << Simulator::Now().GetNanoSeconds() << "\t"
+              << qp->m_rate.GetBitRate() / 1000000000 << std::endl;
+    Time time("1000ns");
+    Simulator::Schedule(NanoSeconds(time), &print_rate, qp);
+}
+
 void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Address dip,
                           uint16_t sport, uint16_t dport, uint32_t win, uint64_t baseRtt,
                           int32_t flow_id) {
@@ -221,6 +230,7 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
     } else if (m_cc_mode == 7) {
         qp->tmly.m_curRate = m_bps;
     }
+    print_rate(PeekPointer(qp));
 
     // Notify Nic
     m_nic[nic_idx].dev->NewQp(qp);
