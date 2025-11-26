@@ -1491,6 +1491,8 @@ int main(int argc, char *argv[]) {
             Ptr<SwitchNode> sw = DynamicCast<SwitchNode>(n.Get(i));
             sw->SetAttribute("CcMode", UintegerValue(cc_mode));
             sw->SetAttribute("AckHighPrio", UintegerValue(1));
+            // sw->TraceConnectWithoutContext ("PhyTxEnd",MakeBoundCallback (&NodeTx, sw));
+            // sw->TraceConnectWithoutContext ("PhyRxEnd",MakeBoundCallback (&NodeRx, sw));
         }
     }
 

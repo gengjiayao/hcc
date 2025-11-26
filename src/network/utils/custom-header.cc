@@ -94,7 +94,7 @@ uint32_t CustomHeader::GetSerializedSize (void) const{
 			len += tcp.length * 4;
 		else if (l3Prot == 0x11) // UDP
 			len += GetUdpHeaderSize();
-		else if (l3Prot == 0xFC || l3Prot == 0xFD)
+		else if (l3Prot == 0xFC || l3Prot == 0xFD || l3Prot == 0xFB) // ACK or NACK or HOMA
 			len += GetAckSerializedSize();
 		else if (l3Prot == 0xFF)
 			len += 8;
