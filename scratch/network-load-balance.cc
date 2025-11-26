@@ -115,6 +115,7 @@ std::string voq_mon_detail_file = "voq_detail.txt";
 std::string uplink_mon_file = "uplink.txt";
 std::string conn_mon_file = "conn.txt";
 std::string est_error_output_file = "est_error.txt";
+std::string bw_output_file = "bw.txt";
 
 // CC params
 double alpha_resume_interval = 55, rp_timer = 300, ewma_gain = 1 / 16;
@@ -192,6 +193,36 @@ struct FlowInput {
 };
 FlowInput flow_input = {0};  // global variable
 uint32_t flow_num;
+
+std::map<uint32_t,uint64_t> nodeTxBytes, nodeRxBytes;
+std::map<uint32_t, uint64_t> nodeTotalTxBytes, nodeTotalRxBytes;
+
+void NodeTx(Ptr<NetDevice> dev, Ptr<const Packet> p) {
+  uint32_t nodeId = dev->GetNode()->GetId();
+  nodeTxBytes[nodeId] += p->GetSize();
+}
+
+void NodeRx(Ptr<NetDevice> dev, Ptr<const Packet> p) {
+  uint32_t nodeId = dev->GetNode()->GetId();
+  nodeRxBytes[nodeId] += p->GetSize();
+}
+
+static const uint64_t interval_ns = 100000; // 100μs
+
+void PrintBw(FILE* outFile) {
+  double interval_s = double (interval_ns) * 1e-9;
+  for (auto &kv : nodeTxBytes) {
+    uint32_t id = kv.first;
+    double txGbps = kv.second * 8.0 / interval_s / 1e9;
+    double rxGbps = nodeRxBytes[id] * 8.0 / interval_s / 1e9;
+    fprintf(outFile, "%ld\t%d\t%.4lf\t%.4lf \n", Simulator::Now().GetNanoSeconds() - 2000000000, id, txGbps, rxGbps);
+    // 重置
+    kv.second = 0;
+    nodeRxBytes[id] = 0;
+  }
+  // 再次调度
+  Simulator::Schedule (NanoSeconds (interval_ns), &PrintBw, outFile);
+}
 
 /**
  * Read flow input from file "flowf"
@@ -747,6 +778,11 @@ int main(int argc, char *argv[]) {
                 conf >> v;
                 flow_input_file = v;
                 std::cerr << "FLOW_INPUT_FILE\t\t\t" << flow_input_file << "\n";
+            } else if (key.compare("NODE_BANDWIDTH_FILE") == 0) {
+                std::string v;
+                conf >> v;
+                bw_output_file = v;
+                std::cerr << "NODE_BANDWIDTH_FILE\t\t\t" << bw_output_file << "\n";
             } else if (key.compare("CNP_OUTPUT_FILE") == 0) {
                 std::string v;
                 conf >> v;
@@ -1430,6 +1466,13 @@ int main(int argc, char *argv[]) {
             // create and install RdmaDriver
             Ptr<RdmaDriver> rdma = CreateObject<RdmaDriver>();
             Ptr<Node> node = n.Get(i);
+
+            for (uint32_t j = 0; j < node->GetNDevices(); ++j) {
+                Ptr<NetDevice> dev = node->GetDevice(j);
+                dev->TraceConnectWithoutContext ("PhyTxEnd",MakeBoundCallback (&NodeTx, dev));
+                dev->TraceConnectWithoutContext ("PhyRxEnd",MakeBoundCallback (&NodeRx, dev));
+            }
+
             rdma->SetNode(node);
             rdma->SetRdmaHw(rdmaHw);
 
@@ -1742,6 +1785,9 @@ int main(int argc, char *argv[]) {
     }
 
     topof.close();
+
+    bw_output = fopen(bw_output_file.c_str(), "w");
+    Simulator::Schedule(Seconds(flowgen_start_time), &PrintBw, bw_output);
 
     // schedule link down
     if (link_down_time > 0) {
