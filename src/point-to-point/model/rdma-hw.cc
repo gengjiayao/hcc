@@ -230,7 +230,7 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
     } else if (m_cc_mode == 7) {
         qp->tmly.m_curRate = m_bps;
     }
-    print_rate(PeekPointer(qp));
+    // print_rate(PeekPointer(qp));
 
     // Notify Nic
     m_nic[nic_idx].dev->NewQp(qp);
