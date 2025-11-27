@@ -349,10 +349,9 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
         seqh.SetSport(ch.udp.dport);
         seqh.SetDport(ch.udp.sport);
 
-        // check nhop, if more than 1, remove the last hop info
-        if (ch.udp.ih.nhop > 1) {
-            int last_hop = --ch.udp.ih.nhop;
-            memset(&ch.udp.ih.hop[last_hop], 0, sizeof(ch.udp.ih.hop[last_hop]));
+        // clear the in-hop info
+        for (int i = 0; i < ch.udp.ih.nhop; i++) {
+            memset(&ch.udp.ih.hop[i], 0, sizeof(ch.udp.ih.hop[i]));
         }
         seqh.SetIntHeader(ch.udp.ih);
 
