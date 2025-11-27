@@ -348,11 +348,6 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
         seqh.SetPG(ch.udp.pg);
         seqh.SetSport(ch.udp.dport);
         seqh.SetDport(ch.udp.sport);
-
-        // clear the in-hop info
-        for (int i = 0; i < ch.udp.ih.nhop; i++) {
-            memset(&ch.udp.ih.hop[i], 0, sizeof(ch.udp.ih.hop[i]));
-        }
         seqh.SetIntHeader(ch.udp.ih);
 
         if (m_irn) {
