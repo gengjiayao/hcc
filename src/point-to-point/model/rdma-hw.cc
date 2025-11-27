@@ -1133,7 +1133,7 @@ void RdmaHw::HandleRccRequest(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomH
 
     // TODO: this is send rate, not receive rate
     uint32_t nic_idx = GetNicIdxOfRxQp(rx_qp);
-    DataRate rate = m_nic[nic_idx].dev->GetDataRate() / m_rate_flow_ctl_set.size();
+    DataRate rate = m_nic[nic_idx].dev->GetDataRate() * 1.05 / m_rate_flow_ctl_set.size();
     uint32_t rate_data = rate.GetBitRate() / 1000000; // in Mbps
 
     for (auto &it : m_rate_flow_ctl_set) {
