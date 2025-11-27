@@ -92,7 +92,7 @@ TypeId RdmaHw::GetTypeId(void) {
             .AddAttribute(
                 "UtilHigh",
                 "The upper bound of Target Utilization of the bottleneck bandwidth, by default 98%",
-                DoubleValue(0.98), MakeDoubleAccessor(&RdmaHw::m_utilHigh),
+                DoubleValue(1.05), MakeDoubleAccessor(&RdmaHw::m_utilHigh),
                 MakeDoubleChecker<double>())
             .AddAttribute("RateBound", "Bound packet sending by rate, for test only",
                           BooleanValue(true), MakeBooleanAccessor(&RdmaHw::m_rateBound),
