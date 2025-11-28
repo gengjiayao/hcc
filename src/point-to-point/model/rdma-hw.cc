@@ -402,7 +402,6 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
     }
 
     uint64_t bdp = 104000;
-    uint64_t avg = m_rate_flow_ctl_set.empty() ? 1 : m_rate_flow_ctl_set.size();
     FlowStatTag fst;
     if (p->PeekPacketTag(fst)) {
         // just for flow_start, ignore flow_star_end.
@@ -410,15 +409,12 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
             if (flow_size > bdp) {
                 HandleRccRequest(rxQp, p, ch);
             }
+        } else if (fst.GetType() == FlowStatTag::FLOW_START) {
+            HandleRccRemove(rxQp, p, ch);
         }
     } else {
         std::cout << "ERROR: no FlowStatTag in ReceiveUdp\n";
         exit(1);
-    }
-
-    uint32_t currentSeq = rxQp->ReceiverNextExpectedSeq;
-    if (currentSeq + bdp / avg >= flow_size) {
-        HandleRccRemove(rxQp, p, ch);
     }
 
     return 0;
