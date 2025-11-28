@@ -23,6 +23,7 @@ config_template = """TOPOLOGY_FILE config/{topo}.txt
 FLOW_FILE config/{flow}.txt
 
 FLOW_INPUT_FILE mix/output/{id}/{id}_in.txt
+FLOW_BW_OUTPUT_FILE mix/output/{id}/{id}_flow_bw.txt
 NODE_BANDWIDTH_FILE mix/output/{id}/{id}_out_bw.txt
 CNP_OUTPUT_FILE mix/output/{id}/{id}_out_cnp.txt
 FCT_OUTPUT_FILE mix/output/{id}/{id}_out_fct.txt
