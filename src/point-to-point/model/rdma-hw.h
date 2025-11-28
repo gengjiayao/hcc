@@ -156,6 +156,7 @@ class RdmaHw : public Object {
      * Rate CC
      ***********************/
     std::unordered_set<RdmaRxQueuePair*> m_rate_flow_ctl_set;
+    void SyncHwRate(Ptr<RdmaQueuePair> qp, DataRate target_cc_rate);
     void HandleRccRequest(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch);
     void HandleRccRemove(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch);
     void SendRateControlPacket(Ptr<RdmaRxQueuePair> qp, CustomHeader &ch, uint32_t rate);

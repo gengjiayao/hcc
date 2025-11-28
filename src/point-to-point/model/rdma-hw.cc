@@ -182,9 +182,12 @@ Ptr<RdmaQueuePair> RdmaHw::GetQp(uint64_t key) {
 }
 
 void print_rate(RdmaQueuePair *qp) {
-    std::cout << Settings::ip_to_node_id(qp->sip) << "\t"
-              << Simulator::Now().GetNanoSeconds() << "\t"
-              << qp->m_rate.GetBitRate() / 1000000000 << std::endl;
+    if (Settings::ip_to_node_id(qp->sip) == 0) {
+        double a = ((double) qp->hp.m_curRate.GetBitRate()) / 1000000000.0;
+        double b = ((double) qp->hp.m_grantRate.GetBitRate()) / 1000000000.0;
+        double c = ((double) qp->m_rate.GetBitRate()) / 1000000000.0;
+        std::cout << Settings::ip_to_node_id(qp->sip) << "\t" << Simulator::Now().GetNanoSeconds() - 2000000000 << "\t" << (a < b ? a : b) << "\t" << c << std::endl;
+    }
     Time time("1000ns");
     Simulator::Schedule(NanoSeconds(time), &print_rate, qp);
 }
@@ -512,6 +515,7 @@ int RdmaHw::ReceiveRate(Ptr<Packet> p, CustomHeader &ch) {
     DataRate curRate(rate_str);
 
     qp->hp.m_grantRate = curRate;
+    SyncHwRate(qp, qp->hp.m_curRate);
 
     return 0;
 }
@@ -1124,6 +1128,19 @@ void RdmaHw::HyperIncreaseMlx(Ptr<RdmaQueuePair> q) {
 /***********************
  * Rate CC
  ***********************/
+void RdmaHw::SyncHwRate(Ptr<RdmaQueuePair> qp, DataRate target_cc_rate) {
+    DataRate final_rate = target_cc_rate;
+
+    if (qp->hp.m_grantRate < final_rate) {
+        final_rate = qp->hp.m_grantRate;
+    }
+
+    if (final_rate < m_minRate) final_rate = m_minRate;
+    if (final_rate > qp->m_max_rate) final_rate = qp->m_max_rate;
+
+    ChangeRate(qp, final_rate);
+}
+
 void RdmaHw::HandleRccRequest(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomHeader &ch) {
     if (m_rate_flow_ctl_set.find(PeekPointer(rx_qp)) != m_rate_flow_ctl_set.end()) {
         std::cout << "Warning: duplicated RCC request for flow!" << std::endl;
@@ -1133,7 +1150,7 @@ void RdmaHw::HandleRccRequest(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomH
 
     // TODO: this is send rate, not receive rate
     uint32_t nic_idx = GetNicIdxOfRxQp(rx_qp);
-    DataRate rate = m_nic[nic_idx].dev->GetDataRate() * 1.05 / m_rate_flow_ctl_set.size();
+    DataRate rate = m_nic[nic_idx].dev->GetDataRate() / m_rate_flow_ctl_set.size();
     uint32_t rate_data = rate.GetBitRate() / 1000000; // in Mbps
 
     for (auto &it : m_rate_flow_ctl_set) {
@@ -1336,27 +1353,21 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
 #endif
             }
 
-            // rcc + hpcc
-            DataRate final_rate = new_rate;
-            if (qp->hp.m_grantRate < new_rate) final_rate = qp->hp.m_grantRate;
-            if (final_rate < m_minRate) final_rate = m_minRate;
-
-            // update to the nic rate
-            if (updated_any) ChangeRate(qp, final_rate);
-            if (!fast_react) {
-                if (updated_any) {
+            if (updated_any) {
+                if (!fast_react) {
                     qp->hp.m_curRate = new_rate;
                     qp->hp.m_incStage = new_incStage;
-                }
-                if (m_multipleRate) {
-                    // for per hop (per hop R)
-                    for (uint32_t i = 0; i < ih.nhop; i++) {
-                        if (updated[i]) {
-                            qp->hp.hopState[i].Rc = new_rate_per_hop[i];
-                            qp->hp.hopState[i].incStage = new_incStage_per_hop[i];
+
+                    if (m_multipleRate) {
+                        for (uint32_t i = 0; i < ih.nhop; i++) {
+                            if (updated[i]) {
+                                qp->hp.hopState[i].Rc = new_rate_per_hop[i];
+                                qp->hp.hopState[i].incStage = new_incStage_per_hop[i];
+                            }
                         }
                     }
                 }
+                SyncHwRate(qp, new_rate);
             }
         }
         if (!fast_react) {
