@@ -458,7 +458,7 @@ bool QbbNetDevice::TransmitStart(Ptr<Packet> p) {
     m_txMachineState = BUSY;
     m_currentPkt = p;
     m_phyTxBeginTrace(m_currentPkt);
-    Time txTime = Seconds(m_bps.CalculateTxTime(p->GetSize()));
+    Time txTime = Seconds((m_bps / 1.02).CalculateTxTime(p->GetSize()));
     Time txCompleteTime = txTime + m_tInterframeGap;
     NS_LOG_LOGIC("Schedule TransmitCompleteEvent in " << txCompleteTime.GetSeconds() << "sec");
     Simulator::Schedule(txCompleteTime, &QbbNetDevice::TransmitComplete, this);
