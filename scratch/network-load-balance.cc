@@ -104,6 +104,7 @@ FILE *voq_detail_output = NULL;
 FILE *uplink_output = NULL;
 FILE *conn_output = NULL;
 FILE *bw_output = NULL;
+FILE *flow_bw_output = NULL;
 FILE *qlen_output = NULL;
 
 std::string data_rate, link_delay, topology_file, flow_file;
@@ -118,6 +119,7 @@ std::string uplink_mon_file = "uplink.txt";
 std::string conn_mon_file = "conn.txt";
 std::string est_error_output_file = "est_error.txt";
 std::string bw_output_file = "bw.txt";
+std::string flow_bw_output_file = "flow_bw.txt";
 
 // CC params
 double alpha_resume_interval = 55, rp_timer = 300, ewma_gain = 1 / 16;
@@ -224,6 +226,59 @@ void PrintBw(FILE* outFile) {
   }
   // 再次调度
   Simulator::Schedule (NanoSeconds (interval_ns), &PrintBw, outFile);
+}
+
+struct FlowState {
+    uint64_t lastBytesSent = 0;
+};
+
+std::map<std::string, FlowState> flowBwHistory;
+void PrintFlowBw(FILE* outFile) {
+    double interval_s = double(interval_ns) * 1e-9;
+    uint64_t now_ns = Simulator::Now().GetNanoSeconds();
+
+    for (uint32_t i = 0; i < Settings::node_num; i++) {
+        Ptr<Node> node = n.Get(i);
+        if (node->GetNodeType() == 0) {
+            Ptr<RdmaDriver> rdmaDriver = node->GetObject<RdmaDriver>();
+            if (!rdmaDriver) continue;
+            Ptr<RdmaHw> rdmaHw = rdmaDriver->m_rdma;
+
+            for (auto &entry : rdmaHw->m_qpMap) {
+                Ptr<RdmaQueuePair> qp = entry.second;
+
+                uint32_t srcId = Settings::ip_to_node_id(qp->sip);
+                uint32_t dstId = Settings::ip_to_node_id(qp->dip);
+                std::string flowKey = std::to_string(srcId) + "-" +
+                                      std::to_string(dstId) + "-" +
+                                      std::to_string(qp->sport) + "-" +
+                                      std::to_string(qp->dport);
+
+                uint64_t currentBytesSent = qp->m_size - qp->GetBytesLeft();
+
+                uint64_t deltaBytes = 0;
+                if (flowBwHistory.find(flowKey) == flowBwHistory.end()) {
+                    deltaBytes = currentBytesSent;
+                } else {
+                    if (currentBytesSent >= flowBwHistory[flowKey].lastBytesSent) {
+                        deltaBytes = currentBytesSent - flowBwHistory[flowKey].lastBytesSent;
+                    } else {
+                        deltaBytes = 0;
+                    }
+                }
+
+                flowBwHistory[flowKey].lastBytesSent = currentBytesSent;
+
+                // 格式: Time(ns) Src Dst Sport Dport Throughput(Gbps)
+                if (deltaBytes > 0) {
+                    double bwGbps = deltaBytes * 8.0 / interval_s / 1e9;
+                    fprintf(outFile, "%ld\t%u\t%u\t%u\t%u\t%.4lf\n", now_ns - 2000000000, srcId, dstId, qp->sport, qp->dport, bwGbps);
+                }
+            }
+        }
+    }
+
+    Simulator::Schedule(NanoSeconds(interval_ns), &PrintFlowBw, outFile);
 }
 
 /**
@@ -798,6 +853,9 @@ int main(int argc, char *argv[]) {
                 conf >> v;
                 bw_output_file = v;
                 std::cerr << "NODE_BANDWIDTH_FILE\t\t\t" << bw_output_file << "\n";
+            } else if (key.compare("FLOW_BW_OUTPUT_FILE") == 0) {
+                conf >> flow_bw_output_file;
+                std::cerr << "FLOW_BW_OUTPUT_FILE\t\t\t" << flow_bw_output_file << "\n";
             } else if (key.compare("CNP_OUTPUT_FILE") == 0) {
                 std::string v;
                 conf >> v;
@@ -1809,6 +1867,9 @@ int main(int argc, char *argv[]) {
     bw_output = fopen(bw_output_file.c_str(), "w");
     Simulator::Schedule(Seconds(flowgen_start_time), &PrintBw, bw_output);
 
+    flow_bw_output = fopen(flow_bw_output_file.c_str(), "w");
+    Simulator::Schedule(Seconds(flowgen_start_time), &PrintFlowBw, flow_bw_output);
+
     // schedule link down
     if (link_down_time > 0) {
         Simulator::Schedule(Seconds(flowgen_start_time) + MicroSeconds(link_down_time),
@@ -1872,5 +1933,6 @@ int main(int argc, char *argv[]) {
     endt = clock();
     fclose(bw_output);
     fclose(qlen_output);
+    fclose(flow_bw_output);
     std::cerr << (double)(endt - begint) / CLOCKS_PER_SEC << "\n";
 }
