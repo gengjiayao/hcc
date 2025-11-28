@@ -85,6 +85,7 @@ double pause_time = 5;  // PFC pause, microseconds
 double flowgen_start_time = 2.0, flowgen_stop_time = 2.5, simulator_extra_time = 0.1;
 // queue length monitoring time is not used in this simulator
 // uint32_t qlen_dump_interval = 100000000, qlen_mon_interval = 1000;  // ns
+uint32_t qlen_mon_interval = 1000;  // ns
 uint64_t qlen_mon_start;               // ns
 uint64_t qlen_mon_end;                 // ns
 uint32_t switch_mon_interval = 10000;  // ns
@@ -103,6 +104,7 @@ FILE *voq_detail_output = NULL;
 FILE *uplink_output = NULL;
 FILE *conn_output = NULL;
 FILE *bw_output = NULL;
+FILE *qlen_output = NULL;
 
 std::string data_rate, link_delay, topology_file, flow_file;
 std::string flow_input_file = "flow.txt";
@@ -537,7 +539,7 @@ void get_pfc(FILE *fout, Ptr<QbbNetDevice> dev, uint32_t type) {
 }
 
 /*******************************************************************/
-#if (false)
+#if (true)
 
 /**
  * @brief Qlen monitoring at switches (output: qlen.txt), I think "periodically"...
@@ -552,37 +554,50 @@ struct QlenDistribution {
     }
 };
 
+static std::map<std::pair<uint32_t, uint32_t>, uint32_t> topology_cache;
 map<uint32_t, map<uint32_t, QlenDistribution>> queue_result;
 void monitor_buffer(FILE *qlen_output, NodeContainer *n) {
-    /*******************************************************************/
-    /************************** UNUSED NOW *****************************/
-    /*******************************************************************/
+    uint64_t now = Simulator::Now().GetTimeStep();
+
     for (uint32_t i = 0; i < n->GetN(); i++) {
-        if (n->Get(i)->GetNodeType() == 1) {  // is switch
+        if (n->Get(i)->GetNodeType() == 1) {
             Ptr<SwitchNode> sw = DynamicCast<SwitchNode>(n->Get(i));
-            if (queue_result.find(i) == queue_result.end()) queue_result[i];
+
             for (uint32_t j = 1; j < sw->GetNDevices(); j++) {
-                uint32_t size = 0;
-                for (uint32_t k = 0; k < SwitchMmu::qCnt; k++)
-                    size += sw->m_mmu->egress_bytes[j][k];
-                queue_result[i][j].add(size);
+                uint32_t size = sw->m_mmu->m_usedEgressPortBytes[j];
+
+                if (size > 0) {
+                    uint32_t neighborId = 999999; // 默认未知 ID
+                    std::pair<uint32_t, uint32_t> key = {i, j};
+
+                    if (topology_cache.find(key) != topology_cache.end()) {
+                        neighborId = topology_cache[key];
+                    } else {
+                        Ptr<NetDevice> dev = sw->GetDevice(j);
+                        Ptr<Channel> ch = dev->GetChannel();
+
+                        if (ch) {
+                            for (std::size_t k = 0; k < ch->GetNDevices(); ++k) {
+                                Ptr<NetDevice> otherDev = ch->GetDevice(k);
+                                if (otherDev != dev) {
+                                    neighborId = otherDev->GetNode()->GetId();
+                                    break;
+                                }
+                            }
+                        }
+                        topology_cache[key] = neighborId;
+                    }
+
+                    fprintf(qlen_output, "%lu %u %u %u\n", now, i, neighborId, size);
+                }
             }
         }
     }
-    if (Simulator::Now().GetTimeStep() % qlen_dump_interval == 0) {
-        fprintf(qlen_output, "time: %lu\n", Simulator::Now().GetTimeStep());
-        for (auto &it0 : queue_result) {
-            for (auto &it1 : it0.second) {
-                fprintf(qlen_output, "%u %u", it0.first, it1.first);
-                auto &dist = it1.second.cnt;
-                for (uint32_t i = 0; i < dist.size(); i++) fprintf(qlen_output, " %u", dist[i]);
-                fprintf(qlen_output, "\n");
-            }
-        }
-        fflush(qlen_output);
-    }
-    if (Simulator::Now().GetTimeStep() < qlen_mon_end)
+
+    // 递归调度：直到 10秒 (10^10 ns)
+    if (now < 10000000000) {
         Simulator::Schedule(NanoSeconds(qlen_mon_interval), &monitor_buffer, qlen_output, n);
+    }
 }
 #endif
 /*******************************************************************/
@@ -1788,7 +1803,10 @@ int main(int argc, char *argv[]) {
 
     topof.close();
 
-    // bw_output = fopen(bw_output_file.c_str(), "w");
+    qlen_output = fopen(qlen_mon_file.c_str(), "w");
+    Simulator::Schedule(Seconds(flowgen_start_time), &monitor_buffer, qlen_output, &n);
+
+    bw_output = fopen(bw_output_file.c_str(), "w");
     // Simulator::Schedule(Seconds(flowgen_start_time), &PrintBw, bw_output);
 
     // schedule link down
@@ -1852,5 +1870,7 @@ int main(int argc, char *argv[]) {
     NS_LOG_INFO("Total number of packets: " << RdmaHw::nAllPkts);
     NS_LOG_INFO("Done.");
     endt = clock();
+    fclose(bw_output);
+    fclose(qlen_output);
     std::cerr << (double)(endt - begint) / CLOCKS_PER_SEC << "\n";
 }
