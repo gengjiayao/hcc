@@ -306,7 +306,6 @@ void QbbHelper::GetTraceFromPacket(TraceFormat &tr, Ptr<QbbNetDevice> dev, Ptr<c
             tr.data.ts = hdr.udp.ih.GetTs();
             tr.data.pg = hdr.udp.pg;
             break;
-        case 0xFB:
         case 0xFC:
         case 0xFD:
             tr.ack.sport = hdr.ack.sport;

@@ -1789,8 +1789,8 @@ int main(int argc, char *argv[]) {
 
     topof.close();
 
-    bw_output = fopen(bw_output_file.c_str(), "w");
-    Simulator::Schedule(Seconds(flowgen_start_time), &PrintBw, bw_output);
+    // bw_output = fopen(bw_output_file.c_str(), "w");
+    // Simulator::Schedule(Seconds(flowgen_start_time), &PrintBw, bw_output);
 
     // schedule link down
     if (link_down_time > 0) {

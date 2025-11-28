@@ -228,7 +228,7 @@ void SwitchNode::SendToDevContinue(Ptr<Packet> p, CustomHeader &ch) {
         if (ch.l3Prot == 0xFF || ch.l3Prot == 0xFE ||
             (m_ackHighPrio &&
              (ch.l3Prot == 0xFD ||
-              ch.l3Prot == 0xFC ||ch.l3Prot == 0xFB))) {  // QCN or PFC or ACK/NACK, go highest priority
+              ch.l3Prot == 0xFC))) {  // QCN or PFC or ACK/NACK, go highest priority
             qIndex = 0;               // high priority
         } else {
             qIndex = (ch.l3Prot == 0x06 ? 1 : ch.udp.pg);  // if TCP, put to queue 1. Otherwise, it
@@ -257,7 +257,7 @@ int SwitchNode::GetOutDev(Ptr<Packet> p, CustomHeader &ch) {
     // entry found
     const auto &nexthops = entry->second;
     bool control_pkt =
-        (ch.l3Prot == 0xFF || ch.l3Prot == 0xFE || ch.l3Prot == 0xFD || ch.l3Prot == 0xFC || ch.l3Prot == 0xFB);
+        (ch.l3Prot == 0xFF || ch.l3Prot == 0xFE || ch.l3Prot == 0xFD || ch.l3Prot == 0xFC);
 
     if (Settings::lb_mode == 0 || control_pkt) {  // control packet (ACK, NACK, PFC, QCN)
         return DoLbFlowECMP(p, ch, nexthops);     // ECMP routing path decision (4-tuple)
