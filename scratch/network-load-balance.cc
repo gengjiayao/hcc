@@ -1807,7 +1807,7 @@ int main(int argc, char *argv[]) {
     Simulator::Schedule(Seconds(flowgen_start_time), &monitor_buffer, qlen_output, &n);
 
     bw_output = fopen(bw_output_file.c_str(), "w");
-    // Simulator::Schedule(Seconds(flowgen_start_time), &PrintBw, bw_output);
+    Simulator::Schedule(Seconds(flowgen_start_time), &PrintBw, bw_output);
 
     // schedule link down
     if (link_down_time > 0) {
