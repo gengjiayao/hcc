@@ -409,7 +409,7 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
             if (flow_size > bdp) {
                 HandleRccRequest(rxQp, p, ch);
             }
-        } else if (fst.GetType() == FlowStatTag::FLOW_START) {
+        } else if (fst.GetType() == FlowStatTag::FLOW_END) {
             HandleRccRemove(rxQp, p, ch);
         }
     } else {
