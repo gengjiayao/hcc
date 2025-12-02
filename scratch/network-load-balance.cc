@@ -1479,6 +1479,7 @@ int main(int argc, char *argv[]) {
     topo2bdpMap[std::string("leaf_spine_8_100G_OS1")] = 104000;  // RTT=8320 --> all 100G links
     topo2bdpMap[std::string("leaf_spine_8_100G_OS2")] = 104000;  // RTT=8320 --> all 100G links
     topo2bdpMap[std::string("leaf_spine_8_100G_OS4")] = 104000;  // RTT=8320 --> all 100G links
+    topo2bdpMap[std::string("leaf_spine_12_100G_OS4")] = 104000;  // RTT=8320 --> all 100G links
     topo2bdpMap[std::string("leaf_spine_16_100G_OS1")] = 104000;  // RTT=8320 --> all 100G links
     topo2bdpMap[std::string("leaf_spine_128_100G_OS2")] = 104000;  // RTT=8320 --> all 100G links
     topo2bdpMap[std::string("leaf_spine_64_100G_OS1")] = 104000;  // RTT=8320 --> all 100G links
