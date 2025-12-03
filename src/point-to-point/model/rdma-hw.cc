@@ -1144,7 +1144,8 @@ void RdmaHw::SyncHwRate(Ptr<RdmaQueuePair> qp, DataRate target_cc_rate) {
 void RdmaHw::HandleRccRequest(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomHeader &ch) {
     if (m_rate_flow_ctl_set.find(PeekPointer(rx_qp)) != m_rate_flow_ctl_set.end()) {
         std::cout << "Warning: duplicated RCC request for flow!" << std::endl;
-        exit(1);
+        // exit(1);
+        return;
     }
     m_rate_flow_ctl_set.emplace(PeekPointer(rx_qp));
 
