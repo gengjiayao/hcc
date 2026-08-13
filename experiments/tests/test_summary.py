@@ -129,6 +129,14 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(result, [])
         self.assertIn("flow hash mismatch", errors[0])
 
+    def test_paired_difference_skips_absent_campaign_arm(self):
+        result, errors = paired_rows([metric_row("guard", 1, 2)], [{
+            "name": "partial", "stages": ["components"],
+            "vary": "cc", "a": "guard", "b": "hpcc",
+        }])
+        self.assertEqual(result, [])
+        self.assertEqual(errors, [])
+
 
 if __name__ == "__main__":
     unittest.main()

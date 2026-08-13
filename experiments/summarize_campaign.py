@@ -481,6 +481,13 @@ def paired_rows(
             if (not stages or str(row["stage"]) in stages)
             and all(row.get(key) == value for key, value in where.items())
         ]
+        observed_variants = {row.get(vary) for row in eligible}
+        # A bounded/partial campaign may omit an entire comparison arm (for
+        # example, --max-runs stops before the last-hop-INT stage).  In that
+        # case the comparison is not attempted.  Once both arms exist, every
+        # seed/metric must still form a complete hash-matched pair below.
+        if a not in observed_variants or b not in observed_variants:
+            continue
         pairs: Dict[Tuple[Tuple[str, object], ...], Dict[object, Mapping[str, object]]] = {}
         for row in eligible:
             pairs.setdefault(
