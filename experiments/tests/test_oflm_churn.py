@@ -57,6 +57,8 @@ class OflmChurnAnalysisTests(unittest.TestCase):
         self.assertEqual(metrics["active_set_area_ns"], 160)
         self.assertEqual(metrics["churn_active_set_area_ns"], 60)
         self.assertEqual(metrics["churn_release_lead_median_ns"], 40)
+        self.assertEqual(metrics["churn_remaining_bytes_mean"], 1000)
+        self.assertEqual(metrics["churn_remaining_bytes_median"], 1000)
         self.assertEqual(metrics["trace_max_active_flows"], 2)
         self.assertEqual(metrics["proactive_release_fraction"], 0.5)
 
@@ -89,6 +91,8 @@ class OflmChurnAnalysisTests(unittest.TestCase):
         self.assertEqual(metrics["churn"]["flows"], 2)
         self.assertEqual(metrics["le_bdp_churn"]["mean_slowdown"], 2.0)
         self.assertEqual(metrics["gt_bdp_churn"]["mean_slowdown"], 3.0)
+        self.assertEqual(metrics["gt_bdp_churn"]["mean_fct_us"], 0.3)
+        self.assertEqual(metrics["gt_bdp_churn"]["p95_fct_us"], 0.3)
 
     def test_target_queue_metrics_select_receiver_egress(self):
         with tempfile.TemporaryDirectory() as directory:
