@@ -86,6 +86,29 @@ class GenerateWorkloadTest(unittest.TestCase):
         self.assertEqual(sorted(flow.src for flow in second_round), list(range(15)))
         self.assertTrue(all(flow.dst == 63 for flow in flows))
 
+    def test_all_to_all_seeded_jitter_changes_order_with_fixed_pairs(self):
+        common = [
+            "--workload", "all-to-all", "--output", "unused",
+            "--hosts", "16", "--duration-ms", "20",
+            "--all-to-all-jitter-us", "0.5", "--priority-group", "4",
+        ]
+        first = generate_workload.generate(generate_workload.parse_args(
+            common + ["--seed", "1"]))
+        repeat = generate_workload.generate(generate_workload.parse_args(
+            common + ["--seed", "1"]))
+        second = generate_workload.generate(generate_workload.parse_args(
+            common + ["--seed", "2"]))
+        self.assertEqual(first, repeat)
+        self.assertNotEqual(first, second)
+        expected_pairs = {(src, dst) for src in range(16) for dst in range(16)
+                          if src != dst}
+        for flows in (first, second):
+            self.assertEqual({(flow.src, flow.dst) for flow in flows}, expected_pairs)
+            self.assertEqual({flow.pg for flow in flows}, {4})
+            self.assertLessEqual(
+                max(flow.start_s for flow in flows) -
+                min(flow.start_s for flow in flows), 0.5e-6)
+
     def test_oflm_churn_has_fixed_rate_bdp_mix_behind_active_elephants(self):
         args = generate_workload.parse_args([
             "--workload", "oflm-churn", "--output", "unused",

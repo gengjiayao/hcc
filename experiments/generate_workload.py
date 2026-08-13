@@ -83,18 +83,27 @@ def make_ring_allreduce(hosts, tensor_bytes, pg, start_s, duration_s):
     return flows
 
 
-def make_all_to_all(hosts, flow_bytes, pg, start_s, duration_s):
+def make_all_to_all(hosts, flow_bytes, pg, start_s, duration_s,
+                    seed=None, jitter_us=0.0):
+    pairs = [
+        (src, dst)
+        for src in range(hosts)
+        for dst in range(hosts)
+        if src != dst
+    ]
+    rng = random.Random(seed)
+    if jitter_us > 0:
+        rng.shuffle(pairs)
     flows = []
-    pair_count = hosts * (hosts - 1)
-    pair_index = 0
-    for src in range(hosts):
-        for dst in range(hosts):
-            if src == dst:
-                continue
+    pair_count = len(pairs)
+    for pair_index, (src, dst) in enumerate(pairs):
+        if jitter_us > 0:
+            flow_start = start_s + duration_s * 0.20 + rng.uniform(
+                0, jitter_us * 1e-6)
+        else:
             fraction = (pair_index + 1) / float(pair_count + 1)
             flow_start = start_s + duration_s * (0.20 + 0.60 * fraction)
-            flows.append(Flow(src, dst, pg, flow_bytes, flow_start))
-            pair_index += 1
+        flows.append(Flow(src, dst, pg, flow_bytes, flow_start))
     return flows
 
 
@@ -172,6 +181,10 @@ def generate(args):
                      args.incast_jitter_us) * 1e-6
     if incast_span_s > duration_s * 0.65:
         raise ValueError("incast rounds and jitter exceed the workload duration")
+    if not math.isfinite(args.all_to_all_jitter_us) or args.all_to_all_jitter_us < 0:
+        raise ValueError("--all-to-all-jitter-us must be finite and non-negative")
+    if args.all_to_all_jitter_us * 1e-6 > duration_s * 0.80:
+        raise ValueError("--all-to-all-jitter-us exceeds the workload duration")
     if not 1 <= args.max_flows <= HARD_MAX_FLOWS:
         raise ValueError("--max-flows must be in [1, {}]".format(HARD_MAX_FLOWS))
 
@@ -197,7 +210,7 @@ def generate(args):
     elif args.workload == "all-to-all":
         flows = make_all_to_all(
             args.hosts, args.flow_bytes, args.priority_group,
-            args.base_time, duration_s)
+            args.base_time, duration_s, args.seed, args.all_to_all_jitter_us)
     elif args.workload == "oflm-churn":
         flows = make_oflm_churn(
             args.hosts, args.oflm_bdp_bytes, args.oflm_elephant_flows,
@@ -305,6 +318,9 @@ def parse_args(argv=None):
     parser.add_argument("--background-flows", type=positive_int, default=512)
     parser.add_argument("--background-flow-bytes", type=positive_int, default=64 * 1024)
     parser.add_argument("--tensor-bytes", type=positive_int, default=4 * 1024 * 1024)
+    parser.add_argument(
+        "--all-to-all-jitter-us", type=float, default=0.0,
+        help="seeded per-flow uniform start jitter for all-to-all (default: legacy spread)")
     parser.add_argument("--oflm-bdp-bytes", type=positive_int,
                         default=DEFAULT_OFLM_BDP_BYTES)
     parser.add_argument("--oflm-elephant-flows", type=positive_int, default=8)
@@ -365,6 +381,7 @@ def main(argv=None):
             "background_flows": args.background_flows,
             "background_flow_bytes": args.background_flow_bytes,
             "tensor_bytes": args.tensor_bytes,
+            "all_to_all_jitter_us": args.all_to_all_jitter_us,
             "oflm_bdp_bytes": args.oflm_bdp_bytes,
             "oflm_elephant_flows": args.oflm_elephant_flows,
             "oflm_elephant_bytes": args.oflm_elephant_bytes,
