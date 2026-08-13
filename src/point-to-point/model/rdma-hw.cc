@@ -163,9 +163,15 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardHpccFeedbackUpdates = 0;
     m_guardHpccValidFeedback = 0;
     m_guardHpccRateUpdatesApplied = 0;
+    m_guardHpccFullComputations = 0;
+    m_guardHpccFastComputations = 0;
     m_guardHpccActualRateChanges = 0;
     m_guardReactiveBindingUpdates = 0;
     m_guardGrantBindingUpdates = 0;
+    m_guardTieBindingUpdates = 0;
+    m_guardReactiveBindingRateChanges = 0;
+    m_guardGrantBindingRateChanges = 0;
+    m_guardTieBindingRateChanges = 0;
     m_guardIntHopsBeforeStrip = 0;
     m_guardIntHopsAfterStrip = 0;
     m_guardIntRecordsStripped = 0;
@@ -175,6 +181,7 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardCompletionReleases = 0;
     m_guardMaxActiveFlows = 0;
     m_guardLifecycleTraceSink = NULL;
+    m_guardControllerTraceSink = NULL;
     m_recoveryNacksGenerated = 0;
     m_recoveryNacksReceived = 0;
     m_irnNacksGenerated = 0;
@@ -715,7 +722,13 @@ int RdmaHw::ReceiveRate(Ptr<Packet> p, CustomHeader &ch) {
 
     qp->hp.m_grantRate = curRate;
     m_guardRateGrantsReceived++;
+    DataRate old_rate = qp->m_rate;
     SyncHwRate(qp, qp->hp.m_curRate);
+    const char *binding = qp->hp.m_curRate < qp->hp.m_grantRate
+                              ? "reactive"
+                              : qp->hp.m_grantRate < qp->hp.m_curRate ? "grant" : "tie";
+    TraceGuardControllerEvent(qp, "grant", qp->hp.m_curRate, binding,
+                              qp->m_rate != old_rate, false, 0, qp->snd_nxt, -1.0, -1.0);
 
     return 0;
 }
@@ -1017,6 +1030,12 @@ void RdmaHw::QpComplete(Ptr<RdmaQueuePair> qp) {
         Simulator::Cancel(qp->mlx.m_rpTimer);
     }
     if (qp->m_retransmit.IsRunning()) qp->m_retransmit.Cancel();
+
+    const char *binding = qp->hp.m_curRate < qp->hp.m_grantRate
+                              ? "reactive"
+                              : qp->hp.m_grantRate < qp->hp.m_curRate ? "grant" : "tie";
+    TraceGuardControllerEvent(qp, "complete", qp->hp.m_curRate, binding, false, false,
+                              0, qp->snd_nxt, -1.0, -1.0);
 
     // This callback will log info. It also calls deletetion the rxQp on the receiver
     m_qpCompleteCallback(qp);
@@ -1425,6 +1444,28 @@ bool RdmaHw::HandleRccRemove(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomHe
 
 void RdmaHw::ConfigureGuardLifecycleTrace(GuardLifecycleTraceSink *sink) {
     m_guardLifecycleTraceSink = sink;
+}
+
+void RdmaHw::ConfigureGuardControllerTrace(GuardControllerTraceSink *sink) {
+    m_guardControllerTraceSink = sink;
+}
+
+void RdmaHw::TraceGuardControllerEvent(Ptr<RdmaQueuePair> qp, const char *event_type,
+                                       DataRate hpcc_rate, const char *binding,
+                                       bool rate_changed, bool fast_react, uint32_t nhop,
+                                       uint32_t next_seq, double congestion_metric,
+                                       double threshold_ratio) {
+    GuardControllerTraceSink *sink = m_guardControllerTraceSink;
+    if (sink == NULL || sink->file == NULL) return;
+    sink->attempted++;
+    if (sink->written >= sink->max_lines) return;
+    fprintf(sink->file,
+            "%ld,%d,%u,%u,%s,%lu,%lu,%lu,%s,%u,%u,%u,%u,%.9f,%.9f,%.9f\n",
+            Simulator::Now().GetNanoSeconds(), qp->m_flow_id, qp->sip.Get(), qp->dip.Get(),
+            event_type, hpcc_rate.GetBitRate(), qp->hp.m_grantRate.GetBitRate(),
+            qp->m_rate.GetBitRate(), binding, rate_changed ? 1 : 0, fast_react ? 1 : 0,
+            nhop, next_seq, congestion_metric, m_targetUtil, threshold_ratio);
+    sink->written++;
 }
 
 void RdmaHw::TraceGuardRegistration(Ptr<RdmaRxQueuePair> rx_qp, uint64_t flow_size,
@@ -2302,6 +2343,11 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
 
             if (updated_any) {
                 m_guardHpccRateUpdatesApplied++;
+                if (fast_react) {
+                    m_guardHpccFastComputations++;
+                } else {
+                    m_guardHpccFullComputations++;
+                }
                 if (!fast_react) {
                     qp->hp.m_curRate = new_rate;
                     qp->hp.m_incStage = new_incStage;
@@ -2317,13 +2363,29 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
                 }
                 if (m_cc_mode == 11) {
                     DataRate old_rate = qp->m_rate;
+                    const char *binding = "tie";
                     if (new_rate < qp->hp.m_grantRate) {
                         m_guardReactiveBindingUpdates++;
-                    } else {
+                        binding = "reactive";
+                    } else if (qp->hp.m_grantRate < new_rate) {
                         m_guardGrantBindingUpdates++;
+                        binding = "grant";
+                    } else {
+                        m_guardTieBindingUpdates++;
                     }
                     SyncHwRate(qp, new_rate);  // guard: cap by grant rate
-                    if (qp->m_rate != old_rate) m_guardHpccActualRateChanges++;
+                    bool changed = qp->m_rate != old_rate;
+                    if (changed) {
+                        m_guardHpccActualRateChanges++;
+                        if (binding[0] == 'r') m_guardReactiveBindingRateChanges++;
+                        if (binding[0] == 'g') m_guardGrantBindingRateChanges++;
+                        if (binding[0] == 't') m_guardTieBindingRateChanges++;
+                    }
+                    double observed_metric = m_multipleRate ? -1.0 : qp->hp.u;
+                    double threshold_ratio = m_multipleRate ? -1.0 : max_c;
+                    TraceGuardControllerEvent(qp, "hpcc", new_rate, binding, changed,
+                                              fast_react, ih.nhop, next_seq,
+                                              observed_metric, threshold_ratio);
                 } else {
                     ChangeRate(qp, new_rate);  // vanilla HPCC
                 }

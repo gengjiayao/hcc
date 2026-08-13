@@ -6,6 +6,7 @@ from experiments.summarize_campaign import (
     confidence_interval,
     parse_guard_stats,
     parse_pfc,
+    parse_port_queue_summaries,
     paired_rows,
     percentile,
     queue_summary_metrics,
@@ -89,6 +90,26 @@ class SummaryTests(unittest.TestCase):
             self.assertEqual(metrics["queue_sample_count"], 100)
             self.assertEqual(metrics["queue_bytes_mean"], 12.5)
             self.assertEqual(metrics["queue_bytes_max"], 300)
+
+    def test_queue_summary_ignores_bounded_port_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "queue.txt"
+            path.write_text(
+                "samples 100\naverage_bytes 12.5\np95_bytes 100\n"
+                "p99_bytes 200\nmax_bytes 300\n"
+                "port node_id if_index neighbor_id samples positive_samples average_bytes "
+                "positive_average_bytes p95_bytes p99_bytes max_bytes tx_bytes\n"
+                "port 16 1 0 10 2 20 100 0 30 40 5000\n",
+                encoding="utf-8",
+            )
+            metrics = dict((metric, value) for metric, _category, value, _n
+                           in queue_summary_metrics(path))
+            self.assertEqual(metrics["queue_bytes_mean"], 12.5)
+            self.assertEqual(metrics["queue_bytes_max"], 300)
+            ports = parse_port_queue_summaries(path)
+            self.assertEqual(len(ports), 1)
+            self.assertEqual(ports[0]["neighbor_id"], 0)
+            self.assertEqual(ports[0]["p99_bytes"], 30)
 
     def test_t_interval_is_computed_across_seed_values(self):
         mean, low, high = confidence_interval([1, 2, 3, 4, 5])

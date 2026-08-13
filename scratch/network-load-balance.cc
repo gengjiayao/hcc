@@ -136,6 +136,7 @@ std::string fct_output_file = "fct.txt";
 std::string pfc_output_file = "pfc.txt";
 std::string guard_stats_output_file = "guard_stats.txt";
 std::string guard_lifecycle_trace_output_file = "guard_lifecycle.csv";
+std::string guard_controller_trace_output_file = "guard_controller.csv";
 std::string queue_stats_output_file = "queue_stats.txt";
 std::string cnp_output_file = "cnp.txt";
 std::string qlen_mon_file = "qlen.txt";
@@ -172,6 +173,9 @@ bool guard_keep_last_hop_int = false;
 bool guard_lifecycle_trace = false;
 uint64_t guard_lifecycle_trace_max_lines = 1024;
 const uint64_t guard_lifecycle_trace_hard_max_lines = 10000;
+bool guard_controller_trace = false;
+uint64_t guard_controller_trace_max_lines = 10000;
+const uint64_t guard_controller_trace_hard_max_lines = 100000;
 uint32_t int_multi = 1;
 bool rate_bound = true;
 unordered_map<uint64_t, uint32_t> rate2kmax, rate2kmin;
@@ -678,6 +682,18 @@ uint64_t queue_sample_count = 0;
 uint64_t queue_sample_sum_bytes = 0;
 uint32_t queue_sample_max_bytes = 0;
 std::map<uint32_t, uint64_t> queue_depth_histogram;
+struct PortQueueStats {
+    uint64_t samples;
+    uint64_t sum_bytes;
+    uint64_t sum_positive_bytes;
+    uint64_t positive_samples;
+    uint32_t max_bytes;
+    std::map<uint32_t, uint64_t> histogram;
+
+    PortQueueStats()
+        : samples(0), sum_bytes(0), sum_positive_bytes(0), positive_samples(0), max_bytes(0) {}
+};
+std::map<std::pair<uint32_t, uint32_t>, PortQueueStats> port_queue_stats;
 
 uint32_t queue_depth_percentile(uint32_t percentile) {
     if (queue_sample_count == 0) return 0;
@@ -709,6 +725,15 @@ void monitor_buffer(FILE *qlen_output, NodeContainer *n) {
                 queue_sample_sum_bytes += size;
                 queue_sample_max_bytes = std::max(queue_sample_max_bytes, size);
                 queue_depth_histogram[size]++;
+                PortQueueStats &port_stats = port_queue_stats[{i, j}];
+                port_stats.samples++;
+                port_stats.sum_bytes += size;
+                port_stats.max_bytes = std::max(port_stats.max_bytes, size);
+                port_stats.histogram[size]++;
+                if (size > 0) {
+                    port_stats.positive_samples++;
+                    port_stats.sum_positive_bytes += size;
+                }
 
                 if (detailed_monitoring && size > 0) {
                     uint32_t neighborId = 999999; // 默认未知 ID
@@ -1225,6 +1250,13 @@ int main(int argc, char *argv[]) {
                 conf >> guard_lifecycle_trace_max_lines;
                 std::cerr << "GUARD_LIFECYCLE_TRACE_MAX_LINES\t"
                           << guard_lifecycle_trace_max_lines << '\n';
+            } else if (key.compare("GUARD_CONTROLLER_TRACE") == 0) {
+                conf >> guard_controller_trace;
+                std::cerr << "GUARD_CONTROLLER_TRACE\t" << guard_controller_trace << '\n';
+            } else if (key.compare("GUARD_CONTROLLER_TRACE_MAX_LINES") == 0) {
+                conf >> guard_controller_trace_max_lines;
+                std::cerr << "GUARD_CONTROLLER_TRACE_MAX_LINES\t"
+                          << guard_controller_trace_max_lines << '\n';
             } else if (key.compare("INT_MULTI") == 0) {
                 conf >> int_multi;
                 std::cerr << "INT_MULTI\t\t\t\t" << int_multi << '\n';
@@ -1246,6 +1278,10 @@ int main(int argc, char *argv[]) {
                 conf >> guard_lifecycle_trace_output_file;
                 std::cerr << "GUARD_LIFECYCLE_TRACE_OUTPUT_FILE\t"
                           << guard_lifecycle_trace_output_file << '\n';
+            } else if (key.compare("GUARD_CONTROLLER_TRACE_OUTPUT_FILE") == 0) {
+                conf >> guard_controller_trace_output_file;
+                std::cerr << "GUARD_CONTROLLER_TRACE_OUTPUT_FILE\t"
+                          << guard_controller_trace_output_file << '\n';
             } else if (key.compare("QUEUE_STATS_OUTPUT_FILE") == 0) {
                 conf >> queue_stats_output_file;
                 std::cerr << "QUEUE_STATS_OUTPUT_FILE\t\t" << queue_stats_output_file << '\n';
@@ -1370,6 +1406,17 @@ int main(int argc, char *argv[]) {
                   << guard_lifecycle_trace_hard_max_lines << "]\n";
         return 1;
     }
+    if (guard_controller_trace && cc_mode != 11) {
+        std::cerr << "GUARD_CONTROLLER_TRACE requires CC_MODE 11\n";
+        return 1;
+    }
+    if (guard_controller_trace &&
+        (guard_controller_trace_max_lines == 0 ||
+         guard_controller_trace_max_lines > guard_controller_trace_hard_max_lines)) {
+        std::cerr << "GUARD_CONTROLLER_TRACE_MAX_LINES must be in [1, "
+                  << guard_controller_trace_hard_max_lines << "]\n";
+        return 1;
+    }
 
     GuardLifecycleTraceSink guard_lifecycle_trace_sink;
     if (guard_lifecycle_trace) {
@@ -1386,6 +1433,21 @@ int main(int argc, char *argv[]) {
                 "complete_ns,release_reason,remaining_bytes_at_release,"
                 "active_before_register,active_after_register,active_before_release,"
                 "active_after_release\n");
+    }
+    GuardControllerTraceSink guard_controller_trace_sink;
+    if (guard_controller_trace) {
+        guard_controller_trace_sink.file =
+            fopen(guard_controller_trace_output_file.c_str(), "w");
+        if (guard_controller_trace_sink.file == NULL) {
+            std::cerr << "Cannot open GUARD controller trace: "
+                      << guard_controller_trace_output_file << '\n';
+            return 1;
+        }
+        guard_controller_trace_sink.max_lines = guard_controller_trace_max_lines;
+        fprintf(guard_controller_trace_sink.file,
+                "time_ns,flow_id,sip,dip,event_type,hpcc_rate_bps,grant_rate_bps,"
+                "final_rate_bps,binding,rate_changed,fast_react,nhop,next_seq,"
+                "congestion_metric,effective_target,threshold_ratio\n");
     }
     // HPCC's congestion metric is normalized load plus a normalized queue
     // term, not physical link utilization alone.  Therefore lambda * 0.95
@@ -1740,6 +1802,9 @@ int main(int argc, char *argv[]) {
             rdmaHw->SetAttribute("GuardKeepLastHopInt", BooleanValue(guard_keep_last_hop_int));
             if (guard_lifecycle_trace) {
                 rdmaHw->ConfigureGuardLifecycleTrace(&guard_lifecycle_trace_sink);
+            }
+            if (guard_controller_trace) {
+                rdmaHw->ConfigureGuardControllerTrace(&guard_controller_trace_sink);
             }
             rdmaHw->SetAttribute("RateBound", BooleanValue(rate_bound));
             rdmaHw->SetAttribute("DctcpRateAI", DataRateValue(DataRate(dctcp_rate_ai)));
@@ -2148,6 +2213,15 @@ int main(int argc, char *argv[]) {
     Simulator::Stop(Seconds(flowgen_stop_time + 10.0));
     Simulator::Run();
 
+    if (guard_controller_trace) {
+        fprintf(guard_controller_trace_sink.file,
+                "# attempted %lu written %lu truncated %lu\n",
+                guard_controller_trace_sink.attempted, guard_controller_trace_sink.written,
+                guard_controller_trace_sink.attempted - guard_controller_trace_sink.written);
+        fclose(guard_controller_trace_sink.file);
+        guard_controller_trace_sink.file = NULL;
+    }
+
     if (guard_lifecycle_trace) {
         for (uint32_t i = 0; i < node_num; i++) {
             if (n.Get(i)->GetNodeType() != 0) continue;
@@ -2168,6 +2242,51 @@ int main(int argc, char *argv[]) {
     fprintf(queue_stats_output, "p95_bytes %u\n", queue_depth_percentile(95));
     fprintf(queue_stats_output, "p99_bytes %u\n", queue_depth_percentile(99));
     fprintf(queue_stats_output, "max_bytes %u\n", queue_sample_max_bytes);
+    fprintf(queue_stats_output,
+            "port node_id if_index neighbor_id samples positive_samples average_bytes "
+            "positive_average_bytes p95_bytes p99_bytes max_bytes tx_bytes\n");
+    for (auto const &entry : port_queue_stats) {
+        uint32_t node_id = entry.first.first;
+        uint32_t if_index = entry.first.second;
+        PortQueueStats const &stats = entry.second;
+        uint64_t rank95 = (stats.samples * 95 + 99) / 100;
+        uint64_t rank99 = (stats.samples * 99 + 99) / 100;
+        uint64_t cumulative = 0;
+        uint32_t p95 = 0, p99 = 0;
+        bool found_p95 = false, found_p99 = false;
+        for (auto const &bucket : stats.histogram) {
+            cumulative += bucket.second;
+            if (!found_p95 && cumulative >= rank95) {
+                p95 = bucket.first;
+                found_p95 = true;
+            }
+            if (!found_p99 && cumulative >= rank99) {
+                p99 = bucket.first;
+                found_p99 = true;
+            }
+        }
+        Ptr<SwitchNode> sw = DynamicCast<SwitchNode>(n.Get(node_id));
+        Ptr<NetDevice> dev = sw->GetDevice(if_index);
+        uint32_t neighbor_id = 999999;
+        Ptr<Channel> channel = dev->GetChannel();
+        if (channel != NULL) {
+            for (std::size_t k = 0; k < channel->GetNDevices(); ++k) {
+                Ptr<NetDevice> other = channel->GetDevice(k);
+                if (other != dev) {
+                    neighbor_id = other->GetNode()->GetId();
+                    break;
+                }
+            }
+        }
+        double average = stats.samples == 0 ? 0.0 :
+            static_cast<double>(stats.sum_bytes) / stats.samples;
+        double positive_average = stats.positive_samples == 0 ? 0.0 :
+            static_cast<double>(stats.sum_positive_bytes) / stats.positive_samples;
+        fprintf(queue_stats_output, "port %u %u %u %lu %lu %.3f %.3f %u %u %u %lu\n",
+                node_id, if_index, neighbor_id, stats.samples, stats.positive_samples,
+                average, positive_average, p95, p99, stats.max_bytes,
+                sw->GetTxBytesOutDev(if_index));
+    }
     fclose(queue_stats_output);
 
     FILE *guard_stats_output = fopen(guard_stats_output_file.c_str(), "w");
@@ -2177,7 +2296,10 @@ int main(int argc, char *argv[]) {
             "recovery_nacks_generated recovery_nacks_received irn_nacks_generated "
             "irn_nacks_received irn_retransmit_packets irn_retransmit_bytes "
             "timeout_recoveries hpcc_valid_feedback hpcc_rate_updates_applied "
+            "hpcc_full_computations hpcc_fast_computations "
             "hpcc_actual_rate_changes reactive_binding_updates grant_binding_updates "
+            "tie_binding_updates reactive_binding_rate_changes grant_binding_rate_changes "
+            "tie_binding_rate_changes "
             "int_hops_before_strip int_hops_after_strip int_records_stripped\n");
     uint64_t total_grants_sent = 0;
     uint64_t total_grants_received = 0;
@@ -2196,9 +2318,15 @@ int main(int argc, char *argv[]) {
     uint64_t total_timeout_recoveries = 0;
     uint64_t total_hpcc_valid_feedback = 0;
     uint64_t total_hpcc_rate_updates_applied = 0;
+    uint64_t total_hpcc_full_computations = 0;
+    uint64_t total_hpcc_fast_computations = 0;
     uint64_t total_hpcc_actual_rate_changes = 0;
     uint64_t total_reactive_binding_updates = 0;
     uint64_t total_grant_binding_updates = 0;
+    uint64_t total_tie_binding_updates = 0;
+    uint64_t total_reactive_binding_rate_changes = 0;
+    uint64_t total_grant_binding_rate_changes = 0;
+    uint64_t total_tie_binding_rate_changes = 0;
     uint64_t total_int_hops_before_strip = 0;
     uint64_t total_int_hops_after_strip = 0;
     uint64_t total_int_records_stripped = 0;
@@ -2208,7 +2336,7 @@ int main(int argc, char *argv[]) {
         Ptr<RdmaHw> hw = driver->m_rdma;
         fprintf(guard_stats_output,
                 "%u %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu "
-                "%lu %lu %lu %lu %lu %lu\n", i,
+                "%lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu\n", i,
                 hw->m_guardRateGrantsSent,
                 hw->m_guardRateGrantsReceived, hw->m_guardHpccFeedbackUpdates,
                 hw->m_guardRegistrations, hw->m_guardSelectedRegistrations,
@@ -2218,8 +2346,12 @@ int main(int argc, char *argv[]) {
                 hw->m_irnNacksReceived, hw->m_irnRetransmitPackets,
                 hw->m_irnRetransmitBytes, hw->m_timeoutRecoveries,
                 hw->m_guardHpccValidFeedback, hw->m_guardHpccRateUpdatesApplied,
+                hw->m_guardHpccFullComputations, hw->m_guardHpccFastComputations,
                 hw->m_guardHpccActualRateChanges, hw->m_guardReactiveBindingUpdates,
-                hw->m_guardGrantBindingUpdates, hw->m_guardIntHopsBeforeStrip,
+                hw->m_guardGrantBindingUpdates, hw->m_guardTieBindingUpdates,
+                hw->m_guardReactiveBindingRateChanges,
+                hw->m_guardGrantBindingRateChanges, hw->m_guardTieBindingRateChanges,
+                hw->m_guardIntHopsBeforeStrip,
                 hw->m_guardIntHopsAfterStrip, hw->m_guardIntRecordsStripped);
         total_grants_sent += hw->m_guardRateGrantsSent;
         total_grants_received += hw->m_guardRateGrantsReceived;
@@ -2238,16 +2370,22 @@ int main(int argc, char *argv[]) {
         total_timeout_recoveries += hw->m_timeoutRecoveries;
         total_hpcc_valid_feedback += hw->m_guardHpccValidFeedback;
         total_hpcc_rate_updates_applied += hw->m_guardHpccRateUpdatesApplied;
+        total_hpcc_full_computations += hw->m_guardHpccFullComputations;
+        total_hpcc_fast_computations += hw->m_guardHpccFastComputations;
         total_hpcc_actual_rate_changes += hw->m_guardHpccActualRateChanges;
         total_reactive_binding_updates += hw->m_guardReactiveBindingUpdates;
         total_grant_binding_updates += hw->m_guardGrantBindingUpdates;
+        total_tie_binding_updates += hw->m_guardTieBindingUpdates;
+        total_reactive_binding_rate_changes += hw->m_guardReactiveBindingRateChanges;
+        total_grant_binding_rate_changes += hw->m_guardGrantBindingRateChanges;
+        total_tie_binding_rate_changes += hw->m_guardTieBindingRateChanges;
         total_int_hops_before_strip += hw->m_guardIntHopsBeforeStrip;
         total_int_hops_after_strip += hw->m_guardIntHopsAfterStrip;
         total_int_records_stripped += hw->m_guardIntRecordsStripped;
     }
     fprintf(guard_stats_output,
             "total %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu "
-            "%lu %lu %lu %lu %lu %lu\n",
+            "%lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu\n",
             total_grants_sent, total_grants_received, total_hpcc_feedback_updates,
             total_registrations, total_selected_registrations, total_proactive_releases,
             total_completion_releases, max_active_flows, total_recovery_nacks_generated,
@@ -2255,8 +2393,12 @@ int main(int argc, char *argv[]) {
             total_irn_nacks_generated, total_irn_nacks_received, total_irn_retransmit_packets,
             total_irn_retransmit_bytes, total_timeout_recoveries,
             total_hpcc_valid_feedback, total_hpcc_rate_updates_applied,
+            total_hpcc_full_computations, total_hpcc_fast_computations,
             total_hpcc_actual_rate_changes, total_reactive_binding_updates,
-            total_grant_binding_updates, total_int_hops_before_strip,
+            total_grant_binding_updates, total_tie_binding_updates,
+            total_reactive_binding_rate_changes, total_grant_binding_rate_changes,
+            total_tie_binding_rate_changes,
+            total_int_hops_before_strip,
             total_int_hops_after_strip, total_int_records_stripped);
     fprintf(guard_stats_output, "switch_drops ingress %u egress %u total %u\n",
             Settings::dropped_pkt_sw_ingress, Settings::dropped_pkt_sw_egress,

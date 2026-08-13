@@ -26,6 +26,7 @@ try:
         PFC_PRIORITY_FIELDS,
         SummaryError,
         parse_guard_stats,
+        parse_port_queue_summaries,
         parse_pfc,
         percentile,
         queue_summary_metrics,
@@ -36,6 +37,7 @@ except ModuleNotFoundError:  # Direct execution from experiments/.
         PFC_PRIORITY_FIELDS,
         SummaryError,
         parse_guard_stats,
+        parse_port_queue_summaries,
         parse_pfc,
         percentile,
         queue_summary_metrics,
@@ -409,6 +411,19 @@ def instrumentation_metrics(
     for name, _category, value, count in queue_summary_metrics(queue_path):
         unit = "samples" if name == "queue_sample_count" else "bytes"
         result.append(metric(workload, semantics, name, value, unit, count))
+    for port in parse_port_queue_summaries(queue_path):
+        scope = "switch:{}:if:{}:to:{}".format(
+            int(port["node_id"]), int(port["if_index"]), int(port["neighbor_id"]))
+        samples = int(port["samples"])
+        for name in (
+            "positive_samples", "average_bytes", "positive_average_bytes", "p95_bytes",
+            "p99_bytes", "max_bytes", "tx_bytes",
+        ):
+            unit = "samples" if name == "positive_samples" else "bytes"
+            result.append(metric(
+                workload, semantics, "queue_port_{}".format(name),
+                float(port[name]), unit, samples, scope,
+            ))
     for name in GUARD_TOTAL_FIELDS:
         unit = "bytes" if name == "irn_retransmit_bytes" else "count"
         result.append(metric(workload, semantics, name, float(stats[name]), unit, 1))

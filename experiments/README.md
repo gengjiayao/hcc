@@ -94,7 +94,11 @@ artifacts.  It rejects incomplete runs and checks that:
 FCT metrics are separated into `<=8 KB`, `8 KB--1 BDP`, `1 BDP--1 MiB`, and
 `>1 MiB`.  P99.9 is emitted only with at least 1,000 observations.  The bounded
 queue summary includes zero-valued samples and reports sample count, mean, P95,
-P99, and maximum queue bytes.  For legacy traces only, queue metric names say
+P99, and maximum queue bytes.  New runs also append one constant-size row per
+switch egress with its neighbor, zero-inclusive and positive-only queue
+statistics, and transmitted bytes.  These rows support directed bottleneck
+analysis without enabling an unbounded time series.  For legacy traces only,
+queue metric names say
 `nonzero`, because those traces omit zero-valued samples.  PFC results include
 per-priority counts, matched intervals, cumulative and maximum pause duration,
 and unmatched transitions.  Recovery results include switch drops, recovery
@@ -136,6 +140,16 @@ step start times do not enforce collective dependencies, so its trace span is
 not a real collective or job completion time.  The all-to-all trace has no such
 step dependency and its span may be reported specifically as communication-
 phase CCT.
+
+For a directed controller audit, `run.py --guard_controller_trace 1` writes a
+bounded CSV containing HPCC, grant, and completion events with computed,
+granted, and final rates.  Its final comment records attempted, written, and
+truncated rows; time-weighted analysis is valid only when `truncated=0`.  The
+runner permits at most 100,000 rows and enables this trace only for full GUARD.
+`hpcc_full_computations` and `hpcc_fast_computations` distinguish valid INT
+computations from feedback calls and actual pacer changes.  The supplied
+runner uses `FAST_REACT=0`, so an audited formal run must report zero fast
+computations.
 
 ## Scope
 

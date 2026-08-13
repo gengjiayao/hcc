@@ -44,7 +44,10 @@ RUN_COLUMNS = (
     *PARAM_COLUMNS, "flow_sha256", "flow_count", "completed_flow_count", "analyzed_flow_count",
     "config_sha256", "grants_sent", "grants_received", "hpcc_feedback_updates",
     "hpcc_valid_feedback", "hpcc_rate_updates_applied", "hpcc_actual_rate_changes",
+    "hpcc_full_computations", "hpcc_fast_computations",
     "reactive_binding_updates", "grant_binding_updates", "int_hops_before_strip",
+    "tie_binding_updates", "reactive_binding_rate_changes", "grant_binding_rate_changes",
+    "tie_binding_rate_changes",
     "int_hops_after_strip", "int_records_stripped",
     "registrations", "selected_registrations", "proactive_releases",
     "completion_releases", "max_active_flows", "recovery_nacks_generated",
@@ -81,7 +84,10 @@ GUARD_TOTAL_FIELDS = (
     "recovery_nacks_generated", "recovery_nacks_received", "irn_nacks_generated",
     "irn_nacks_received", "irn_retransmit_packets", "irn_retransmit_bytes",
     "timeout_recoveries", "hpcc_valid_feedback", "hpcc_rate_updates_applied",
+    "hpcc_full_computations", "hpcc_fast_computations",
     "hpcc_actual_rate_changes", "reactive_binding_updates", "grant_binding_updates",
+    "tie_binding_updates", "reactive_binding_rate_changes", "grant_binding_rate_changes",
+    "tie_binding_rate_changes",
     "int_hops_before_strip", "int_hops_after_strip", "int_records_stripped",
 )
 PFC_PRIORITY_FIELDS = (
@@ -99,7 +105,7 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
     with path.open(encoding="utf-8", errors="replace") as stream:
         for line in stream:
             parts = line.split()
-            if parts and parts[0] == "total" and len(parts) in (5, 12, 16, 18, 24):
+            if parts and parts[0] == "total" and len(parts) in (5, 12, 16, 18, 24, 27, 30):
                 values = tuple(map(int, parts[1:]))
                 if len(values) == 4:
                     total = dict(zip(
@@ -275,6 +281,11 @@ def queue_summary_metrics(path: Path) -> List[Tuple[str, str, float, int]]:
             parts = line.split()
             if not parts:
                 continue
+            if parts[0] == "port":
+                # New summaries append bounded per-port rows after the legacy
+                # aggregate.  Campaign-wide queue metrics retain the aggregate
+                # fields; directed-workload analysis consumes the port rows.
+                continue
             if len(parts) != 2:
                 raise SummaryError(f"malformed queue summary {path}:{line_number}")
             try:
@@ -292,6 +303,33 @@ def queue_summary_metrics(path: Path) -> List[Tuple[str, str, float, int]]:
         ("queue_bytes_p99", "all", values["p99_bytes"], samples),
         ("queue_bytes_max", "all", values["max_bytes"], samples),
     ]
+
+
+def parse_port_queue_summaries(path: Path) -> List[Dict[str, float]]:
+    """Read constant-size per-egress queue summaries appended by new runs."""
+    columns = (
+        "node_id", "if_index", "neighbor_id", "samples", "positive_samples",
+        "average_bytes", "positive_average_bytes", "p95_bytes", "p99_bytes",
+        "max_bytes", "tx_bytes",
+    )
+    rows: List[Dict[str, float]] = []
+    with path.open(encoding="utf-8", errors="replace") as stream:
+        for line_number, line in enumerate(stream, 1):
+            parts = line.split()
+            if not parts or parts[0] != "port" or parts[1:2] == ["node_id"]:
+                continue
+            if len(parts) != len(columns) + 1:
+                raise SummaryError(f"malformed port queue summary {path}:{line_number}")
+            try:
+                values = tuple(map(float, parts[1:]))
+            except ValueError as exc:
+                raise SummaryError(
+                    f"non-numeric port queue summary {path}:{line_number}") from exc
+            row = dict(zip(columns, values))
+            if row["samples"] < row["positive_samples"] or row["samples"] < 0:
+                raise SummaryError(f"invalid port queue counts {path}:{line_number}")
+            rows.append(row)
+    return rows
 
 
 def validate_mode(params: Mapping[str, object], config: Mapping[str, str], stats: Mapping[str, object]) -> List[str]:

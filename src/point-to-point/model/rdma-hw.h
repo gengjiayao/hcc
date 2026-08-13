@@ -40,6 +40,15 @@ struct GuardLifecycleTraceSink {
         : file(NULL), max_lines(0), admitted(0), written(0) {}
 };
 
+struct GuardControllerTraceSink {
+    FILE *file;
+    uint64_t max_lines;
+    uint64_t attempted;
+    uint64_t written;
+
+    GuardControllerTraceSink() : file(NULL), max_lines(0), attempted(0), written(0) {}
+};
+
 class RdmaHw : public Object {
    public:
     static TypeId GetTypeId(void);
@@ -188,9 +197,15 @@ class RdmaHw : public Object {
     // consequently apply an HPCC-derived rate to the sender.
     uint64_t m_guardHpccValidFeedback;
     uint64_t m_guardHpccRateUpdatesApplied;
+    uint64_t m_guardHpccFullComputations;
+    uint64_t m_guardHpccFastComputations;
     uint64_t m_guardHpccActualRateChanges;
     uint64_t m_guardReactiveBindingUpdates;
     uint64_t m_guardGrantBindingUpdates;
+    uint64_t m_guardTieBindingUpdates;
+    uint64_t m_guardReactiveBindingRateChanges;
+    uint64_t m_guardGrantBindingRateChanges;
+    uint64_t m_guardTieBindingRateChanges;
     uint64_t m_guardIntHopsBeforeStrip;
     uint64_t m_guardIntHopsAfterStrip;
     uint64_t m_guardIntRecordsStripped;
@@ -229,9 +244,16 @@ class RdmaHw : public Object {
     };
 
     GuardLifecycleTraceSink *m_guardLifecycleTraceSink;
+    GuardControllerTraceSink *m_guardControllerTraceSink;
     std::unordered_map<RdmaRxQueuePair*, GuardLifecycleState> m_guardLifecycleStates;
     std::unordered_set<RdmaRxQueuePair*> m_rate_flow_ctl_set;
     void ConfigureGuardLifecycleTrace(GuardLifecycleTraceSink *sink);
+    void ConfigureGuardControllerTrace(GuardControllerTraceSink *sink);
+    void TraceGuardControllerEvent(Ptr<RdmaQueuePair> qp, const char *event_type,
+                                   DataRate hpcc_rate, const char *binding,
+                                   bool rate_changed, bool fast_react, uint32_t nhop,
+                                   uint32_t next_seq, double congestion_metric,
+                                   double threshold_ratio);
     void FlushGuardLifecycleTrace();
     void SyncHwRate(Ptr<RdmaQueuePair> qp, DataRate target_cc_rate);
     void HandleRccRequest(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch);

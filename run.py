@@ -30,6 +30,7 @@ FCT_OUTPUT_FILE mix/output/{id}/{id}_out_fct.txt
 PFC_OUTPUT_FILE mix/output/{id}/{id}_out_pfc.txt
 GUARD_STATS_OUTPUT_FILE mix/output/{id}/{id}_out_guard_stats.txt
 GUARD_LIFECYCLE_TRACE_OUTPUT_FILE {guard_lifecycle_output}
+GUARD_CONTROLLER_TRACE_OUTPUT_FILE {guard_controller_output}
 QUEUE_STATS_OUTPUT_FILE mix/output/{id}/{id}_out_queue_stats.txt
 QLEN_MON_FILE mix/output/{id}/{id}_out_qlen.txt
 VOQ_MON_FILE mix/output/{id}/{id}_out_voq.txt
@@ -93,6 +94,8 @@ GUARD_PROACTIVE_RELEASE {guard_proactive_release}
 GUARD_KEEP_LAST_HOP_INT {guard_keep_last_hop_int}
 GUARD_LIFECYCLE_TRACE {guard_lifecycle_trace}
 GUARD_LIFECYCLE_TRACE_MAX_LINES {guard_lifecycle_max_lines}
+GUARD_CONTROLLER_TRACE {guard_controller_trace}
+GUARD_CONTROLLER_TRACE_MAX_LINES {guard_controller_max_lines}
 MULTI_RATE 0
 SAMPLE_FEEDBACK 0
 
@@ -149,6 +152,8 @@ MIN_SMOKE_TIME = 0.005
 MIN_FORMAL_TIME = 0.010
 DEFAULT_GUARD_LIFECYCLE_MAX_LINES = 1024
 HARD_GUARD_LIFECYCLE_MAX_LINES = 10000
+DEFAULT_GUARD_CONTROLLER_MAX_LINES = 10000
+HARD_GUARD_CONTROLLER_MAX_LINES = 100000
 
 
 def resolve_guard_components(guard_oflm, selective_registration, proactive_release):
@@ -169,6 +174,19 @@ def validate_guard_lifecycle_options(enabled, cc, output, max_lines):
     if not enabled and output:
         raise ValueError(
             "--guard_lifecycle_output requires --guard_lifecycle_trace 1")
+
+
+def validate_guard_controller_options(enabled, cc, output, max_lines):
+    """Reject controller traces that are inapplicable or not strictly bounded."""
+    if not 1 <= max_lines <= HARD_GUARD_CONTROLLER_MAX_LINES:
+        raise ValueError(
+            "--guard_controller_max_lines must be in [1, {}]".format(
+                HARD_GUARD_CONTROLLER_MAX_LINES))
+    if enabled and cc != "guard":
+        raise ValueError("--guard_controller_trace requires full GUARD mode")
+    if not enabled and output:
+        raise ValueError(
+            "--guard_controller_output requires --guard_controller_trace 1")
 
 
 def main():
@@ -237,6 +255,13 @@ def main():
     parser.add_argument('--guard_lifecycle_max_lines', type=int,
                         default=DEFAULT_GUARD_LIFECYCLE_MAX_LINES,
                         help="maximum lifecycle data rows (default: 1024; hard maximum: 10000)")
+    parser.add_argument('--guard_controller_trace', type=int, choices=(0, 1), default=0,
+                        help="write a bounded valid-update GUARD controller CSV (default: 0)")
+    parser.add_argument('--guard_controller_output', type=str,
+                        help="controller CSV path (default: the run output directory)")
+    parser.add_argument('--guard_controller_max_lines', type=int,
+                        default=DEFAULT_GUARD_CONTROLLER_MAX_LINES,
+                        help="maximum controller rows (default: 10000; hard maximum: 100000)")
     parser.add_argument('--seed', type=int, default=1,
                         help="traffic-generator and ns-3 random seed (default: 1)")
 
@@ -298,6 +323,9 @@ def main():
         validate_guard_lifecycle_options(
             args.guard_lifecycle_trace, args.cc, args.guard_lifecycle_output,
             args.guard_lifecycle_max_lines)
+        validate_guard_controller_options(
+            args.guard_controller_trace, args.cc, args.guard_controller_output,
+            args.guard_controller_max_lines)
     except ValueError as error:
         raise Exception("CONFIG ERROR: {}.".format(error))
     if simul_time < MIN_SMOKE_TIME:
@@ -431,6 +459,19 @@ def main():
         raise Exception("CONFIG ERROR: --guard_lifecycle_output cannot contain whitespace.")
     if args.guard_lifecycle_trace:
         output_parent = os.path.dirname(guard_lifecycle_output)
+        if output_parent:
+            os.makedirs(output_parent, exist_ok=True)
+    guard_controller_output = args.guard_controller_output
+    if guard_controller_output is None:
+        guard_controller_output = os.path.join(
+            output_dir, "{}_out_guard_controller.csv".format(config_ID))
+    else:
+        guard_controller_output = os.path.abspath(
+            os.path.expanduser(guard_controller_output))
+    if any(character.isspace() for character in guard_controller_output):
+        raise Exception("CONFIG ERROR: --guard_controller_output cannot contain whitespace.")
+    if args.guard_controller_trace:
+        output_parent = os.path.dirname(guard_controller_output)
         if output_parent:
             os.makedirs(output_parent, exist_ok=True)
 
@@ -568,6 +609,9 @@ def main():
                                         guard_lifecycle_trace=args.guard_lifecycle_trace,
                                         guard_lifecycle_output=guard_lifecycle_output,
                                         guard_lifecycle_max_lines=args.guard_lifecycle_max_lines,
+                                        guard_controller_trace=args.guard_controller_trace,
+                                        guard_controller_output=guard_controller_output,
+                                        guard_controller_max_lines=args.guard_controller_max_lines,
                                         seed=args.seed,
                                         kmax_map=kmax_map, kmin_map=kmin_map, pmax_map=pmax_map)
     # else:

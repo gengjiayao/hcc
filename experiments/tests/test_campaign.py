@@ -13,8 +13,10 @@ from experiments.run_campaign import (
     traffic_identity,
 )
 from run import (
+    HARD_GUARD_CONTROLLER_MAX_LINES,
     HARD_GUARD_LIFECYCLE_MAX_LINES,
     resolve_guard_components,
+    validate_guard_controller_options,
     validate_guard_lifecycle_options,
 )
 
@@ -55,6 +57,19 @@ class CampaignDefinitionTests(unittest.TestCase):
             validate_guard_lifecycle_options(1, "hpcc", None, 16)
         with self.assertRaisesRegex(ValueError, "requires --guard_lifecycle_trace"):
             validate_guard_lifecycle_options(0, "guard", "/tmp/lifecycle.csv", 16)
+
+    def test_controller_trace_is_bounded_and_full_guard_only(self):
+        validate_guard_controller_options(
+            1, "guard", None, HARD_GUARD_CONTROLLER_MAX_LINES)
+        with self.assertRaisesRegex(ValueError, "must be in"):
+            validate_guard_controller_options(1, "guard", None, 0)
+        with self.assertRaisesRegex(ValueError, "must be in"):
+            validate_guard_controller_options(
+                1, "guard", None, HARD_GUARD_CONTROLLER_MAX_LINES + 1)
+        with self.assertRaisesRegex(ValueError, "requires full GUARD mode"):
+            validate_guard_controller_options(1, "hpcc", None, 16)
+        with self.assertRaisesRegex(ValueError, "requires --guard_controller_trace"):
+            validate_guard_controller_options(0, "guard", "/tmp/controller.csv", 16)
 
     def test_traffic_identity_accounts_for_oversubscription(self):
         params = {
