@@ -155,6 +155,45 @@ def make_oflm_churn(hosts, bdp_bytes, elephant_count, elephant_bytes,
     return flows
 
 
+def make_receiver_share(hosts, destination, target_flows, flow_bytes,
+                        background_flows, background_bytes, jitter_us,
+                        pg, start_s, duration_s, seed):
+    """Generate bounded receiver-share and source-limited heterogeneous traces."""
+    senders = [host for host in range(hosts) if host != destination]
+    if not 1 <= target_flows <= len(senders):
+        raise ValueError("--receiver-share-flows must be in [1, hosts - 1]")
+    if background_flows < 0:
+        raise ValueError("--receiver-share-background-flows must be non-negative")
+    if background_flows and target_flows != 2:
+        raise ValueError("heterogeneous receiver-share requires exactly two target flows")
+
+    trigger_s = start_s + duration_s * 0.10
+    rng = random.Random(seed)
+
+    def jittered_start():
+        return trigger_s + (rng.uniform(0, jitter_us * 1e-6) if jitter_us else 0.0)
+
+    selected = senders[:target_flows]
+    flows = [
+        Flow(src, destination, pg, flow_bytes, jittered_start())
+        for src in selected
+    ]
+    if background_flows:
+        restricted_source = selected[0]
+        background_destinations = [
+            host for host in range(hosts // 2, hosts)
+            if host not in (restricted_source, destination)
+        ]
+        if not background_destinations:
+            raise ValueError("heterogeneous receiver-share has no background destination")
+        for index in range(background_flows):
+            flows.append(Flow(
+                restricted_source,
+                background_destinations[index % len(background_destinations)],
+                pg, background_bytes, jittered_start()))
+    return flows
+
+
 def generate(args):
     duration_s = args.duration_ms / 1000.0
     if args.hosts < 2:
@@ -167,6 +206,8 @@ def generate(args):
         raise ValueError("--priority-group must be in [0, 7]")
     if not 0 <= args.incast_destination < args.hosts:
         raise ValueError("--incast-destination must name an existing host")
+    if not 0 <= args.receiver_share_destination < args.hosts:
+        raise ValueError("--receiver-share-destination must name an existing host")
     if args.incast_fanin is not None and not 1 <= args.incast_fanin < args.hosts:
         raise ValueError("--incast-fanin must be in [1, hosts - 1]")
     if not math.isfinite(args.incast_jitter_us) or args.incast_jitter_us < 0:
@@ -177,6 +218,11 @@ def generate(args):
         raise ValueError("--oflm-churn-jitter-us must be finite and non-negative")
     if args.oflm_churn_jitter_us >= args.oflm_churn_interval_us:
         raise ValueError("--oflm-churn-jitter-us must be below the arrival interval")
+    if (not math.isfinite(args.receiver_share_jitter_us) or
+            args.receiver_share_jitter_us < 0):
+        raise ValueError("--receiver-share-jitter-us must be finite and non-negative")
+    if args.receiver_share_jitter_us * 1e-6 > duration_s * 0.25:
+        raise ValueError("--receiver-share-jitter-us exceeds the workload duration")
     incast_span_s = ((args.incast_rounds - 1) * args.incast_round_gap_us +
                      args.incast_jitter_us) * 1e-6
     if incast_span_s > duration_s * 0.65:
@@ -217,6 +263,14 @@ def generate(args):
             args.oflm_elephant_bytes, args.oflm_churn_rounds,
             args.oflm_churn_interval_us, args.priority_group,
             args.base_time, duration_s, args.seed, args.oflm_churn_jitter_us)
+    elif args.workload == "receiver-share":
+        flows = make_receiver_share(
+            args.hosts, args.receiver_share_destination,
+            args.receiver_share_flows, args.flow_bytes,
+            args.receiver_share_background_flows,
+            args.receiver_share_background_bytes,
+            args.receiver_share_jitter_us, args.priority_group,
+            args.base_time, duration_s, args.seed)
     else:
         raise ValueError("unknown workload: {}".format(args.workload))
 
@@ -296,7 +350,8 @@ def parse_args(argv=None):
         description="Generate deterministic bounded ns-3 reviewer workloads")
     parser.add_argument(
         "--workload", required=True,
-        choices=("incast", "hybrid", "ring-allreduce", "all-to-all", "oflm-churn"))
+        choices=("incast", "hybrid", "ring-allreduce", "all-to-all", "oflm-churn",
+                 "receiver-share"))
     parser.add_argument("--output", required=True, help="flow file to write")
     parser.add_argument("--manifest", help="manifest path (default: OUTPUT.manifest.json)")
     parser.add_argument("--force", action="store_true", help="replace existing outputs")
@@ -332,6 +387,12 @@ def parse_args(argv=None):
                         default=DEFAULT_OFLM_CHURN_INTERVAL_US)
     parser.add_argument("--oflm-churn-jitter-us", type=float, default=0.0,
                         help="seeded uniform jitter below each churn interval")
+    parser.add_argument("--receiver-share-destination", type=int, default=15)
+    parser.add_argument("--receiver-share-flows", type=positive_int, default=2)
+    parser.add_argument("--receiver-share-background-flows", type=int, default=0)
+    parser.add_argument("--receiver-share-background-bytes", type=positive_int,
+                        default=16 * 1024 * 1024)
+    parser.add_argument("--receiver-share-jitter-us", type=float, default=1.0)
     return parser.parse_args(argv)
 
 
@@ -388,6 +449,11 @@ def main(argv=None):
             "oflm_churn_rounds": args.oflm_churn_rounds,
             "oflm_churn_interval_us": args.oflm_churn_interval_us,
             "oflm_churn_jitter_us": args.oflm_churn_jitter_us,
+            "receiver_share_destination": args.receiver_share_destination,
+            "receiver_share_flows": args.receiver_share_flows,
+            "receiver_share_background_flows": args.receiver_share_background_flows,
+            "receiver_share_background_bytes": args.receiver_share_background_bytes,
+            "receiver_share_jitter_us": args.receiver_share_jitter_us,
         },
         "validation": validation,
         "run_hint": {
