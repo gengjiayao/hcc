@@ -78,6 +78,7 @@ MI_THRESH {mi}
 INT_MULTI {int_multi}
 GLOBAL_T 0
 U_TARGET 0.95
+GUARD_LAMBDA {guard_lambda}
 GUARD_EWMA_BETA {guard_beta}
 GUARD_RELEASE_GAMMA {guard_gamma}
 MULTI_RATE 0
@@ -168,6 +169,8 @@ def main():
                         help="GUARD EWMA historical-sample weight in [0,1] (default: 0.125)")
     parser.add_argument('--guard_gamma', type=float, default=1.0,
                         help="GUARD proactive-release threshold multiplier >= 0 (default: 1.0)")
+    parser.add_argument('--guard_lambda', type=float, default=1.0,
+                        help="GUARD HPCC-target multiplier >= 1 (default: 1.0)")
 
     # #### CONWEAVE PARAMETERS ####
     # parser.add_argument('--cwh_extra_reply_deadline', dest='cwh_extra_reply_deadline', action='store',
@@ -210,6 +213,8 @@ def main():
         raise Exception("CONFIG ERROR: --guard_beta must be in [0, 1].")
     if args.guard_gamma < 0.0:
         raise Exception("CONFIG ERROR: --guard_gamma must be non-negative.")
+    if args.guard_lambda < 1.0:
+        raise Exception("CONFIG ERROR: --guard_lambda must be at least 1.0.")
 
     # get over-subscription ratio from topoogy name
 
@@ -398,6 +403,7 @@ def main():
                                         has_win=has_win, var_win=var_win,
                                         fast_react=fast_react, mi=mi, int_multi=int_multi, ewma_gain=ewma_gain,
                                         guard_beta=args.guard_beta, guard_gamma=args.guard_gamma,
+                                        guard_lambda=args.guard_lambda,
                                         kmax_map=kmax_map, kmin_map=kmin_map, pmax_map=pmax_map)
     # else:
     #     print("unknown cc:{}".format(args.cc))

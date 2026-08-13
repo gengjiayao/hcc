@@ -137,6 +137,7 @@ bool var_win = false, fast_react = true;
 bool multi_rate = true;
 bool sample_feedback = false;
 double u_target = 0.95;
+double guard_lambda = 1.0;
 double guard_ewma_beta = 0.125;
 double guard_release_gamma = 1.0;
 uint32_t int_multi = 1;
@@ -1094,6 +1095,9 @@ int main(int argc, char *argv[]) {
             } else if (key.compare("GUARD_EWMA_BETA") == 0) {
                 conf >> guard_ewma_beta;
                 std::cerr << "GUARD_EWMA_BETA\t\t" << guard_ewma_beta << '\n';
+            } else if (key.compare("GUARD_LAMBDA") == 0) {
+                conf >> guard_lambda;
+                std::cerr << "GUARD_LAMBDA\t\t\t" << guard_lambda << '\n';
             } else if (key.compare("GUARD_RELEASE_GAMMA") == 0) {
                 conf >> guard_release_gamma;
                 std::cerr << "GUARD_RELEASE_GAMMA\t" << guard_release_gamma << '\n';
@@ -1213,6 +1217,18 @@ int main(int argc, char *argv[]) {
     }
 
     /******************* READING CONFIG FILE IS DONE ***********************/
+
+    if (guard_lambda < 1.0) {
+        std::cerr << "GUARD_LAMBDA must be at least 1.0\n";
+        return 1;
+    }
+    // HPCC's congestion metric is normalized load plus a normalized queue
+    // term, not physical link utilization alone.  Therefore lambda * 0.95
+    // may legitimately exceed 1.0: it permits a bounded queue contribution
+    // before the reactive loop reduces its rate.  Do not clamp this value.
+    const double effective_u_target = cc_mode == 11 ? u_target * guard_lambda : u_target;
+    std::cerr << "EFFECTIVE_U_TARGET\t\t" << effective_u_target
+              << (cc_mode == 11 ? " (GUARD)\n" : " (unscaled baseline)\n");
 
     /**
      * Activate ns3 logging
@@ -1547,7 +1563,7 @@ int main(int argc, char *argv[]) {
             rdmaHw->SetAttribute("FastReact", BooleanValue(fast_react));
             rdmaHw->SetAttribute("MultiRate", BooleanValue(multi_rate));
             rdmaHw->SetAttribute("SampleFeedback", BooleanValue(sample_feedback));
-            rdmaHw->SetAttribute("TargetUtil", DoubleValue(u_target));
+            rdmaHw->SetAttribute("TargetUtil", DoubleValue(effective_u_target));
             rdmaHw->SetAttribute("GuardEwmaBeta", DoubleValue(guard_ewma_beta));
             rdmaHw->SetAttribute("GuardReleaseGamma", DoubleValue(guard_release_gamma));
             rdmaHw->SetAttribute("RateBound", BooleanValue(rate_bound));
