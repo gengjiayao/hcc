@@ -2,6 +2,7 @@ import tempfile
 from pathlib import Path
 import unittest
 
+from experiments.aggregate_receiver_share import ci, parse_runtime, validate_matrix
 from experiments.analyze_receiver_share import parse_bounded_trace, rate_metrics
 from experiments.summarize_campaign import SummaryError
 from run import HARD_GUARD_GRANT_MAX_LINES, validate_guard_grant_options
@@ -74,6 +75,42 @@ class ReceiverShareTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(SummaryError, "truncated"):
                 parse_bounded_trace(path)
+
+    def test_formal_matrix_requires_five_independent_paired_seeds(self):
+        rows = []
+        for scenario, levels in (
+            ("homogeneous", ("n2", "n4", "n8", "n15")),
+            ("heterogeneous", ("k3",)),
+        ):
+            for level in levels:
+                for seed in range(1, 6):
+                    for controller in ("guard", "guard-active-only"):
+                        rows.append({
+                            "scenario": scenario, "level": level,
+                            "controller": controller, "seed": seed,
+                            "flow_sha256": f"{scenario}-{level}-{seed}",
+                            "generated_flows": 2, "completed_flows": 2,
+                            "switch_drops": 0, "recovery_events": 0,
+                            "pfc_pause_events": 0, "grant_trace_truncated": 0,
+                        })
+        validate_matrix(rows)
+        rows[-1]["flow_sha256"] = "unpaired"
+        with self.assertRaisesRegex(SummaryError, "one flow hash"):
+            validate_matrix(rows)
+
+    def test_student_t_interval_and_resource_log_parser(self):
+        mean, low, high, half = ci([1, 2, 3, 4, 5])
+        self.assertEqual(mean, 3)
+        self.assertAlmostEqual(mean - low, half)
+        self.assertAlmostEqual(high - mean, half)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.log"
+            path.write_text(
+                "Elapsed (wall clock) time (h:mm:ss or m:ss): 1:02.50\n"
+                "Maximum resident set size (kbytes): 54321\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(parse_runtime(path), (62.5, 54321))
 
 
 if __name__ == "__main__":
