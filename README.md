@@ -359,6 +359,12 @@ python3 experiments/aggregate_oflm_sensitivity.py \
 95% CI，以及相对基线的同 seed 配对绝对差和百分比差；百分比正值表示该指标高于
 基线，不能据性能结果删除或更换参数格。
 
+通用 CDF 的三臂正式对比由
+`experiments/campaigns/general_workloads_formal.json` 和
+`run_general_workloads.py` 管理。它先在不启动 ns-3 的情况下冻结五个 PG3 flow
+snapshot，再用 seed 1 做机制准入；只有通过准入的 workload 才能扩展五个 seed 并由
+`summarize_general_workloads.py` 计算按流大小分组的配对 t95 结果。
+
 `--flow_file` 完全绕过 Poisson/CDF 随机生成。`run.py` 先检查首行声明的 flow 数，
 再将输入复制到本次 `mix/output/<ID>/`；配置和模拟器只使用这份只读快照，因此原文件
 随后变化也不会影响已启动的运行。`--simul_time` 应与 manifest 的

@@ -141,6 +141,52 @@ not a real collective or job completion time.  The all-to-all trace has no such
 step dependency and its span may be reported specifically as communication-
 phase CCT.
 
+## Matched general-workload comparison
+
+`campaigns/general_workloads_formal.json` freezes the AliStorage2019,
+WebSearch, FbHdp, and GoogleRPC comparison of full GUARD, HPCC, and
+receiver-only GUARD.  It uses PG3 inputs and disables GUARD size-priority
+remapping in the full and receiver-only arms.  All three arms of a workload and
+seed consume the same persistent `--flow_file` snapshot.
+
+Run the phases separately so that traffic volume and mechanisms are checked
+before any performance result is available:
+
+```bash
+RESULTS=/tmp/general-workloads-formal
+python3 experiments/run_general_workloads.py \
+  experiments/campaigns/general_workloads_formal.json \
+  --campaign-dir "$RESULTS" --phase preflight
+python3 experiments/run_general_workloads.py \
+  experiments/campaigns/general_workloads_formal.json \
+  --campaign-dir "$RESULTS" --phase admission
+python3 experiments/summarize_general_workloads.py "$RESULTS" --admission-only
+python3 experiments/run_general_workloads.py \
+  experiments/campaigns/general_workloads_formal.json \
+  --campaign-dir "$RESULTS" --phase formal
+python3 experiments/summarize_general_workloads.py "$RESULTS"
+```
+
+The preflight phase generates five independent traces per CDF without invoking
+ns-3 and enforces the 10,000-flow cap.  If any primary GoogleRPC trace exceeds
+the cap, its only allowed fallback is the frozen 8-host OS1, 10ms, load-20
+profile; if that also fails, GoogleRPC is excluded.  No other load tuning is
+permitted.
+
+Admission runs only seed 1.  Its full-GUARD arm is the only run with the
+controller trace enabled; the trace has a 300,000-line hard bound and must
+report no truncation.  A workload advances only if all flows complete, all
+three mechanisms fire with the expected separation, drop/recovery counters are
+zero, exact flow hashes match, and every run remains under 100 MiB.  Formal
+runs use bulk monitoring and rely on bounded total counters.
+
+The final summarizer emits per-run FCT and slowdown mean/P95/P99 for the
+overall workload and four size buckets, aggregate queue/PFC/grant statistics,
+five-seed arm means, and hash-matched paired Student-t 95% intervals.  The
+seed-1 controller audit also groups reactive/grant binding events by flow-size
+bucket for long-flow root-cause analysis.  Rejected CDFs remain recorded in
+`summary/exclusions.json` and are never given performance results.
+
 For a matched three-arm custom-workload component study, generate every input
 at PG4 before running full GUARD, HPCC-only, and receiver-rate-only.  GUARD
 maps flows larger than one BDP to PG4 internally; using PG4 in the source trace
