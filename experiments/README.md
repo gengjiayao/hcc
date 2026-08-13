@@ -41,7 +41,16 @@ python3 experiments/run_campaign.py \
 ```
 
 Use `--resume` with the same directory to skip manifests already marked
-`completed`.  Use `--max-runs 1` for an initial end-to-end smoke test.
+`completed`.  Use `--max-runs 1` for an initial end-to-end smoke test.  To run
+one bounded part of the matrix without repeating earlier stages, pass a stage
+name (the option can be repeated):
+
+```bash
+python3 experiments/run_campaign.py \
+  experiments/campaigns/reviewer_minimal.json \
+  --stage components_websearch \
+  --campaign-dir experiments/results/components-websearch
+```
 
 Each attempt writes `runs/<run-key>/manifest.json`.  A manifest records the
 expanded parameters and CLI, Git SHA and dirty state, topology/CDF/flow SHA-256,

@@ -124,6 +124,19 @@ def expand_campaign(campaign: Mapping[str, object]) -> Iterator[Dict[str, object
             }
 
 
+def select_stages(
+    expanded: Sequence[Mapping[str, object]], requested: Sequence[str] | None
+) -> List[Mapping[str, object]]:
+    if not requested:
+        return list(expanded)
+    available = {str(spec["stage"]) for spec in expanded}
+    selected = set(requested)
+    unknown = selected - available
+    if unknown:
+        raise CampaignError(f"unknown campaign stage(s): {', '.join(sorted(unknown))}")
+    return [spec for spec in expanded if str(spec["stage"]) in selected]
+
+
 def git_revision(repo: Path) -> Tuple[str, bool]:
     sha = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=repo, text=True
@@ -375,6 +388,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                         help="generate temporary traffic only; do not launch ns-3")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--max-runs", type=int)
+    parser.add_argument("--stage", action="append", dest="stages",
+                        help="run only the named stage; repeat for multiple stages")
     parser.add_argument("--flow-limit", type=int, default=DEFAULT_FLOW_LIMIT)
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--run-byte-limit", type=int, default=DEFAULT_RUN_BYTES)
@@ -395,7 +410,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     write_json(campaign_dir / "campaign.json", campaign)
     sha, dirty = git_revision(repo)
 
-    expanded = list(expand_campaign(campaign))
+    expanded = select_stages(list(expand_campaign(campaign)), args.stages)
     if args.max_runs is not None:
         expanded = expanded[:args.max_runs]
     print(f"campaign={name} runs={len(expanded)} repo={repo} git={sha[:12]} dirty={dirty}")

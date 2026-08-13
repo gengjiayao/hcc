@@ -9,6 +9,7 @@ from experiments.run_campaign import (
     parse_flow_count,
     preflight_traffic,
     read_json,
+    select_stages,
     traffic_identity,
 )
 
@@ -32,6 +33,12 @@ class CampaignDefinitionTests(unittest.TestCase):
         self.assertEqual(identity["hosts"], 16)
         self.assertEqual(identity["hostload_percent"], 10)
         self.assertIn("L_10.00_CDF_AliStorage2019_N_16_T_20ms_B_100_S_3", str(identity["path"]))
+
+    def test_stage_selection_is_explicit_and_validated(self):
+        runs = [{"stage": "one"}, {"stage": "two"}, {"stage": "one"}]
+        self.assertEqual(len(select_stages(runs, ["one"])), 2)
+        with self.assertRaisesRegex(CampaignError, "unknown campaign stage"):
+            select_stages(runs, ["missing"])
 
     def test_flow_count_detects_header_mismatch(self):
         with tempfile.TemporaryDirectory() as directory:
