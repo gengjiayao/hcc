@@ -99,7 +99,8 @@ def make_all_to_all(hosts, flow_bytes, pg, start_s, duration_s):
 
 
 def make_oflm_churn(hosts, bdp_bytes, elephant_count, elephant_bytes,
-                    rounds, arrival_interval_us, pg, start_s, duration_s):
+                    rounds, arrival_interval_us, pg, start_s, duration_s,
+                    seed=None, jitter_us=0.0):
     """Keep receiver elephants active while fixed-rate BDP-edge flows arrive."""
     if hosts < 16 or hosts % 2:
         raise ValueError("oflm-churn requires an even --hosts value of at least 16")
@@ -132,11 +133,13 @@ def make_oflm_churn(hosts, bdp_bytes, elephant_count, elephant_bytes,
     # elephants establish the receiver's persistent active set.
     churn_start = start_s + duration_s * 0.30
     interval_s = arrival_interval_us / 1_000_000.0
+    rng = random.Random(seed)
     for index in range(rounds * len(sizes)):
         src = index % hosts_per_tor
+        jitter_s = rng.uniform(0, jitter_us * 1e-6) if jitter_us > 0 else 0.0
         flows.append(Flow(
             src, receiver, pg, sizes[index % len(sizes)],
-            churn_start + index * interval_s))
+            churn_start + index * interval_s + jitter_s))
     if flows[-1].start_s > start_s + duration_s:
         raise ValueError(
             "oflm-churn arrivals exceed the duration; reduce rounds/interval or increase duration")
@@ -161,6 +164,10 @@ def generate(args):
         raise ValueError("--incast-jitter-us must be finite and non-negative")
     if not math.isfinite(args.incast_round_gap_us) or args.incast_round_gap_us < 0:
         raise ValueError("--incast-round-gap-us must be finite and non-negative")
+    if not math.isfinite(args.oflm_churn_jitter_us) or args.oflm_churn_jitter_us < 0:
+        raise ValueError("--oflm-churn-jitter-us must be finite and non-negative")
+    if args.oflm_churn_jitter_us >= args.oflm_churn_interval_us:
+        raise ValueError("--oflm-churn-jitter-us must be below the arrival interval")
     incast_span_s = ((args.incast_rounds - 1) * args.incast_round_gap_us +
                      args.incast_jitter_us) * 1e-6
     if incast_span_s > duration_s * 0.65:
@@ -196,7 +203,7 @@ def generate(args):
             args.hosts, args.oflm_bdp_bytes, args.oflm_elephant_flows,
             args.oflm_elephant_bytes, args.oflm_churn_rounds,
             args.oflm_churn_interval_us, args.priority_group,
-            args.base_time, duration_s)
+            args.base_time, duration_s, args.seed, args.oflm_churn_jitter_us)
     else:
         raise ValueError("unknown workload: {}".format(args.workload))
 
@@ -307,6 +314,8 @@ def parse_args(argv=None):
                         default=DEFAULT_OFLM_CHURN_ROUNDS)
     parser.add_argument("--oflm-churn-interval-us", type=positive_float,
                         default=DEFAULT_OFLM_CHURN_INTERVAL_US)
+    parser.add_argument("--oflm-churn-jitter-us", type=float, default=0.0,
+                        help="seeded uniform jitter below each churn interval")
     return parser.parse_args(argv)
 
 
@@ -361,6 +370,7 @@ def main(argv=None):
             "oflm_elephant_bytes": args.oflm_elephant_bytes,
             "oflm_churn_rounds": args.oflm_churn_rounds,
             "oflm_churn_interval_us": args.oflm_churn_interval_us,
+            "oflm_churn_jitter_us": args.oflm_churn_jitter_us,
         },
         "validation": validation,
         "run_hint": {

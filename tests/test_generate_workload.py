@@ -120,6 +120,32 @@ class GenerateWorkloadTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exceed the duration"):
             generate_workload.generate(args)
 
+    def test_oflm_churn_seeded_jitter_changes_only_start_times(self):
+        common = [
+            "--workload", "oflm-churn", "--output", "unused",
+            "--oflm-churn-jitter-us", "5",
+        ]
+        first = generate_workload.generate(generate_workload.parse_args(
+            common + ["--seed", "1"]))
+        second = generate_workload.generate(generate_workload.parse_args(
+            common + ["--seed", "2"]))
+        self.assertNotEqual(first, second)
+        self.assertEqual(
+            sorted((flow.src, flow.dst, flow.pg, flow.size_bytes) for flow in first),
+            sorted((flow.src, flow.dst, flow.pg, flow.size_bytes) for flow in second))
+        first_churn = [flow for flow in first if flow.size_bytes != 16 * 1024 * 1024]
+        self.assertTrue(all(
+            0 <= (flow.start_s - (2.006 + index * 25e-6)) < 5e-6
+            for index, flow in enumerate(first_churn)))
+
+    def test_oflm_churn_jitter_must_be_below_interval(self):
+        args = generate_workload.parse_args([
+            "--workload", "oflm-churn", "--output", "unused",
+            "--oflm-churn-jitter-us", "25",
+        ])
+        with self.assertRaisesRegex(ValueError, "below the arrival interval"):
+            generate_workload.generate(args)
+
     def test_generation_rejects_short_or_excessive_workloads(self):
         short = generate_workload.parse_args([
             "--workload", "incast", "--output", "unused", "--duration-ms", "9",
