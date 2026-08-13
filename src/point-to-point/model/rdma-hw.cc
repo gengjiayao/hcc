@@ -2387,7 +2387,9 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
                                               fast_react, ih.nhop, next_seq,
                                               observed_metric, threshold_ratio);
                 } else {
+                    DataRate old_rate = qp->m_rate;
                     ChangeRate(qp, new_rate);  // vanilla HPCC
+                    if (qp->m_rate != old_rate) m_guardHpccActualRateChanges++;
                 }
             }
         }
