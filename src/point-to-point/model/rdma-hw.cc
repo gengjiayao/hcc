@@ -1302,6 +1302,12 @@ void RdmaHw::HandleRccRemove(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomHe
     }
     m_rate_flow_ctl_set.erase(PeekPointer(rx_qp));
 
+    // No grant needs to be sent after the last controlled flow leaves.  In
+    // particular, do not compute C / N for N == 0.
+    if (m_rate_flow_ctl_set.empty()) {
+        return;
+    }
+
     // TODO: this is send rate, not receive rate
     uint32_t nic_idx = GetNicIdxOfRxQp(rx_qp);
     DataRate rate = m_nic[nic_idx].dev->GetDataRate() / m_rate_flow_ctl_set.size();
