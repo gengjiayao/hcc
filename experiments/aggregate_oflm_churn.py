@@ -64,6 +64,14 @@ def flatten_performance(performance: Mapping[str, object]) -> Dict[str, float]:
     for group, metrics in groups.items():
         output[f"{group}_mean_slowdown"] = float(metrics["mean_slowdown"])
         output[f"{group}_p99_slowdown"] = float(metrics["p99_slowdown"])
+    target_queue = performance.get("target_receiver_queue")
+    if not isinstance(target_queue, dict):
+        raise AggregateError("selected performance lacks target receiver queue metrics")
+    for name in (
+        "average_bytes", "positive_average_bytes", "p95_bytes", "p99_bytes",
+        "max_bytes",
+    ):
+        output[f"target_queue_{name}"] = float(target_queue[name])
     return output
 
 

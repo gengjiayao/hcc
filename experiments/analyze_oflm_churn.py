@@ -14,12 +14,18 @@ import sys
 from typing import Dict, List, Mapping, Sequence
 
 try:
-    from experiments.summarize_campaign import SummaryError, parse_config, parse_guard_stats, percentile
+    from experiments.summarize_campaign import (
+        SummaryError, parse_config, parse_guard_stats, parse_port_queue_summaries,
+        percentile,
+    )
     from experiments.summarize_workload import (
         one_artifact, parse_fct, parse_snapshot, read_json, resolve_snapshot, summarize,
     )
 except ModuleNotFoundError:  # Direct execution from experiments/.
-    from summarize_campaign import SummaryError, parse_config, parse_guard_stats, percentile
+    from summarize_campaign import (
+        SummaryError, parse_config, parse_guard_stats, parse_port_queue_summaries,
+        percentile,
+    )
     from summarize_workload import (
         one_artifact, parse_fct, parse_snapshot, read_json, resolve_snapshot, summarize,
     )
@@ -136,6 +142,31 @@ def grouped_fct_metrics(output_dir: Path, bdp_bytes: int,
     return result
 
 
+def target_queue_metrics(path: Path, receiver_node: int) -> Dict[str, object]:
+    """Return the unique switch egress queue feeding the workload receiver."""
+    matches = [
+        row for row in parse_port_queue_summaries(path)
+        if int(row["neighbor_id"]) == receiver_node
+    ]
+    if len(matches) != 1:
+        raise SummaryError(
+            f"expected one switch egress to receiver {receiver_node}, found {len(matches)}")
+    row = matches[0]
+    return {
+        "node_id": int(row["node_id"]),
+        "if_index": int(row["if_index"]),
+        "neighbor_id": int(row["neighbor_id"]),
+        "samples": int(row["samples"]),
+        "positive_samples": int(row["positive_samples"]),
+        "average_bytes": float(row["average_bytes"]),
+        "positive_average_bytes": float(row["positive_average_bytes"]),
+        "p95_bytes": float(row["p95_bytes"]),
+        "p99_bytes": float(row["p99_bytes"]),
+        "max_bytes": float(row["max_bytes"]),
+        "tx_bytes": int(row["tx_bytes"]),
+    }
+
+
 def analyze(output_dir: Path, manifest_path: Path, lifecycle_path: Path,
             artifact_limit_bytes: int) -> Dict[str, object]:
     output_dir = output_dir.resolve()
@@ -168,6 +199,10 @@ def analyze(output_dir: Path, manifest_path: Path, lifecycle_path: Path,
         raise SummaryError("OFLM switches must be 0 or 1")
 
     rows = parse_lifecycle(lifecycle_path)
+    receivers = {int(flow["dst"]) for flow in flows}
+    if len(receivers) != 1:
+        raise SummaryError("OFLM churn workload must use exactly one receiver")
+    receiver_node = next(iter(receivers))
     expected_sizes = Counter(
         int(flow["size"]) for flow in flows
         if not selective or int(flow["size"]) > bdp_bytes
@@ -241,6 +276,8 @@ def analyze(output_dir: Path, manifest_path: Path, lifecycle_path: Path,
             "queue_mean_bytes": metric_value(base, "queue_bytes_mean"),
             "queue_p99_bytes": metric_value(base, "queue_bytes_p99"),
             "queue_max_bytes": metric_value(base, "queue_bytes_max"),
+            "target_receiver_queue": target_queue_metrics(
+                one_artifact(output_dir, "_out_queue_stats.txt"), receiver_node),
             "fct_groups": grouped_fct_metrics(output_dir, bdp_bytes, elephant_bytes),
         },
     }
