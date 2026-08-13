@@ -137,6 +137,8 @@ bool var_win = false, fast_react = true;
 bool multi_rate = true;
 bool sample_feedback = false;
 double u_target = 0.95;
+double guard_ewma_beta = 0.125;
+double guard_release_gamma = 1.0;
 uint32_t int_multi = 1;
 bool rate_bound = true;
 unordered_map<uint64_t, uint32_t> rate2kmax, rate2kmin;
@@ -1089,6 +1091,12 @@ int main(int argc, char *argv[]) {
             } else if (key.compare("U_TARGET") == 0) {
                 conf >> u_target;
                 std::cerr << "U_TARGET\t\t" << u_target << '\n';
+            } else if (key.compare("GUARD_EWMA_BETA") == 0) {
+                conf >> guard_ewma_beta;
+                std::cerr << "GUARD_EWMA_BETA\t\t" << guard_ewma_beta << '\n';
+            } else if (key.compare("GUARD_RELEASE_GAMMA") == 0) {
+                conf >> guard_release_gamma;
+                std::cerr << "GUARD_RELEASE_GAMMA\t" << guard_release_gamma << '\n';
             } else if (key.compare("INT_MULTI") == 0) {
                 conf >> int_multi;
                 std::cerr << "INT_MULTI\t\t\t\t" << int_multi << '\n';
@@ -1540,6 +1548,8 @@ int main(int argc, char *argv[]) {
             rdmaHw->SetAttribute("MultiRate", BooleanValue(multi_rate));
             rdmaHw->SetAttribute("SampleFeedback", BooleanValue(sample_feedback));
             rdmaHw->SetAttribute("TargetUtil", DoubleValue(u_target));
+            rdmaHw->SetAttribute("GuardEwmaBeta", DoubleValue(guard_ewma_beta));
+            rdmaHw->SetAttribute("GuardReleaseGamma", DoubleValue(guard_release_gamma));
             rdmaHw->SetAttribute("RateBound", BooleanValue(rate_bound));
             rdmaHw->SetAttribute("DctcpRateAI", DataRateValue(DataRate(dctcp_rate_ai)));
             rdmaHw->SetAttribute("IrnEnable", BooleanValue(enable_irn));

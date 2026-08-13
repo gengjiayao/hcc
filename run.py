@@ -78,6 +78,8 @@ MI_THRESH {mi}
 INT_MULTI {int_multi}
 GLOBAL_T 0
 U_TARGET 0.95
+GUARD_EWMA_BETA {guard_beta}
+GUARD_RELEASE_GAMMA {guard_gamma}
 MULTI_RATE 0
 SAMPLE_FEEDBACK 0
 
@@ -162,6 +164,10 @@ def main():
                         type=int, default=0, help="enforce to use window scheme (default: 0)")
     parser.add_argument('--sw_monitoring_interval', dest='sw_monitoring_interval', action='store',
                         type=int, default=10000, help="interval of sampling statistics for queue status (default: 10000ns)")
+    parser.add_argument('--guard_beta', type=float, default=0.125,
+                        help="GUARD EWMA historical-sample weight in [0,1] (default: 0.125)")
+    parser.add_argument('--guard_gamma', type=float, default=1.0,
+                        help="GUARD proactive-release threshold multiplier >= 0 (default: 1.0)")
 
     # #### CONWEAVE PARAMETERS ####
     # parser.add_argument('--cwh_extra_reply_deadline', dest='cwh_extra_reply_deadline', action='store',
@@ -199,6 +205,11 @@ def main():
     flowgen_stop_time = flowgen_start_time + \
         float(args.simul_time)  # default: 2.0
     sw_monitoring_interval = int(args.sw_monitoring_interval)
+
+    if not 0.0 <= args.guard_beta <= 1.0:
+        raise Exception("CONFIG ERROR: --guard_beta must be in [0, 1].")
+    if args.guard_gamma < 0.0:
+        raise Exception("CONFIG ERROR: --guard_gamma must be non-negative.")
 
     # get over-subscription ratio from topoogy name
 
@@ -386,6 +397,7 @@ def main():
                                         ai=ai, hai=hai, dctcp_ai=dctcp_ai,
                                         has_win=has_win, var_win=var_win,
                                         fast_react=fast_react, mi=mi, int_multi=int_multi, ewma_gain=ewma_gain,
+                                        guard_beta=args.guard_beta, guard_gamma=args.guard_gamma,
                                         kmax_map=kmax_map, kmin_map=kmin_map, pmax_map=pmax_map)
     # else:
     #     print("unknown cc:{}".format(args.cc))
@@ -445,4 +457,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

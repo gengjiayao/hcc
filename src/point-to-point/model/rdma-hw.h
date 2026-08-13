@@ -159,6 +159,8 @@ class RdmaHw : public Object {
     /***********************
      * Guard CC (rate grant)
      ***********************/
+    double m_guardEwmaBeta;
+    double m_guardReleaseGamma;
     std::unordered_set<RdmaRxQueuePair*> m_rate_flow_ctl_set;
     void SyncHwRate(Ptr<RdmaQueuePair> qp, DataRate target_cc_rate);
     void HandleRccRequest(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch);

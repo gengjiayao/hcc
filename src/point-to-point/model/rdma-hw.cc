@@ -103,6 +103,14 @@ TypeId RdmaHw::GetTypeId(void) {
                           MakeBooleanAccessor(&RdmaHw::m_multipleRate), MakeBooleanChecker())
             .AddAttribute("SampleFeedback", "Whether sample feedback or not", BooleanValue(false),
                           MakeBooleanAccessor(&RdmaHw::m_sampleFeedback), MakeBooleanChecker())
+            .AddAttribute("GuardEwmaBeta",
+                          "Historical-sample weight in GUARD's receive-rate EWMA",
+                          DoubleValue(0.125), MakeDoubleAccessor(&RdmaHw::m_guardEwmaBeta),
+                          MakeDoubleChecker<double>(0.0, 1.0))
+            .AddAttribute("GuardReleaseGamma",
+                          "Multiplier for GUARD's proactive-release in-flight threshold",
+                          DoubleValue(1.0), MakeDoubleAccessor(&RdmaHw::m_guardReleaseGamma),
+                          MakeDoubleChecker<double>(0.0))
             .AddAttribute("TimelyAlpha", "Alpha of TIMELY", DoubleValue(0.875),
                           MakeDoubleAccessor(&RdmaHw::m_tmly_alpha), MakeDoubleChecker<double>())
             .AddAttribute("TimelyBeta", "Beta of TIMELY", DoubleValue(0.8),
@@ -509,21 +517,20 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
         }
 
         Time now = Simulator::Now();
-        double beta = 0.125;
-
         if (rxQp->m_last_pkt_time.IsZero()) {
             rxQp->m_est_rate = 0;
         } else {
             double interval = (now - rxQp->m_last_pkt_time).GetSeconds();
             if (interval > 0) {
                 double inst_rate = (double)payload_size / interval; // Bytes/s
-                rxQp->m_est_rate = beta * rxQp->m_est_rate + (1.0 - beta) * inst_rate;
+                rxQp->m_est_rate = m_guardEwmaBeta * rxQp->m_est_rate +
+                                   (1.0 - m_guardEwmaBeta) * inst_rate;
             }
         }
         rxQp->m_last_pkt_time = now;
 
-        double gamma = 1.0;
-        double v_th_double = rxQp->m_est_rate * rxQp->m_base_rtt_sec * gamma;
+        double v_th_double =
+            rxQp->m_est_rate * rxQp->m_base_rtt_sec * m_guardReleaseGamma;
         uint64_t v_th = (uint64_t)v_th_double;
 
         uint32_t currentSeq = rxQp->ReceiverNextExpectedSeq;
