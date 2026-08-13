@@ -77,6 +77,19 @@ class SummaryTests(unittest.TestCase):
             self.assertEqual(stats["completion_releases"], 8)
             self.assertEqual(stats["max_active_flows"], 4)
 
+    def test_guard_stats_preserve_serialized_grant_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            values = list(range(1, 31))
+            path.write_text(
+                "total " + " ".join(map(str, values)) + "\n",
+                encoding="utf-8",
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["grants_sent"], 1)
+            self.assertEqual(stats["int_records_stripped"], 29)
+            self.assertEqual(stats["grant_bytes_sent"], 30)
+
     def test_queue_summary_is_preaggregated_and_includes_zero_samples(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "queue.txt"
