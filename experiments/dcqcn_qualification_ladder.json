@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "frozen_flow_directory": "/tmp/guard-component-decomp-runs/flows",
+  "qualification_seed": 1,
+  "admission": {
+    "completed_flows": 655,
+    "required_priority_group": 4,
+    "cnp_generated_ecn_min": 1,
+    "cnp_received_min": 1,
+    "actual_rate_decreases_min": 1,
+    "switch_drops_total": 0,
+    "recovery_counters_total": 0,
+    "output_bytes_max": 104857600
+  },
+  "ladder": [
+    {
+      "level": "L0",
+      "description": "repository defaults; no ECN parameter changes",
+      "kmin_100g": 100,
+      "kmax_100g": 400,
+      "pmax_100g": 0.2
+    },
+    {
+      "level": "L1",
+      "description": "earlier and deterministic marking; safety qualification only",
+      "kmin_100g": 50,
+      "kmax_100g": 200,
+      "pmax_100g": 1.0
+    },
+    {
+      "level": "L2",
+      "description": "final aggressive early-marking safety level",
+      "kmin_100g": 20,
+      "kmax_100g": 100,
+      "pmax_100g": 1.0
+    }
+  ],
+  "selection_rule": "Use the first level for which every mechanism/completion/safety check passes; do not inspect comparative performance while selecting. If L2 fails, declare the frozen ladder invalid."
+}
