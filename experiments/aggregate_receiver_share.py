@@ -146,9 +146,24 @@ def flatten(
         source_rows = audit["target_flow_actual_goodput_by_source"]
         result["restricted_actual_goodput_gbps"] = float(source_rows["0"]["actual_goodput_gbps"])
         result["unrestricted_actual_goodput_gbps"] = float(source_rows["1"]["actual_goodput_gbps"])
+        common = audit["heterogeneous_common_active_window"]
+        result["common_active_duration_us"] = float(common["duration_ns"]) / 1000.0
+        result["common_active_restricted_payload_gbps"] = float(
+            common["per_source"]["0"]["payload_goodput_gbps"])
+        result["common_active_unrestricted_payload_gbps"] = float(
+            common["per_source"]["1"]["payload_goodput_gbps"])
+        result["common_active_aggregate_payload_gbps"] = float(
+            common["aggregate_payload_goodput_gbps"])
+        result["common_active_unused_payload_capacity_gbps"] = float(
+            common["unused_payload_capacity_gbps"])
     else:
         result["restricted_actual_goodput_gbps"] = math.nan
         result["unrestricted_actual_goodput_gbps"] = math.nan
+        result["common_active_duration_us"] = math.nan
+        result["common_active_restricted_payload_gbps"] = math.nan
+        result["common_active_unrestricted_payload_gbps"] = math.nan
+        result["common_active_aggregate_payload_gbps"] = math.nan
+        result["common_active_unused_payload_capacity_gbps"] = math.nan
     return result
 
 

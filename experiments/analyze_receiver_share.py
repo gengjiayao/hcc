@@ -177,6 +177,66 @@ def rate_metrics(
     }
 
 
+def common_active_window_metrics(
+    trace: Sequence[Mapping[str, object]], flows: Sequence[Mapping[str, object]],
+    receiver: int, target_ids: Sequence[int], expected_n: int,
+) -> Dict[str, object]:
+    if expected_n != 2:
+        raise SummaryError("heterogeneous common-active audit currently requires two targets")
+    sent = [
+        row for row in trace if row["event"] == "sent"
+        and int(row["host_node"]) == receiver and int(row["flow_id"]) in target_ids
+    ]
+    max_rows = [row for row in sent if int(row["active_flows"]) == expected_n]
+    if {int(row["flow_id"]) for row in max_rows} != set(target_ids):
+        raise SummaryError("common-active start lacks one C/N grant per target")
+    start_times = {int(row["time_ns"]) for row in max_rows}
+    if len(start_times) != 1:
+        raise SummaryError("target C/N grants do not share one active-set transition time")
+    start_ns = next(iter(start_times))
+    start_seq = {int(row["flow_id"]): int(row["next_seq"]) for row in max_rows}
+    release_times = sorted({
+        int(row["time_ns"]) for row in sent
+        if row["set_change"] == "release" and int(row["time_ns"]) > start_ns
+    })
+    if not release_times:
+        raise SummaryError("heterogeneous target active set never falls below two")
+    end_ns = release_times[0]
+    release_rows = {
+        int(row["flow_id"]): row for row in sent
+        if int(row["time_ns"]) == end_ns and row["set_change"] == "release"
+    }
+    if len(release_rows) != 1:
+        raise SummaryError("first heterogeneous release must leave exactly one target")
+    sizes = {flow_id: int(flows[flow_id]["size"]) for flow_id in target_ids}
+    sources = {flow_id: int(flows[flow_id]["src"]) for flow_id in target_ids}
+    duration_ns = end_ns - start_ns
+    delivered: Dict[int, int] = {}
+    for flow_id in target_ids:
+        end_seq = (
+            int(release_rows[flow_id]["next_seq"])
+            if flow_id in release_rows else sizes[flow_id]
+        )
+        delivered[flow_id] = end_seq - start_seq[flow_id]
+        if not 0 < delivered[flow_id] <= sizes[flow_id]:
+            raise SummaryError("invalid receiver progress in common-active window")
+    by_source = {
+        str(sources[flow_id]): {
+            "flow_id": flow_id, "delivered_bytes": delivered[flow_id],
+            "payload_goodput_gbps": delivered[flow_id] * 8 / duration_ns,
+        }
+        for flow_id in target_ids
+    }
+    line_rate = int(max_rows[0]["line_rate_bps"]) / 1e9
+    aggregate = sum(float(row["payload_goodput_gbps"]) for row in by_source.values())
+    return {
+        "start_ns": start_ns, "end_ns": end_ns, "duration_ns": duration_ns,
+        "per_source": by_source, "aggregate_payload_goodput_gbps": aggregate,
+        "unused_payload_capacity_gbps": line_rate - aggregate,
+        "receiver_line_rate_gbps": line_rate,
+    }
+
+
 def analyze(
     output_dir: Path, manifest_path: Path, lifecycle_path: Path, grant_path: Path,
     ladder_path: Path, scenario: str, expected_n: int,
@@ -262,6 +322,23 @@ def analyze(
         }
         for row in target_fct
     }
+    common_active = None
+    if scenario == "heterogeneous":
+        common_active = common_active_window_metrics(
+            trace, flows, receiver, target_ids, expected_n)
+        acceptance = ladder["heterogeneous"]["acceptance"]
+        share_gbps = float(rates["c_over_n_exact_bps"]) / 1e9
+        restricted = float(common_active["per_source"]["0"]["payload_goodput_gbps"])
+        aggregate = float(common_active["aggregate_payload_goodput_gbps"])
+        line_rate = float(common_active["receiver_line_rate_gbps"])
+        if restricted / share_gbps > float(
+            acceptance["restricted_rate_fraction_of_share_max"]
+        ):
+            raise SummaryError("restricted target does not leave unused C/N share")
+        if aggregate / line_rate > float(
+            acceptance["aggregate_rate_fraction_of_line_max"]
+        ):
+            raise SummaryError("receiver common-active payload rate is not below the gate")
     packet_count = len(sent)
     ethernet_bytes_per_packet = int(
         ladder["homogeneous"]["ethernet_equivalent_bytes_per_packet"][controller]
@@ -297,6 +374,7 @@ def analyze(
             "grant_trace": trace_counts,
         },
         "target_flow_actual_goodput_by_source": by_source,
+        "heterogeneous_common_active_window": common_active,
         "workload_summary": base,
     }
     return result
