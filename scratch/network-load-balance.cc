@@ -170,6 +170,7 @@ double guard_release_gamma = 1.0;
 bool guard_selective_registration = true;
 bool guard_proactive_release = true;
 bool guard_keep_last_hop_int = false;
+bool guard_size_priority = true;
 bool guard_lifecycle_trace = false;
 uint64_t guard_lifecycle_trace_max_lines = 1024;
 const uint64_t guard_lifecycle_trace_hard_max_lines = 10000;
@@ -1243,6 +1244,9 @@ int main(int argc, char *argv[]) {
             } else if (key.compare("GUARD_KEEP_LAST_HOP_INT") == 0) {
                 conf >> guard_keep_last_hop_int;
                 std::cerr << "GUARD_KEEP_LAST_HOP_INT\t" << guard_keep_last_hop_int << '\n';
+            } else if (key.compare("GUARD_SIZE_PRIORITY") == 0) {
+                conf >> guard_size_priority;
+                std::cerr << "GUARD_SIZE_PRIORITY\t" << guard_size_priority << '\n';
             } else if (key.compare("GUARD_LIFECYCLE_TRACE") == 0) {
                 conf >> guard_lifecycle_trace;
                 std::cerr << "GUARD_LIFECYCLE_TRACE\t" << guard_lifecycle_trace << '\n';
@@ -1800,6 +1804,7 @@ int main(int argc, char *argv[]) {
             rdmaHw->SetAttribute("GuardProactiveRelease",
                                  BooleanValue(guard_proactive_release));
             rdmaHw->SetAttribute("GuardKeepLastHopInt", BooleanValue(guard_keep_last_hop_int));
+            rdmaHw->SetAttribute("GuardSizePriority", BooleanValue(guard_size_priority));
             if (guard_lifecycle_trace) {
                 rdmaHw->ConfigureGuardLifecycleTrace(&guard_lifecycle_trace_sink);
             }

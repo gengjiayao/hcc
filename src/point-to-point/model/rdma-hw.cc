@@ -124,6 +124,10 @@ TypeId RdmaHw::GetTypeId(void) {
                           "Retain last-hop INT in GUARD ACKs for the double-control ablation",
                           BooleanValue(false), MakeBooleanAccessor(&RdmaHw::m_guardKeepLastHopInt),
                           MakeBooleanChecker())
+            .AddAttribute("GuardSizePriority",
+                          "Remap GUARD flows to size-based priority groups",
+                          BooleanValue(true), MakeBooleanAccessor(&RdmaHw::m_guardSizePriority),
+                          MakeBooleanChecker())
             .AddAttribute("TimelyAlpha", "Alpha of TIMELY", DoubleValue(0.875),
                           MakeDoubleAccessor(&RdmaHw::m_tmly_alpha), MakeDoubleChecker<double>())
             .AddAttribute("TimelyBeta", "Beta of TIMELY", DoubleValue(0.8),
@@ -285,7 +289,7 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
     // this codebase). All packets of one flow stay on the same pg, so the
     // QP-key / pause-check / RCC-grant routing all stay consistent.
     // Bucket boundaries match homa's unscheduled cutoffs.
-    if (m_cc_mode == 11 || m_cc_mode == 13) {
+    if ((m_cc_mode == 11 || m_cc_mode == 13) && m_guardSizePriority) {
         DataRate line_rate = m_nic[nic_idx].dev->GetDataRate();
         uint64_t bdp_bytes = baseRtt * line_rate.GetBitRate() / 8000000000lu;
         if (bdp_bytes == 0) bdp_bytes = 1;

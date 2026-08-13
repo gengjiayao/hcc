@@ -92,6 +92,7 @@ GUARD_RELEASE_GAMMA {guard_gamma}
 GUARD_SELECTIVE_REGISTRATION {guard_selective_registration}
 GUARD_PROACTIVE_RELEASE {guard_proactive_release}
 GUARD_KEEP_LAST_HOP_INT {guard_keep_last_hop_int}
+GUARD_SIZE_PRIORITY {guard_size_priority}
 GUARD_LIFECYCLE_TRACE {guard_lifecycle_trace}
 GUARD_LIFECYCLE_TRACE_MAX_LINES {guard_lifecycle_max_lines}
 GUARD_CONTROLLER_TRACE {guard_controller_trace}
@@ -248,6 +249,8 @@ def main():
                         help="release registered flows before completion (default: 1)")
     parser.add_argument('--guard_keep_last_hop_int', type=int, choices=(0, 1), default=0,
                         help="retain last-hop INT in GUARD for ablation (default: 0)")
+    parser.add_argument('--guard_size_priority', type=int, choices=(0, 1), default=1,
+                        help="remap GUARD flows to size-based priority groups (default: 1)")
     parser.add_argument('--guard_lifecycle_trace', type=int, choices=(0, 1), default=0,
                         help="write a bounded per-flow GUARD lifecycle CSV (default: 0)")
     parser.add_argument('--guard_lifecycle_output', type=str,
@@ -606,6 +609,7 @@ def main():
                                         guard_selective_registration=guard_selective_registration,
                                         guard_proactive_release=guard_proactive_release,
                                         guard_keep_last_hop_int=args.guard_keep_last_hop_int,
+                                        guard_size_priority=args.guard_size_priority,
                                         guard_lifecycle_trace=args.guard_lifecycle_trace,
                                         guard_lifecycle_output=guard_lifecycle_output,
                                         guard_lifecycle_max_lines=args.guard_lifecycle_max_lines,
