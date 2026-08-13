@@ -153,7 +153,7 @@ MIN_FORMAL_TIME = 0.010
 DEFAULT_GUARD_LIFECYCLE_MAX_LINES = 1024
 HARD_GUARD_LIFECYCLE_MAX_LINES = 10000
 DEFAULT_GUARD_CONTROLLER_MAX_LINES = 10000
-HARD_GUARD_CONTROLLER_MAX_LINES = 100000
+HARD_GUARD_CONTROLLER_MAX_LINES = 300000
 
 
 def resolve_guard_components(guard_oflm, selective_registration, proactive_release):
@@ -261,7 +261,7 @@ def main():
                         help="controller CSV path (default: the run output directory)")
     parser.add_argument('--guard_controller_max_lines', type=int,
                         default=DEFAULT_GUARD_CONTROLLER_MAX_LINES,
-                        help="maximum controller rows (default: 10000; hard maximum: 100000)")
+                        help="maximum controller rows (default: 10000; hard maximum: 300000)")
     parser.add_argument('--seed', type=int, default=1,
                         help="traffic-generator and ns-3 random seed (default: 1)")
 

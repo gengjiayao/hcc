@@ -145,7 +145,7 @@ For a directed controller audit, `run.py --guard_controller_trace 1` writes a
 bounded CSV containing HPCC, grant, and completion events with computed,
 granted, and final rates.  Its final comment records attempted, written, and
 truncated rows; time-weighted analysis is valid only when `truncated=0`.  The
-runner permits at most 100,000 rows and enables this trace only for full GUARD.
+runner permits at most 300,000 rows and enables this trace only for full GUARD.
 `hpcc_full_computations` and `hpcc_fast_computations` distinguish valid INT
 computations from feedback calls and actual pacer changes.  The supplied
 runner uses `FAST_REACT=0`, so an audited formal run must report zero fast

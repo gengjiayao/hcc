@@ -175,7 +175,7 @@ uint64_t guard_lifecycle_trace_max_lines = 1024;
 const uint64_t guard_lifecycle_trace_hard_max_lines = 10000;
 bool guard_controller_trace = false;
 uint64_t guard_controller_trace_max_lines = 10000;
-const uint64_t guard_controller_trace_hard_max_lines = 100000;
+const uint64_t guard_controller_trace_hard_max_lines = 300000;
 uint32_t int_multi = 1;
 bool rate_bound = true;
 unordered_map<uint64_t, uint32_t> rate2kmax, rate2kmin;
