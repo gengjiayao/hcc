@@ -766,7 +766,7 @@ int RdmaHw::ReceiveAck(Ptr<Packet> p, CustomHeader &ch) {
         }
     }
 
-    if (m_cc_mode == 3) {
+    if (m_cc_mode == 3 || m_cc_mode == 11) {
         HandleAckHp(qp, p, ch);
     } else if (m_cc_mode == 7) {
         HandleAckTimely(qp, p, ch);
