@@ -83,11 +83,9 @@ bool enable_qcn = true, enable_pfc = true, use_dynamic_pfc_threshold = true;
 uint32_t packet_payload_size = 1000, l2_chunk_size = 0, l2_ack_interval = 0;
 double pause_time = 5;  // PFC pause, microseconds
 double flowgen_start_time = 2.0, flowgen_stop_time = 2.5, simulator_extra_time = 0.1;
-// queue length monitoring time is not used in this simulator
-// uint32_t qlen_dump_interval = 100000000, qlen_mon_interval = 1000;  // ns
 uint32_t qlen_mon_interval = 1000;  // ns
-uint64_t qlen_mon_start;               // ns
-uint64_t qlen_mon_end;                 // ns
+double qlen_mon_start;               // seconds
+double qlen_mon_end;                 // seconds
 uint32_t switch_mon_interval = 10000;  // ns
 uint64_t cnp_mon_start;                // ns
 uint64_t cnp_monitor_bucket = 100000;  // ns
@@ -619,6 +617,11 @@ map<uint32_t, map<uint32_t, QlenDistribution>> queue_result;
 void monitor_buffer(FILE *qlen_output, NodeContainer *n) {
     uint64_t now = Simulator::Now().GetTimeStep();
 
+    if (Simulator::Now() < Seconds(qlen_mon_start) ||
+        Simulator::Now() > Seconds(qlen_mon_end)) {
+        return;
+    }
+
     for (uint32_t i = 0; i < n->GetN(); i++) {
         if (n->Get(i)->GetNodeType() == 1) {
             Ptr<SwitchNode> sw = DynamicCast<SwitchNode>(n->Get(i));
@@ -654,8 +657,7 @@ void monitor_buffer(FILE *qlen_output, NodeContainer *n) {
         }
     }
 
-    // 递归调度：直到 10秒 (10^10 ns)
-    if (now < 10000000000) {
+    if (Simulator::Now() + NanoSeconds(qlen_mon_interval) <= Seconds(qlen_mon_end)) {
         Simulator::Schedule(NanoSeconds(qlen_mon_interval), &monitor_buffer, qlen_output, n);
     }
 }
@@ -1187,6 +1189,9 @@ int main(int argc, char *argv[]) {
             } else if (key.compare("QLEN_MON_END") == 0) {
                 conf >> qlen_mon_end;
                 std::cerr << "QLEN_MON_END\t\t\t\t" << qlen_mon_end << '\n';
+            } else if (key.compare("QLEN_MON_INTERVAL") == 0) {
+                conf >> qlen_mon_interval;
+                std::cerr << "QLEN_MON_INTERVAL\t\t\t" << qlen_mon_interval << '\n';
             } else if (key.compare("MULTI_RATE") == 0) {
                 int v;
                 conf >> v;
@@ -1912,7 +1917,7 @@ int main(int argc, char *argv[]) {
     topof.close();
 
     qlen_output = fopen(qlen_mon_file.c_str(), "w");
-    Simulator::Schedule(Seconds(flowgen_start_time), &monitor_buffer, qlen_output, &n);
+    Simulator::Schedule(Seconds(qlen_mon_start), &monitor_buffer, qlen_output, &n);
 
     bw_output = fopen(bw_output_file.c_str(), "w");
     Simulator::Schedule(Seconds(flowgen_start_time), &PrintBw, bw_output);

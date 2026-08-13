@@ -38,6 +38,7 @@ EST_ERROR_MON_FILE mix/output/{id}/{id}_out_est_error.txt
 
 QLEN_MON_START {qlen_mon_start}
 QLEN_MON_END {qlen_mon_end}
+QLEN_MON_INTERVAL {qlen_monitoring_interval}
 SW_MONITORING_INTERVAL {sw_monitoring_interval}
 
 FLOWGEN_START_TIME {flowgen_start_time}
@@ -169,6 +170,8 @@ def main():
                         type=int, default=0, help="enforce to use window scheme (default: 0)")
     parser.add_argument('--sw_monitoring_interval', dest='sw_monitoring_interval', action='store',
                         type=int, default=10000, help="interval of sampling statistics for queue status (default: 10000ns)")
+    parser.add_argument('--qlen_monitoring_interval', type=int, default=1000,
+                        help="queue-length sampling interval in ns (default: 1000ns)")
     parser.add_argument('--guard_beta', type=float, default=0.125,
                         help="GUARD EWMA historical-sample weight in [0,1] (default: 0.125)")
     parser.add_argument('--guard_gamma', type=float, default=1.0,
@@ -216,6 +219,7 @@ def main():
     flowgen_stop_time = flowgen_start_time + \
         float(args.simul_time)  # default: 2.0
     sw_monitoring_interval = int(args.sw_monitoring_interval)
+    qlen_monitoring_interval = int(args.qlen_monitoring_interval)
 
     if not 0.0 <= args.guard_beta <= 1.0:
         raise Exception("CONFIG ERROR: --guard_beta must be in [0, 1].")
@@ -225,6 +229,8 @@ def main():
         raise Exception("CONFIG ERROR: --guard_lambda must be at least 1.0.")
     if not 1 <= args.seed <= 2147483647:
         raise Exception("CONFIG ERROR: --seed must be in [1, 2147483647].")
+    if qlen_monitoring_interval <= 0:
+        raise Exception("CONFIG ERROR: --qlen_monitoring_interval must be positive.")
 
     # get over-subscription ratio from topoogy name
 
@@ -407,6 +413,7 @@ def main():
         config = config_template.format(id=config_ID, topo=topo, flow=flow,
                                         qlen_mon_start=qlen_mon_start, qlen_mon_end=qlen_mon_end, flowgen_start_time=flowgen_start_time,
                                         flowgen_stop_time=flowgen_stop_time, sw_monitoring_interval=sw_monitoring_interval,
+                                        qlen_monitoring_interval=qlen_monitoring_interval,
                                         load=netload, buffer_size=buffer, lb_mode=lb_mode, cwh_tx_expiry_time=cwh_tx_expiry_time,
                                         cwh_extra_reply_deadline=cwh_extra_reply_deadline, cwh_default_voq_waiting_time=cwh_default_voq_waiting_time,
                                         cwh_path_pause_time=cwh_path_pause_time, cwh_extra_voq_flush_time=cwh_extra_voq_flush_time,
