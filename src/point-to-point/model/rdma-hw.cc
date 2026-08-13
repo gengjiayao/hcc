@@ -240,12 +240,12 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
     // add qp
     uint32_t nic_idx = GetNicIdxOfQp(qp);
 
-    // For guard (cc_mode=11), borrow homa's idea of routing short
+    // For GUARD modes, borrow homa's idea of routing short
     // messages to higher-priority switch queues (lower pg = higher prio in
     // this codebase). All packets of one flow stay on the same pg, so the
     // QP-key / pause-check / RCC-grant routing all stay consistent.
     // Bucket boundaries match homa's unscheduled cutoffs.
-    if (m_cc_mode == 11) {
+    if (m_cc_mode == 11 || m_cc_mode == 13) {
         DataRate line_rate = m_nic[nic_idx].dev->GetDataRate();
         uint64_t bdp_bytes = baseRtt * line_rate.GetBitRate() / 8000000000lu;
         if (bdp_bytes == 0) bdp_bytes = 1;
@@ -266,12 +266,12 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
     qp->m_max_rate = m_bps;
     if (m_cc_mode == 1) {
         qp->mlx.m_targetRate = m_bps;
-    } else if (m_cc_mode == 3 || m_cc_mode == 11) {
+    } else if (m_cc_mode == 3 || m_cc_mode == 11 || m_cc_mode == 13) {
         qp->hp.m_curRate = m_bps;
         if (m_multipleRate) {
             for (uint32_t i = 0; i < IntHeader::maxHop; i++) qp->hp.hopState[i].Rc = m_bps;
         }
-        // grantRate initialization (only used when guard layer enforces cap)
+        // grantRate initialization (only used when the GUARD active layer enforces a cap)
         qp->hp.m_grantRate = m_bps;
     } else if (m_cc_mode == 7) {
         qp->tmly.m_curRate = m_bps;
@@ -487,8 +487,8 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
         m_nic[nic_idx].dev->TriggerTransmit();
     }
 
-    // guard (cc_mode 11): receiver-driven RCC + EWMA-based proactive release
-    if (m_cc_mode == 11) {
+    // GUARD and its active-only ablation: receiver-driven rate cap + proactive release.
+    if (m_cc_mode == 11 || m_cc_mode == 13) {
         if (flow_size == 0) {
             std::cout << "ERROR: flow_size==0 in ReceiveUdp (guard)\n";
             exit(1);
@@ -606,7 +606,7 @@ int RdmaHw::ReceiveCnp(Ptr<Packet> p, CustomHeader &ch) {
         qp->m_rate = dev->GetDataRate();
         if (m_cc_mode == 1) {
             qp->mlx.m_targetRate = dev->GetDataRate();
-        } else if (m_cc_mode == 3 || m_cc_mode == 11) {
+        } else if (m_cc_mode == 3 || m_cc_mode == 11 || m_cc_mode == 13) {
             qp->hp.m_curRate = dev->GetDataRate();
             if (m_multipleRate) {
                 for (uint32_t i = 0; i < IntHeader::maxHop; i++)
@@ -800,7 +800,7 @@ int RdmaHw::Receive(Ptr<Packet> p, CustomHeader &ch) {
     } else if (ch.l3Prot == 0xFC) {  // ACK
         return ReceiveAck(p, ch);
     } else if (ch.l3Prot == 0xFB) {  // guard rate grant or homa-simple credit
-        if (m_cc_mode == 11) {
+        if (m_cc_mode == 11 || m_cc_mode == 13) {
             return ReceiveRate(p, ch);
         } else if (m_cc_mode == 10) {
             return ReceiveHomaSimpleCredit(p, ch);

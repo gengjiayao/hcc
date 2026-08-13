@@ -1269,13 +1269,13 @@ int main(int argc, char *argv[]) {
     // IntHeader::mode
     if (cc_mode == 7)  // timely, use ts
         IntHeader::mode = 1;
-    else if (cc_mode == 3 || cc_mode == 11)  // hpcc / guard, use int
+    else if (cc_mode == 3 || cc_mode == 11)  // HPCC / full GUARD, use INT
         IntHeader::mode = 0;
     else if (cc_mode == 10)  // homa-simple, custom request flag
         IntHeader::mode = 2;
     else if (cc_mode == 12)  // homa, per-packet HomaHeader
         IntHeader::mode = 3;
-    else  // others, no extra header
+    else  // others, including GUARD active-only, use no extra telemetry header
         IntHeader::mode = 5;
 
     /**

@@ -34,6 +34,7 @@ enum CcMode {
     CC_MODE_HOMA_SIMPLE = 10,
     CC_MODE_GUARD = 11,
     CC_MODE_HOMA = 12,
+    CC_MODE_GUARD_ACTIVE_ONLY = 13,
     CC_MODE_UNDEFINED = 0,
 };
 

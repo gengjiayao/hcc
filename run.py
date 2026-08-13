@@ -108,6 +108,7 @@ cc_modes = {
     "homa-simple": 10,  # legacy simplified Homa
     "guard": 11,
     "homa": 12,         # standard Homa (SRPT + 8-priority + RESEND)
+    "guard-active-only": 13,  # receiver-rate-only GUARD component ablation
 }
 
 lb_modes = {
@@ -143,7 +144,8 @@ def main():
 
     parser = argparse.ArgumentParser(description='run simulation')
     parser.add_argument('--cc', dest='cc', action='store',
-                        default='dcqcn', help="hpcc/dcqcn/timely/dctcp (default: dcqcn)")
+                        choices=tuple(cc_modes), default='dcqcn',
+                        help="congestion-control mode (default: dcqcn)")
     parser.add_argument('--lb', dest='lb', action='store',
                         default='fecmp', help="fecmp/pecmp/drill/conga (default: fecmp)")
     parser.add_argument('--pfc', dest='pfc', action='store',
@@ -336,7 +338,7 @@ def main():
     # By default, DCQCN uses no window (rate-based).
     has_win = 0
     var_win = 0
-    if (cc_mode == 3 or cc_mode == 8 or cc_mode == 11 or enforce_win == 1):  # HPCC, DCTCP, GUARD, or enforce
+    if (cc_mode == 3 or cc_mode == 8 or cc_mode == 11 or cc_mode == 13 or enforce_win == 1):
         has_win = 1
         var_win = 1
         if enforce_win == 1:
