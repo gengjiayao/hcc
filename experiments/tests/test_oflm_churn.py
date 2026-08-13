@@ -6,6 +6,7 @@ import unittest
 from experiments.analyze_oflm_churn import (
     LIFECYCLE_FIELDS,
     SummaryError,
+    grouped_fct_metrics,
     lifecycle_metrics,
     parse_lifecycle,
 )
@@ -66,6 +67,21 @@ class OflmChurnAnalysisTests(unittest.TestCase):
             path = self.write_trace(directory, invalid)
             with self.assertRaisesRegex(SummaryError, "no remaining bytes"):
                 parse_lifecycle(path)
+
+    def test_grouped_fct_metrics_keep_admission_classes_separate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "1_out_fct.txt"
+            path.write_text(
+                "0 15 1 2 16777216 2000000000 400 100\n"
+                "1 15 3 4 104000 2000000100 200 100\n"
+                "2 15 5 6 104001 2000000200 300 100\n",
+                encoding="utf-8")
+            metrics = grouped_fct_metrics(Path(directory), 104000, 16777216)
+        self.assertEqual(metrics["all"]["flows"], 3)
+        self.assertEqual(metrics["elephant"]["flows"], 1)
+        self.assertEqual(metrics["churn"]["flows"], 2)
+        self.assertEqual(metrics["le_bdp_churn"]["mean_slowdown"], 2.0)
+        self.assertEqual(metrics["gt_bdp_churn"]["mean_slowdown"], 3.0)
 
 
 if __name__ == "__main__":
