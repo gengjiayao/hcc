@@ -86,8 +86,8 @@ uint32_t packet_payload_size = 1000, l2_chunk_size = 0, l2_ack_interval = 0;
 double pause_time = 5;  // PFC pause, microseconds
 double flowgen_start_time = 2.0, flowgen_stop_time = 2.5, simulator_extra_time = 0.1;
 uint32_t qlen_mon_interval = 1000;  // ns
-double qlen_mon_start;               // seconds
-double qlen_mon_end;                 // seconds
+double qlen_mon_start = 2.0;         // seconds
+double qlen_mon_end = 2.5;           // seconds
 uint32_t switch_mon_interval = 10000;  // ns
 bool detailed_monitoring = true;       // backward-compatible for legacy configs
 double analysis_warmup_time = 0.005;   // manifest value; analysis runs in run.py
@@ -1108,8 +1108,6 @@ int main(int argc, char *argv[]) {
                 double v;
                 conf >> v;
                 flowgen_start_time = v;
-                qlen_mon_start = v;
-                qlen_mon_end = v;
                 cnp_mon_start = v;
                 irn_mon_start = v;
                 std::cerr << "FLOWGEN_START_TIME\t\t" << flowgen_start_time << "\n";
