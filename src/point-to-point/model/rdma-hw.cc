@@ -153,6 +153,13 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardRateGrantsReceived = 0;
     m_guardHpccFeedbackUpdates = 0;
     m_guardMaxActiveFlows = 0;
+    m_recoveryNacksGenerated = 0;
+    m_recoveryNacksReceived = 0;
+    m_irnNacksGenerated = 0;
+    m_irnNacksReceived = 0;
+    m_irnRetransmitPackets = 0;
+    m_irnRetransmitBytes = 0;
+    m_timeoutRecoveries = 0;
 }
 
 void RdmaHw::SetNode(Ptr<Node> node) { m_node = node; }
@@ -431,6 +438,14 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
     bool cnp_check = false;
     int x = ReceiverCheckSeq(ch.udp.seq, rxQp, payload_size, cnp_check);
 
+    // x==2 is a recovery NACK caused by an out-of-order packet. x==6 is
+    // encoded with protocol 0xFD in IRN mode but semantically acknowledges
+    // complete recovery, so do not count it as a recovery request.
+    if (x == 2) {
+        m_recoveryNacksGenerated++;
+        if (m_irn) m_irnNacksGenerated++;
+    }
+
     if (x == 1 || x == 2 || x == 6) {  // generate ACK or NACK
         qbbHeader seqh;
         seqh.SetSeq(rxQp->ReceiverNextExpectedSeq);
@@ -684,6 +699,13 @@ int RdmaHw::ReceiveAck(Ptr<Packet> p, CustomHeader &ch) {
 
     uint32_t nic_idx = GetNicIdxOfQp(qp);
     Ptr<QbbNetDevice> dev = m_nic[nic_idx].dev;
+
+    if (ch.l3Prot == 0xFD && ch.ack.irnNackSize != 0) {
+        m_recoveryNacksReceived++;
+        if (qp->irn.m_enabled) m_irnNacksReceived++;
+    } else if (ch.l3Prot == 0xFD && !qp->irn.m_enabled) {
+        m_recoveryNacksReceived++;
+    }
 
     if (m_ack_interval == 0)
         std::cout << "ERROR: shouldn't receive ack\n";
@@ -992,6 +1014,13 @@ Ptr<Packet> RdmaHw::GetNxtPacket(Ptr<RdmaQueuePair> qp) {
     }
     uint32_t seq = (uint32_t)qp->snd_nxt;
     bool proceed_snd_nxt = true;
+    // m_max_seq is the highest packet start offset previously transmitted.
+    // txTotalPkts excludes the current packet here, avoiding a false positive
+    // for the initial seq=0 packet.
+    if (qp->irn.m_enabled && qp->stat.txTotalPkts > 0 && seq <= qp->irn.m_max_seq) {
+        m_irnRetransmitPackets++;
+        m_irnRetransmitBytes += payload_size;
+    }
     qp->stat.txTotalPkts += 1;
     qp->stat.txTotalBytes += payload_size;
 
@@ -1104,6 +1133,7 @@ void RdmaHw::HandleTimeout(Ptr<RdmaQueuePair> qp, Time rto) {
     if (acc_timeout_count.find(qp->m_flow_id) == acc_timeout_count.end())
         acc_timeout_count[qp->m_flow_id] = 0;
     acc_timeout_count[qp->m_flow_id]++;
+    m_timeoutRecoveries++;
 
     if (qp->irn.m_enabled) qp->irn.m_recovery = true;
 

@@ -166,6 +166,13 @@ class RdmaHw : public Object {
     uint64_t m_guardRateGrantsReceived;
     uint64_t m_guardHpccFeedbackUpdates;
     uint64_t m_guardMaxActiveFlows;
+    uint64_t m_recoveryNacksGenerated;
+    uint64_t m_recoveryNacksReceived;
+    uint64_t m_irnNacksGenerated;
+    uint64_t m_irnNacksReceived;
+    uint64_t m_irnRetransmitPackets;
+    uint64_t m_irnRetransmitBytes;
+    uint64_t m_timeoutRecoveries;
     std::unordered_set<RdmaRxQueuePair*> m_rate_flow_ctl_set;
     void SyncHwRate(Ptr<RdmaQueuePair> qp, DataRate target_cc_rate);
     void HandleRccRequest(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch);

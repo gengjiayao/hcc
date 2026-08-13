@@ -2099,25 +2099,54 @@ int main(int argc, char *argv[]) {
 
     FILE *guard_stats_output = fopen(guard_stats_output_file.c_str(), "w");
     fprintf(guard_stats_output,
-            "node_id grants_sent grants_received hpcc_feedback_updates max_active_flows\n");
+            "node_id grants_sent grants_received hpcc_feedback_updates max_active_flows "
+            "recovery_nacks_generated recovery_nacks_received irn_nacks_generated "
+            "irn_nacks_received irn_retransmit_packets irn_retransmit_bytes "
+            "timeout_recoveries\n");
     uint64_t total_grants_sent = 0;
     uint64_t total_grants_received = 0;
     uint64_t total_hpcc_feedback_updates = 0;
     uint64_t max_active_flows = 0;
+    uint64_t total_recovery_nacks_generated = 0;
+    uint64_t total_recovery_nacks_received = 0;
+    uint64_t total_irn_nacks_generated = 0;
+    uint64_t total_irn_nacks_received = 0;
+    uint64_t total_irn_retransmit_packets = 0;
+    uint64_t total_irn_retransmit_bytes = 0;
+    uint64_t total_timeout_recoveries = 0;
     for (uint32_t i = 0; i < node_num; i++) {
         if (n.Get(i)->GetNodeType() != 0) continue;
         Ptr<RdmaDriver> driver = n.Get(i)->GetObject<RdmaDriver>();
         Ptr<RdmaHw> hw = driver->m_rdma;
-        fprintf(guard_stats_output, "%u %lu %lu %lu %lu\n", i, hw->m_guardRateGrantsSent,
+        fprintf(guard_stats_output,
+                "%u %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu\n", i,
+                hw->m_guardRateGrantsSent,
                 hw->m_guardRateGrantsReceived, hw->m_guardHpccFeedbackUpdates,
-                hw->m_guardMaxActiveFlows);
+                hw->m_guardMaxActiveFlows, hw->m_recoveryNacksGenerated,
+                hw->m_recoveryNacksReceived, hw->m_irnNacksGenerated,
+                hw->m_irnNacksReceived, hw->m_irnRetransmitPackets,
+                hw->m_irnRetransmitBytes, hw->m_timeoutRecoveries);
         total_grants_sent += hw->m_guardRateGrantsSent;
         total_grants_received += hw->m_guardRateGrantsReceived;
         total_hpcc_feedback_updates += hw->m_guardHpccFeedbackUpdates;
         max_active_flows = std::max(max_active_flows, hw->m_guardMaxActiveFlows);
+        total_recovery_nacks_generated += hw->m_recoveryNacksGenerated;
+        total_recovery_nacks_received += hw->m_recoveryNacksReceived;
+        total_irn_nacks_generated += hw->m_irnNacksGenerated;
+        total_irn_nacks_received += hw->m_irnNacksReceived;
+        total_irn_retransmit_packets += hw->m_irnRetransmitPackets;
+        total_irn_retransmit_bytes += hw->m_irnRetransmitBytes;
+        total_timeout_recoveries += hw->m_timeoutRecoveries;
     }
-    fprintf(guard_stats_output, "total %lu %lu %lu %lu\n", total_grants_sent,
-            total_grants_received, total_hpcc_feedback_updates, max_active_flows);
+    fprintf(guard_stats_output,
+            "total %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu\n",
+            total_grants_sent, total_grants_received, total_hpcc_feedback_updates,
+            max_active_flows, total_recovery_nacks_generated, total_recovery_nacks_received,
+            total_irn_nacks_generated, total_irn_nacks_received, total_irn_retransmit_packets,
+            total_irn_retransmit_bytes, total_timeout_recoveries);
+    fprintf(guard_stats_output, "switch_drops ingress %u egress %u total %u\n",
+            Settings::dropped_pkt_sw_ingress, Settings::dropped_pkt_sw_egress,
+            Settings::dropped_pkt_sw_ingress + Settings::dropped_pkt_sw_egress);
     uint64_t unmatched_pauses[QbbNetDevice::qCnt] = {0};
     for (auto const &active : pfc_active_pauses) {
         uint32_t qIndex = std::get<2>(active.first);
