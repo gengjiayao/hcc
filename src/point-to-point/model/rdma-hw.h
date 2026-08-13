@@ -172,6 +172,12 @@ class RdmaHw : public Object {
     // consequently apply an HPCC-derived rate to the sender.
     uint64_t m_guardHpccValidFeedback;
     uint64_t m_guardHpccRateUpdatesApplied;
+    uint64_t m_guardHpccActualRateChanges;
+    uint64_t m_guardReactiveBindingUpdates;
+    uint64_t m_guardGrantBindingUpdates;
+    uint64_t m_guardIntHopsBeforeStrip;
+    uint64_t m_guardIntHopsAfterStrip;
+    uint64_t m_guardIntRecordsStripped;
     uint64_t m_guardRegistrations;
     uint64_t m_guardSelectedRegistrations;
     uint64_t m_guardProactiveReleases;

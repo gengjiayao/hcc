@@ -163,6 +163,12 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardHpccFeedbackUpdates = 0;
     m_guardHpccValidFeedback = 0;
     m_guardHpccRateUpdatesApplied = 0;
+    m_guardHpccActualRateChanges = 0;
+    m_guardReactiveBindingUpdates = 0;
+    m_guardGrantBindingUpdates = 0;
+    m_guardIntHopsBeforeStrip = 0;
+    m_guardIntHopsAfterStrip = 0;
+    m_guardIntRecordsStripped = 0;
     m_guardRegistrations = 0;
     m_guardSelectedRegistrations = 0;
     m_guardProactiveReleases = 0;
@@ -471,10 +477,15 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
         seqh.SetSport(ch.udp.dport);
         seqh.SetDport(ch.udp.sport);
 
-        // guard: strip last-hop INT info (RCC handles last hop)
-        if (m_cc_mode == 11 && !m_guardKeepLastHopInt && ch.udp.ih.nhop > 0) {
-            int last_hop = --ch.udp.ih.nhop;
-            memset(&ch.udp.ih.hop[last_hop], 0, sizeof(ch.udp.ih.hop[last_hop]));
+        // guard: strip last-hop INT info (the receiver grant handles this link)
+        if (m_cc_mode == 11) {
+            m_guardIntHopsBeforeStrip += ch.udp.ih.nhop;
+            if (!m_guardKeepLastHopInt && ch.udp.ih.nhop > 0) {
+                int last_hop = --ch.udp.ih.nhop;
+                memset(&ch.udp.ih.hop[last_hop], 0, sizeof(ch.udp.ih.hop[last_hop]));
+                m_guardIntRecordsStripped++;
+            }
+            m_guardIntHopsAfterStrip += ch.udp.ih.nhop;
         }
         seqh.SetIntHeader(ch.udp.ih);
 
@@ -2212,7 +2223,14 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
                     }
                 }
                 if (m_cc_mode == 11) {
+                    DataRate old_rate = qp->m_rate;
+                    if (new_rate < qp->hp.m_grantRate) {
+                        m_guardReactiveBindingUpdates++;
+                    } else {
+                        m_guardGrantBindingUpdates++;
+                    }
                     SyncHwRate(qp, new_rate);  // guard: cap by grant rate
+                    if (qp->m_rate != old_rate) m_guardHpccActualRateChanges++;
                 } else {
                     ChangeRate(qp, new_rate);  // vanilla HPCC
                 }

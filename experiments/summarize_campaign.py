@@ -79,6 +79,8 @@ GUARD_TOTAL_FIELDS = (
     "recovery_nacks_generated", "recovery_nacks_received", "irn_nacks_generated",
     "irn_nacks_received", "irn_retransmit_packets", "irn_retransmit_bytes",
     "timeout_recoveries", "hpcc_valid_feedback", "hpcc_rate_updates_applied",
+    "hpcc_actual_rate_changes", "reactive_binding_updates", "grant_binding_updates",
+    "int_hops_before_strip", "int_hops_after_strip", "int_records_stripped",
 )
 PFC_PRIORITY_FIELDS = (
     "pause_count", "resume_count", "matched_intervals", "cumulative_pause_ns",
@@ -95,7 +97,7 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
     with path.open(encoding="utf-8", errors="replace") as stream:
         for line in stream:
             parts = line.split()
-            if parts and parts[0] == "total" and len(parts) in (5, 12, 16, 18):
+            if parts and parts[0] == "total" and len(parts) in (5, 12, 16, 18, 24):
                 values = tuple(map(int, parts[1:]))
                 if len(values) == 4:
                     total = dict(zip(
@@ -300,9 +302,11 @@ def validate_mode(params: Mapping[str, object], config: Mapping[str, str], stats
     updates = int(stats["hpcc_feedback_updates"])
     valid_feedback = int(stats["hpcc_valid_feedback"])
     applied_updates = int(stats["hpcc_rate_updates_applied"])
-    if cc == "guard" and (grants == 0 or updates == 0 or valid_feedback == 0 or applied_updates == 0):
+    if cc == "guard" and (grants == 0 or updates == 0 or valid_feedback == 0 or applied_updates == 0
+                           or int(stats["hpcc_actual_rate_changes"]) == 0):
         errors.append("full GUARD must have grants and nonzero valid-hop HPCC rate updates")
-    elif cc == "guard-active-only" and (grants == 0 or updates != 0 or valid_feedback != 0 or applied_updates != 0):
+    elif cc == "guard-active-only" and (grants == 0 or updates != 0 or valid_feedback != 0
+                                         or applied_updates != 0 or int(stats["hpcc_actual_rate_changes"]) != 0):
         errors.append("receiver-only must have grants and zero HPCC feedback activity")
     elif cc == "hpcc" and (grants != 0 or updates == 0 or valid_feedback == 0 or applied_updates == 0):
         errors.append("HPCC-only must have zero grants and nonzero valid-hop HPCC rate updates")

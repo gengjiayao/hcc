@@ -106,6 +106,7 @@ class SummaryTests(unittest.TestCase):
         good = {
             "grants_sent": 1, "grants_received": 1, "hpcc_feedback_updates": 1,
             "hpcc_valid_feedback": 1, "hpcc_rate_updates_applied": 1,
+            "hpcc_actual_rate_changes": 1,
         }
         bad = dict(good, hpcc_feedback_updates=0)
         self.assertEqual(validate_mode(params, config, good), [])
@@ -117,6 +118,7 @@ class SummaryTests(unittest.TestCase):
         stats = {
             "grants_sent": 1, "grants_received": 1, "hpcc_feedback_updates": 10,
             "hpcc_valid_feedback": 0, "hpcc_rate_updates_applied": 0,
+            "hpcc_actual_rate_changes": 0,
         }
         self.assertIn("valid-hop HPCC rate updates", validate_mode(params, config, stats)[0])
 
@@ -132,6 +134,7 @@ class SummaryTests(unittest.TestCase):
         stats = {
             "grants_sent": 1, "grants_received": 1, "hpcc_feedback_updates": 1,
             "hpcc_valid_feedback": 1, "hpcc_rate_updates_applied": 1,
+            "hpcc_actual_rate_changes": 1,
         }
         errors = validate_mode(params, config, stats)
         self.assertIn("GUARD_SELECTIVE_REGISTRATION is 1, expected 0", errors)
