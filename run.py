@@ -81,6 +81,7 @@ U_TARGET 0.95
 GUARD_LAMBDA {guard_lambda}
 GUARD_EWMA_BETA {guard_beta}
 GUARD_RELEASE_GAMMA {guard_gamma}
+GUARD_KEEP_LAST_HOP_INT {guard_keep_last_hop_int}
 MULTI_RATE 0
 SAMPLE_FEEDBACK 0
 
@@ -171,6 +172,8 @@ def main():
                         help="GUARD proactive-release threshold multiplier >= 0 (default: 1.0)")
     parser.add_argument('--guard_lambda', type=float, default=1.0,
                         help="GUARD HPCC-target multiplier >= 1 (default: 1.0)")
+    parser.add_argument('--guard_keep_last_hop_int', type=int, choices=(0, 1), default=0,
+                        help="retain last-hop INT in GUARD for ablation (default: 0)")
 
     # #### CONWEAVE PARAMETERS ####
     # parser.add_argument('--cwh_extra_reply_deadline', dest='cwh_extra_reply_deadline', action='store',
@@ -404,6 +407,7 @@ def main():
                                         fast_react=fast_react, mi=mi, int_multi=int_multi, ewma_gain=ewma_gain,
                                         guard_beta=args.guard_beta, guard_gamma=args.guard_gamma,
                                         guard_lambda=args.guard_lambda,
+                                        guard_keep_last_hop_int=args.guard_keep_last_hop_int,
                                         kmax_map=kmax_map, kmin_map=kmin_map, pmax_map=pmax_map)
     # else:
     #     print("unknown cc:{}".format(args.cc))

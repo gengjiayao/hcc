@@ -111,6 +111,10 @@ TypeId RdmaHw::GetTypeId(void) {
                           "Multiplier for GUARD's proactive-release in-flight threshold",
                           DoubleValue(1.0), MakeDoubleAccessor(&RdmaHw::m_guardReleaseGamma),
                           MakeDoubleChecker<double>(0.0))
+            .AddAttribute("GuardKeepLastHopInt",
+                          "Retain last-hop INT in GUARD ACKs for the double-control ablation",
+                          BooleanValue(false), MakeBooleanAccessor(&RdmaHw::m_guardKeepLastHopInt),
+                          MakeBooleanChecker())
             .AddAttribute("TimelyAlpha", "Alpha of TIMELY", DoubleValue(0.875),
                           MakeDoubleAccessor(&RdmaHw::m_tmly_alpha), MakeDoubleChecker<double>())
             .AddAttribute("TimelyBeta", "Beta of TIMELY", DoubleValue(0.8),
@@ -434,7 +438,7 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
         seqh.SetDport(ch.udp.sport);
 
         // guard: strip last-hop INT info (RCC handles last hop)
-        if (m_cc_mode == 11 && ch.udp.ih.nhop > 0) {
+        if (m_cc_mode == 11 && !m_guardKeepLastHopInt && ch.udp.ih.nhop > 0) {
             int last_hop = --ch.udp.ih.nhop;
             memset(&ch.udp.ih.hop[last_hop], 0, sizeof(ch.udp.ih.hop[last_hop]));
         }
