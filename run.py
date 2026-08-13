@@ -158,6 +158,19 @@ def resolve_guard_components(guard_oflm, selective_registration, proactive_relea
     return selective_registration, proactive_release
 
 
+def validate_guard_lifecycle_options(enabled, cc, output, max_lines):
+    """Reject lifecycle settings that could create misleading or unbounded output."""
+    if not 1 <= max_lines <= HARD_GUARD_LIFECYCLE_MAX_LINES:
+        raise ValueError(
+            "--guard_lifecycle_max_lines must be in [1, {}]".format(
+                HARD_GUARD_LIFECYCLE_MAX_LINES))
+    if enabled and cc not in ("guard", "guard-active-only"):
+        raise ValueError("--guard_lifecycle_trace requires a GUARD mode")
+    if not enabled and output:
+        raise ValueError(
+            "--guard_lifecycle_output requires --guard_lifecycle_trace 1")
+
+
 def main():
     # make directory if not exists
     isExist = os.path.exists(os.getcwd() + "/mix/output/")
@@ -281,15 +294,12 @@ def main():
         raise Exception("CONFIG ERROR: --analysis_warmup must be non-negative.")
     if args.max_flows <= 0:
         raise Exception("CONFIG ERROR: --max_flows must be positive.")
-    if not 1 <= args.guard_lifecycle_max_lines <= HARD_GUARD_LIFECYCLE_MAX_LINES:
-        raise Exception(
-            "CONFIG ERROR: --guard_lifecycle_max_lines must be in [1, {}].".format(
-                HARD_GUARD_LIFECYCLE_MAX_LINES))
-    if args.guard_lifecycle_trace and args.cc not in ("guard", "guard-active-only"):
-        raise Exception("CONFIG ERROR: --guard_lifecycle_trace requires a GUARD mode.")
-    if not args.guard_lifecycle_trace and args.guard_lifecycle_output:
-        raise Exception(
-            "CONFIG ERROR: --guard_lifecycle_output requires --guard_lifecycle_trace 1.")
+    try:
+        validate_guard_lifecycle_options(
+            args.guard_lifecycle_trace, args.cc, args.guard_lifecycle_output,
+            args.guard_lifecycle_max_lines)
+    except ValueError as error:
+        raise Exception("CONFIG ERROR: {}.".format(error))
     if simul_time < MIN_SMOKE_TIME:
         raise Exception("CONFIG ERROR: Runtime must be at least 5ms.")
     if not args.smoke and simul_time < MIN_FORMAL_TIME:

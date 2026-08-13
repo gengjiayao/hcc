@@ -193,6 +193,12 @@ python3 run.py --cc guard --guard_oflm 0 --seed 3 \
   --pfc 1 --irn 0 --simul_time 0.01 --netload 25 \
   --topo leaf_spine_8_100G_OS1
 
+# 只用于小规模归因：逐流记录 OFLM 注册、释放和完成时刻
+python3 run.py --cc guard --guard_lifecycle_trace 1 \
+  --guard_lifecycle_max_lines 16 --seed 3 \
+  --pfc 1 --irn 0 --simul_time 0.01 --netload 25 \
+  --topo leaf_spine_8_100G_OS1
+
 # 两个单组件基线
 python3 run.py --cc hpcc --seed 3 ...
 python3 run.py --cc guard-active-only --seed 3 ...
@@ -226,6 +232,9 @@ python3 run.py --cc guard-active-only --seed 3 ...
 | `--guard_proactive_release` | 1=按剩余字节阈值提前释放已注册流；0=仅在完整接收时释放，默认 1 |
 | `--guard_oflm` | 兼容旧脚本；显式 0 无条件关闭上述两项，显式 1 不覆盖单独给出的新开关 |
 | `--guard_keep_last_hop_int` | last-hop INT 消融；0=默认删除，1=保留 |
+| `--guard_lifecycle_trace` | 有界 OFLM 逐流生命周期 CSV；默认 0，仅支持 GUARD 模式 |
+| `--guard_lifecycle_output` | 可选 CSV 路径；未给出时写入本次 run 目录 |
+| `--guard_lifecycle_max_lines` | 最多接纳及输出的生命周期记录，默认 1024，硬上限 10000 |
 
 每次仿真创建 `mix/output/<10位ID>/`，里面包含：
 
@@ -243,6 +252,11 @@ python3 run.py --cc guard-active-only --seed 3 ...
   `--guard_proactive_release` 时 `proactive_releases` 应为 0。单包流由
   `FLOW_START_AND_END` 同时触发注册和完成释放，乱序尾包则以连续接收进度达到
   `flow_size` 为完成判据
+- `<id>_out_guard_lifecycle.csv`：仅在 `--guard_lifecycle_trace 1` 时创建。每个被接纳
+  的注册流至多一行，包含 flow ID、大小、接收节点、首包/注册/释放/完成时间、
+  释放原因、释放时剩余字节和注册/释放前后的活跃流数。`-1` 表示仿真结束前尚未
+  发生相应事件。记录接纳数和文件数据行数受同一个 `max_lines` 限制；即使配置了
+  更多流，也不会增长超过命令行上限
 - `config.txt` / `config.log`：本次仿真的输入配置和 stdout 输出
 
 `out_pfc` 每行是 `time_ns node_id node_type interface event`，其中 event 1/0

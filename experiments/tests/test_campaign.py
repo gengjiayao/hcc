@@ -12,7 +12,11 @@ from experiments.run_campaign import (
     select_stages,
     traffic_identity,
 )
-from run import resolve_guard_components
+from run import (
+    HARD_GUARD_LIFECYCLE_MAX_LINES,
+    resolve_guard_components,
+    validate_guard_lifecycle_options,
+)
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -36,6 +40,21 @@ class CampaignDefinitionTests(unittest.TestCase):
         self.assertEqual(resolve_guard_components(None, 0, 0), (0, 0))
         self.assertEqual(resolve_guard_components(0, 1, 1), (0, 0))
         self.assertEqual(resolve_guard_components(1, 0, 1), (0, 1))
+
+    def test_lifecycle_trace_is_bounded_and_guard_only(self):
+        validate_guard_lifecycle_options(0, "hpcc", None, 1)
+        validate_guard_lifecycle_options(
+            1, "guard", "/tmp/lifecycle.csv",
+            HARD_GUARD_LIFECYCLE_MAX_LINES)
+        with self.assertRaisesRegex(ValueError, "must be in"):
+            validate_guard_lifecycle_options(1, "guard", None, 0)
+        with self.assertRaisesRegex(ValueError, "must be in"):
+            validate_guard_lifecycle_options(
+                1, "guard", None, HARD_GUARD_LIFECYCLE_MAX_LINES + 1)
+        with self.assertRaisesRegex(ValueError, "requires a GUARD mode"):
+            validate_guard_lifecycle_options(1, "hpcc", None, 16)
+        with self.assertRaisesRegex(ValueError, "requires --guard_lifecycle_trace"):
+            validate_guard_lifecycle_options(0, "guard", "/tmp/lifecycle.csv", 16)
 
     def test_traffic_identity_accounts_for_oversubscription(self):
         params = {
