@@ -221,6 +221,19 @@ class GenerateWorkloadTest(unittest.TestCase):
             self.assertIn("exceeding --max_flows 1", completed.stdout)
             self.assertNotIn("Running simulation", completed.stdout)
 
+    def test_run_driver_rejects_invalid_link_error_rate(self):
+        completed = subprocess.run(
+            [
+                sys.executable, "run.py", "--topo", "leaf_spine_16_100G_OS4",
+                "--simul_time", "0.01", "--error_rate_per_link", "1.0",
+            ],
+            cwd=str(REPOSITORY), text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, check=False,
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("--error_rate_per_link must be in [0, 1)", completed.stdout)
+        self.assertNotIn("Running simulation", completed.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
