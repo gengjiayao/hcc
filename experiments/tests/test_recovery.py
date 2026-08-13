@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import unittest
 
+from experiments.aggregate_recovery import aggregate
 from experiments.analyze_recovery import SummaryError, target_queue
 from experiments.select_recovery_tier import evaluate
 
@@ -61,6 +62,41 @@ class RecoveryAnalysisTests(unittest.TestCase):
         rejected = evaluate(ladder, "tier1", failed)
         self.assertEqual(rejected["decision"], "advance_to_next_tier")
         self.assertNotIn("post_selection_performance", rejected)
+
+    def test_aggregate_keeps_seed_specific_matched_flow_hashes(self):
+        def performance(value):
+            return {
+                "duration_mean_us": value, "duration_p95_us": value,
+                "duration_p99_us": value, "slowdown_mean": value,
+                "slowdown_p95": value, "slowdown_p99": value,
+                "queue_average_bytes": value, "queue_p95_bytes": 0,
+                "queue_p99_bytes": value, "queue_max_bytes": value,
+                "target_receiver_queue": {
+                    "average_bytes": value, "positive_average_bytes": value,
+                    "p95_bytes": 0, "p99_bytes": value, "max_bytes": value,
+                },
+            }
+
+        def selection(seed):
+            return {
+                "decision": "selected", "tier": {"name": "tier2"},
+                "flow_sha256": f"seed-{seed}",
+                "post_selection_performance": {
+                    "pfc": performance(2.0), "irn": performance(1.0),
+                },
+                "mechanism_by_arm": {
+                    "pfc": {"pfc_matched_intervals": 2},
+                    "irn": {"pfc_matched_intervals": 0},
+                },
+            }
+
+        result = aggregate({1: selection(1), 2: selection(2)})
+        self.assertEqual(result["flow_sha256_by_seed"], {"1": "seed-1", "2": "seed-2"})
+        reduction = result["paired_relative_irn_reduction_vs_pfc"]["slowdown_mean"]
+        self.assertEqual(reduction["mean"], 0.5)
+        self.assertEqual(
+            result["paired_relative_irn_reduction_vs_pfc"]["queue_p95_bytes"]["status"],
+            "undefined_nonpositive_baseline")
 
 
 if __name__ == "__main__":
