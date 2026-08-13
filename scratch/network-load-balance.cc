@@ -29,6 +29,8 @@
 
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <tuple>
 #include <unordered_map>
 
 #include "ns3/applications-module.h"
@@ -107,6 +109,26 @@ FILE *conn_output = NULL;
 FILE *bw_output = NULL;
 FILE *flow_bw_output = NULL;
 FILE *qlen_output = NULL;
+
+struct PfcPriorityStats {
+    uint64_t pause_count;
+    uint64_t resume_count;
+    uint64_t matched_intervals;
+    uint64_t cumulative_pause_ns;
+    uint64_t max_pause_ns;
+    uint64_t unmatched_resumes;
+
+    PfcPriorityStats()
+        : pause_count(0),
+          resume_count(0),
+          matched_intervals(0),
+          cumulative_pause_ns(0),
+          max_pause_ns(0),
+          unmatched_resumes(0) {}
+};
+
+PfcPriorityStats pfc_priority_stats[QbbNetDevice::qCnt];
+std::map<std::tuple<uint32_t, uint32_t, uint32_t>, Time> pfc_active_pauses;
 
 std::string data_rate, link_delay, topology_file, flow_file;
 std::string flow_input_file = "flow.txt";
@@ -594,10 +616,38 @@ void qp_finish(FILE *fout, Ptr<RdmaQueuePair> q) {
 /**
  * @brief PFC event logging
  */
-void get_pfc(FILE *fout, Ptr<QbbNetDevice> dev, uint32_t type) {
-    // time, nodeID, nodeType, Interface's Idx, 0:resume, 1:pause
-    fprintf(fout, "%lu %u %u %u %u\n", Simulator::Now().GetTimeStep(), dev->GetNode()->GetId(),
-            dev->GetNode()->GetNodeType(), dev->GetIfIndex(), type);
+void get_pfc(FILE *fout, Ptr<QbbNetDevice> dev, uint32_t type, uint32_t qIndex,
+             uint32_t advertised_pause_us) {
+    NS_ASSERT_MSG(qIndex < QbbNetDevice::qCnt, "PFC qIndex is outside the supported range");
+    Time now = Simulator::Now();
+    uint32_t node_id = dev->GetNode()->GetId();
+    uint32_t if_index = dev->GetIfIndex();
+    // time_ns node_id node_type if_index q_index event advertised_pause_us
+    fprintf(fout, "%lu %u %u %u %u %u %u\n", now.GetNanoSeconds(), node_id,
+            dev->GetNode()->GetNodeType(), if_index, qIndex, type, advertised_pause_us);
+
+    PfcPriorityStats &stats = pfc_priority_stats[qIndex];
+    std::tuple<uint32_t, uint32_t, uint32_t> key(node_id, if_index, qIndex);
+    if (type == 1) {
+        stats.pause_count++;
+        // Repeated pause frames extend the device timer but are one continuous
+        // paused interval, so retain the first transition time.
+        if (pfc_active_pauses.find(key) == pfc_active_pauses.end()) {
+            pfc_active_pauses[key] = now;
+        }
+    } else {
+        stats.resume_count++;
+        auto active = pfc_active_pauses.find(key);
+        if (active == pfc_active_pauses.end()) {
+            stats.unmatched_resumes++;
+        } else {
+            uint64_t duration_ns = (now - active->second).GetNanoSeconds();
+            stats.matched_intervals++;
+            stats.cumulative_pause_ns += duration_ns;
+            stats.max_pause_ns = std::max(stats.max_pause_ns, duration_ns);
+            pfc_active_pauses.erase(active);
+        }
+    }
 }
 
 /*******************************************************************/
@@ -1396,6 +1446,8 @@ int main(int argc, char *argv[]) {
     rem->SetAttribute("ErrorUnit", StringValue("ERROR_UNIT_PACKET"));
 
     pfc_file = fopen(pfc_output_file.c_str(), "w");
+    fprintf(pfc_file,
+            "# time_ns node_id node_type if_index q_index event advertised_pause_us\n");
 
     QbbHelper qbb;
     Ipv4AddressHelper ipv4;
@@ -2066,6 +2118,21 @@ int main(int argc, char *argv[]) {
     }
     fprintf(guard_stats_output, "total %lu %lu %lu %lu\n", total_grants_sent,
             total_grants_received, total_hpcc_feedback_updates, max_active_flows);
+    uint64_t unmatched_pauses[QbbNetDevice::qCnt] = {0};
+    for (auto const &active : pfc_active_pauses) {
+        uint32_t qIndex = std::get<2>(active.first);
+        if (qIndex < QbbNetDevice::qCnt) unmatched_pauses[qIndex]++;
+    }
+    fprintf(guard_stats_output,
+            "pfc_priority qindex pause_count resume_count matched_intervals "
+            "cumulative_pause_ns max_pause_ns unmatched_pauses unmatched_resumes\n");
+    for (uint32_t qIndex = 0; qIndex < QbbNetDevice::qCnt; qIndex++) {
+        PfcPriorityStats const &stats = pfc_priority_stats[qIndex];
+        fprintf(guard_stats_output, "pfc_priority %u %lu %lu %lu %lu %lu %lu %lu\n", qIndex,
+                stats.pause_count, stats.resume_count, stats.matched_intervals,
+                stats.cumulative_pause_ns, stats.max_pause_ns, unmatched_pauses[qIndex],
+                stats.unmatched_resumes);
+    }
     fclose(guard_stats_output);
 
     /*-----------------------------------------------------------------------------*/

@@ -246,7 +246,9 @@ TypeId QbbNetDevice::GetTypeId(void) {
                             MakeTraceSourceAccessor(&QbbNetDevice::m_traceDrop))
             .AddTraceSource("RdmaQpDequeue", "A qp dequeue a packet.",
                             MakeTraceSourceAccessor(&QbbNetDevice::m_traceQpDequeue))
-            .AddTraceSource("QbbPfc", "get a PFC packet. 0: resume, 1: pause",
+            .AddTraceSource("QbbPfc",
+                            "PFC state event: event (0: resume, 1: pause), qIndex, "
+                            "advertised pause time in microseconds",
                             MakeTraceSourceAccessor(&QbbNetDevice::m_tracePfc));
 
     return tid;
@@ -369,6 +371,9 @@ void QbbNetDevice::Resume(unsigned qIndex) {
     NS_LOG_FUNCTION(this << qIndex);
     NS_ASSERT_MSG(m_paused[qIndex], "Must be PAUSEd");
     m_paused[qIndex] = false;
+    // Report both explicit resume frames and local timer expiry as the actual
+    // end of a paused interval. The advertised time on a resume is zero.
+    m_tracePfc(0, qIndex, 0);
     NS_LOG_INFO("Node " << m_node->GetId() << " dev " << m_ifIndex << " queue " << qIndex
                         << " resumed at " << Simulator::Now().GetSeconds());
     DequeueAndTransmit();
@@ -399,13 +404,12 @@ void QbbNetDevice::Receive(Ptr<Packet> packet) {
         unsigned qIndex = ch.pfc.qIndex;
         // std::cerr << "PFC!!" << std::endl;
         if (ch.pfc.time > 0) {
-            m_tracePfc(1);
+            m_tracePfc(1, qIndex, ch.pfc.time);
             m_paused[qIndex] = true;
             Simulator::Cancel(m_resumeEvt[qIndex]);
             m_resumeEvt[qIndex] =
                 Simulator::Schedule(MicroSeconds(ch.pfc.time), &QbbNetDevice::Resume, this, qIndex);
         } else {
-            m_tracePfc(0);
             Simulator::Cancel(m_resumeEvt[qIndex]);
             Resume(qIndex);
         }

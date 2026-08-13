@@ -139,7 +139,8 @@ public:
    TracedCallback<Ptr<const Packet>, uint32_t> m_traceEnqueue;
    TracedCallback<Ptr<const Packet>, uint32_t> m_traceDequeue;
    TracedCallback<Ptr<const Packet>, uint32_t> m_traceDrop;
-   TracedCallback<uint32_t> m_tracePfc; // 0: resume, 1: pause
+   // event (0: resume, 1: pause), priority/qIndex, advertised pause time (us)
+   TracedCallback<uint32_t, uint32_t, uint32_t> m_tracePfc;
  protected:
 
    //Ptr<Node> m_node;
