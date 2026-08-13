@@ -38,7 +38,9 @@ if __name__ == "__main__":
 	parser.add_option("-t", "--time", dest = "time", help = "the total run time (s), by default 10", default = "10")
 	parser.add_option("-o", "--output", dest = "output", help = "the output file", default = "tmp_traffic.txt")
 	parser.add_option("-i", "--incast", dest = "enable_incast", action="store_true", help = "enable incast traffic pattern", default = False)
+	parser.add_option("-s", "--seed", dest = "seed", type="int", help = "random seed", default = 1)
 	options,args = parser.parse_args()
+	random.seed(options.seed)
 
 	base_t = 2000000000 # 2000000000
 

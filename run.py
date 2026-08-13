@@ -95,7 +95,7 @@ KMAX_MAP {kmax_map}
 KMIN_MAP {kmin_map}
 PMAX_MAP {pmax_map}
 LOAD {load}
-RANDOM_SEED 1
+RANDOM_SEED {seed}
 """
 
 
@@ -176,6 +176,8 @@ def main():
                         help="GUARD HPCC-target multiplier >= 1 (default: 1.0)")
     parser.add_argument('--guard_keep_last_hop_int', type=int, choices=(0, 1), default=0,
                         help="retain last-hop INT in GUARD for ablation (default: 0)")
+    parser.add_argument('--seed', type=int, default=1,
+                        help="traffic-generator and ns-3 random seed (default: 1)")
 
     # #### CONWEAVE PARAMETERS ####
     # parser.add_argument('--cwh_extra_reply_deadline', dest='cwh_extra_reply_deadline', action='store',
@@ -220,6 +222,8 @@ def main():
         raise Exception("CONFIG ERROR: --guard_gamma must be non-negative.")
     if args.guard_lambda < 1.0:
         raise Exception("CONFIG ERROR: --guard_lambda must be at least 1.0.")
+    if not 1 <= args.seed <= 2147483647:
+        raise Exception("CONFIG ERROR: --seed must be in [1, 2147483647].")
 
     # get over-subscription ratio from topoogy name
 
@@ -252,8 +256,9 @@ def main():
         n_host = int(line[0]) - int(line[1])
 
     assert (hostload >= 0 and hostload < 100)
-    flow = "L_{load:.2f}_CDF_{cdf}_N_{n_host}_T_{time}ms_B_{bw}_flow".format(
-        load=hostload, cdf=args.cdf, n_host=n_host, time=int(float(args.simul_time)*1000), bw=bw)
+    flow = "L_{load:.2f}_CDF_{cdf}_N_{n_host}_T_{time}ms_B_{bw}_S_{seed}_flow".format(
+        load=hostload, cdf=args.cdf, n_host=n_host,
+        time=int(float(args.simul_time)*1000), bw=bw, seed=args.seed)
 
     # check the file exists
     if (exists(os.getcwd() + "/config/" + flow + ".txt")):
@@ -261,20 +266,22 @@ def main():
             load=hostload, cdf=cdf, n_host=n_host))
     else:  # make the input traffic file
         print("Generate a input traffic file...")
-        print("python ./traffic_gen/traffic_gen.py -c {cdf} -n {n_host} -l {load} -b {bw} -t {time} -o {output}".format(
+        print("python ./traffic_gen/traffic_gen.py -c {cdf} -n {n_host} -l {load} -b {bw} -t {time} -s {seed} -o {output}".format(
             cdf=os.getcwd() + "/../traffic_gen/" + args.cdf + ".txt",
             n_host=n_host,
             load=hostload / 100.0,
             bw=args.bw + "G",
             time=args.simul_time,
+            seed=args.seed,
             output=os.getcwd() + "/config/" + flow + ".txt"))
 
-        os.system("python ./traffic_gen/traffic_gen.py -c {cdf} -n {n_host} -l {load} -b {bw} -t {time} -o {output}".format(
+        os.system("python ./traffic_gen/traffic_gen.py -c {cdf} -n {n_host} -l {load} -b {bw} -t {time} -s {seed} -o {output}".format(
             cdf=os.getcwd() + "/traffic_gen/" + args.cdf + ".txt",
             n_host=n_host,
             load=hostload / 100.0,
             bw=args.bw + "G",
             time=args.simul_time,
+            seed=args.seed,
             output=os.getcwd() + "/config/" + flow + ".txt"))
 
     # sanity check - bandwidth
@@ -410,6 +417,7 @@ def main():
                                         guard_beta=args.guard_beta, guard_gamma=args.guard_gamma,
                                         guard_lambda=args.guard_lambda,
                                         guard_keep_last_hop_int=args.guard_keep_last_hop_int,
+                                        seed=args.seed,
                                         kmax_map=kmax_map, kmin_map=kmin_map, pmax_map=pmax_map)
     # else:
     #     print("unknown cc:{}".format(args.cc))
