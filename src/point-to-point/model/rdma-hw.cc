@@ -111,6 +111,10 @@ TypeId RdmaHw::GetTypeId(void) {
                           "Multiplier for GUARD's proactive-release in-flight threshold",
                           DoubleValue(1.0), MakeDoubleAccessor(&RdmaHw::m_guardReleaseGamma),
                           MakeDoubleChecker<double>(0.0))
+            .AddAttribute("GuardOflm",
+                          "Enable GUARD selective registration and proactive release",
+                          BooleanValue(true), MakeBooleanAccessor(&RdmaHw::m_guardOflm),
+                          MakeBooleanChecker())
             .AddAttribute("GuardKeepLastHopInt",
                           "Retain last-hop INT in GUARD ACKs for the double-control ablation",
                           BooleanValue(false), MakeBooleanAccessor(&RdmaHw::m_guardKeepLastHopInt),
@@ -515,6 +519,9 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
 
         FlowStatTag fst;
         if (p->PeekPacketTag(fst)) {
+            uint8_t flow_tag = fst.GetType();
+            bool flow_start = flow_tag == FlowStatTag::FLOW_START ||
+                              flow_tag == FlowStatTag::FLOW_START_AND_END;
             // Derive BDP from this flow's baseRtt + receiver's line rate
             // instead of the hardcoded 104000 (which assumed leaf_spine 100G/
             // 8.32µs RTT). On other topologies (different RTT or rate) the
@@ -526,10 +533,8 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
                 bdp = (uint64_t)(fst.GetBaseRttSeconds() * rate.GetBitRate() / 8.0);
                 if (bdp == 0) bdp = 104000;  // safety
             }
-            if (fst.GetType() == FlowStatTag::FLOW_START) {
-                if (flow_size > bdp) {
-                    HandleRccRequest(rxQp, p, ch);
-                }
+            if (flow_start && (!m_guardOflm || flow_size > bdp)) {
+                HandleRccRequest(rxQp, p, ch);
             }
             if (rxQp->m_base_rtt_sec == 0 && fst.HasBaseRtt()) {
                 rxQp->m_base_rtt_sec = fst.GetBaseRttSeconds();
@@ -539,29 +544,36 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
             exit(1);
         }
 
-        Time now = Simulator::Now();
-        if (rxQp->m_last_pkt_time.IsZero()) {
-            rxQp->m_est_rate = 0;
-        } else {
-            double interval = (now - rxQp->m_last_pkt_time).GetSeconds();
-            if (interval > 0) {
-                double inst_rate = (double)payload_size / interval; // Bytes/s
-                rxQp->m_est_rate = m_guardEwmaBeta * rxQp->m_est_rate +
-                                   (1.0 - m_guardEwmaBeta) * inst_rate;
-            }
-        }
-        rxQp->m_last_pkt_time = now;
-
-        double v_th_double =
-            rxQp->m_est_rate * rxQp->m_base_rtt_sec * m_guardReleaseGamma;
-        uint64_t v_th = (uint64_t)v_th_double;
-
         uint32_t currentSeq = rxQp->ReceiverNextExpectedSeq;
         uint64_t v_remain = (flow_size > currentSeq) ? (flow_size - currentSeq) : 0;
 
-        if (v_remain < v_th && !rxQp->m_proactive_released) {
+        // Completion is based on contiguous receiver progress rather than on
+        // seeing FLOW_END: the nominal last packet may arrive out of order.
+        // This is also the sole release path when OFLM is disabled.
+        if (v_remain == 0) {
             HandleRccRemove(rxQp, p, ch);
-            rxQp->m_proactive_released = true;
+        } else if (m_guardOflm) {
+            Time now = Simulator::Now();
+            if (rxQp->m_last_pkt_time.IsZero()) {
+                rxQp->m_est_rate = 0;
+            } else {
+                double interval = (now - rxQp->m_last_pkt_time).GetSeconds();
+                if (interval > 0) {
+                    double inst_rate = (double)payload_size / interval; // Bytes/s
+                    rxQp->m_est_rate = m_guardEwmaBeta * rxQp->m_est_rate +
+                                       (1.0 - m_guardEwmaBeta) * inst_rate;
+                }
+            }
+            rxQp->m_last_pkt_time = now;
+
+            double v_th_double =
+                rxQp->m_est_rate * rxQp->m_base_rtt_sec * m_guardReleaseGamma;
+            uint64_t v_th = (uint64_t)v_th_double;
+
+            if (v_remain < v_th && !rxQp->m_proactive_released) {
+                HandleRccRemove(rxQp, p, ch);
+                rxQp->m_proactive_released = true;
+            }
         }
     }
 
@@ -1062,7 +1074,7 @@ Ptr<Packet> RdmaHw::GetNxtPacket(Ptr<RdmaQueuePair> qp) {
         FlowStatTag fst;
         uint64_t size = qp->m_size;
         if (!p->PeekPacketTag(fst)) {
-            if (size < m_mtu && qp->snd_nxt + payload_size >= qp->m_size) {
+            if (size <= m_mtu && qp->snd_nxt + payload_size >= qp->m_size) {
                 fst.SetType(FlowStatTag::FLOW_START_AND_END);
             } else if (qp->snd_nxt + payload_size >= qp->m_size) {
                 fst.SetType(FlowStatTag::FLOW_END);
@@ -1615,7 +1627,7 @@ Ptr<Packet> RdmaHw::GetNxtPacketHomaSimple(Ptr<RdmaQueuePair> qp) {
         FlowStatTag fst;
         uint64_t size = qp->m_size;
         if (!p->PeekPacketTag(fst)) {
-            if (size < m_mtu && qp->snd_nxt + payload_size >= qp->m_size) {
+            if (size <= m_mtu && qp->snd_nxt + payload_size >= qp->m_size) {
                 fst.SetType(FlowStatTag::FLOW_START_AND_END);
             } else if (qp->snd_nxt + payload_size >= qp->m_size) {
                 fst.SetType(FlowStatTag::FLOW_END);
@@ -1721,7 +1733,7 @@ Ptr<Packet> RdmaHw::GetNxtPacketHoma(Ptr<RdmaQueuePair> qp) {
         FlowStatTag fst;
         uint64_t size = qp->m_size;
         if (!p->PeekPacketTag(fst)) {
-            if (size < m_mtu && qp->snd_nxt + payload_size >= qp->m_size) {
+            if (size <= m_mtu && qp->snd_nxt + payload_size >= qp->m_size) {
                 fst.SetType(FlowStatTag::FLOW_START_AND_END);
             } else if (qp->snd_nxt + payload_size >= qp->m_size) {
                 fst.SetType(FlowStatTag::FLOW_END);
