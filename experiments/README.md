@@ -291,6 +291,92 @@ slowdown, throughput, goodput, or fairness metrics.  `PMAX_MAP` is audited at
 the active 100-Gb/s rate because the current formatter truncates its first two
 lower-rate entries to integers.
 
+## Receiver C/N and grant-overhead microbenchmark
+
+`receiver_share_ladder.json` preregisters a small mechanism study rather than
+an FCT optimization.  The homogeneous ladder sends `N={2,4,8,15}` independent
+8 MiB flows to host 15.  Every configuration uses five independently jittered
+seeds, PG4, a 20 ms simulation, bulk monitoring, PFC on, IRN off, and no verbose
+controller trace.  Generate a homogeneous input with:
+
+```bash
+python3 experiments/generate_workload.py \
+  --workload receiver-share \
+  --output RESULTS/flows/homogeneous-n${N}-s${SEED}.flow \
+  --hosts 16 --duration-ms 20 --base-time 2.002 \
+  --priority-group 4 --max-flows 1000 --seed ${SEED} \
+  --receiver-share-destination 15 --receiver-share-flows ${N} \
+  --flow-bytes 8388608 --receiver-share-jitter-us 1
+```
+
+For each flow hash, run both `--cc guard` and `--cc guard-active-only`.  Keep
+`--guard_selective_registration 1`, `--guard_proactive_release 0`,
+`--guard_size_priority 0`, `--guard_controller_trace 0`, and enable only the
+bounded mechanism traces:
+
+```bash
+python3 run.py --cc ${ARM} --lb fecmp --pfc 1 --irn 0 \
+  --simul_time 0.02 --analysis_warmup 0 --max_flows 1000 \
+  --flow_file RESULTS/flows/homogeneous-n${N}-s${SEED}.flow \
+  --buffer 9 --netload 40 --bw 100 \
+  --topo leaf_spine_16_100G_OS4 --cdf AliStorage2019 \
+  --monitor_profile bulk --qlen_monitoring_interval 1000 \
+  --guard_lambda 1 --guard_beta 0.125 --guard_gamma 1 \
+  --guard_selective_registration 1 --guard_proactive_release 0 \
+  --guard_keep_last_hop_int 0 --guard_size_priority 0 \
+  --guard_lifecycle_trace 1 --guard_lifecycle_max_lines 32 \
+  --guard_lifecycle_output RESULTS/runs/${TAG}-lifecycle.csv \
+  --guard_controller_trace 0 \
+  --guard_grant_trace 1 --guard_grant_max_lines 1000 \
+  --guard_grant_output RESULTS/runs/${TAG}-grants.csv --seed ${SEED}
+```
+
+The grant trace has separate `sent` and `received` events.  `sent` records the
+receiver's encoded rate and active-set size; `received` is emitted only after
+the sender parses the packet and applies that grant.  Therefore C/N error is
+checked against packet-driven observations, not reconstructed from the C/N
+formula.  `analyze_receiver_share.py` additionally requires every completion,
+the expected maximum active set and stable interval, equal sent/received event
+multisets, zero truncation/drop/recovery, and equality among raw grant bytes,
+the grant packet count, and `grant_bytes_sent`.
+
+Grant size is controller-dependent in the current simulator.  Full GUARD uses
+INT mode 0, so `qbbHeader` serializes its static five-hop INT area even though
+the grant itself does not need INT: the simulated serialized grant is 94 B.
+Receiver-only uses mode 5 and its shorter grant is padded to 60 B.  The extra
+34 B in the full arm is therefore an implementation artifact and a possible
+optimization target, not unavoidable protocol payload.  The audit reports
+these actual simulated sizes first.  It also records an explicitly labeled
+Ethernet-equivalent accounting value (an additional 24 B for preamble/SFD,
+FCS, and inter-packet gap), but that conversion is not the primary simulator
+measurement.
+
+The heterogeneous case adds source-0 background flows to local destinations
+2--7 while sources 0 and 1 send 16 MiB target flows to host 15.  Local
+background traffic restricts source 0's NIC without consuming the fabric
+uplink used by source 1.  The preregistered intensity order is `K={3,7,15}`;
+freeze the first tier where the restricted target flow is below C/N, the other
+target flow still receives C/N, and target aggregate goodput is materially
+below 100 Gb/s.  Do not examine FCT when advancing the tier.  An earlier K=3
+pilot using destinations 8--14 is invalid: those flows shared the target
+fabric uplink and throttled the purportedly unrestricted source.  Preserve it
+only as a rejected design diagnostic, never as a formal observation.
+
+After strict per-run audits, aggregate exactly five seeds with:
+
+```bash
+python3 experiments/aggregate_receiver_share.py \
+  --index RESULTS/formal-index.csv \
+  --audit-dir RESULTS/audits --log-dir RESULTS/logs \
+  --output-dir RESULTS/summary
+```
+
+The aggregator requires the complete 50-run matrix, one shared flow hash for
+each controller pair, five independent hashes per workload cell, and all
+health gates.  It emits per-seed values, five-seed Student-t 95% intervals,
+paired full-minus-receiver-only intervals, and a separate per-flow sequence of
+sender-applied grant rates.
+
 ## Scope
 
 This campaign deliberately excludes GoogleRPC because its small mean message
