@@ -162,6 +162,15 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     cnp_total = 0;
     cnp_by_ecn = 0;
     cnp_by_ooo = 0;
+    m_dcqcnCnpGeneratedEcn = 0;
+    m_dcqcnCnpGeneratedOoo = 0;
+    m_dcqcnCnpReceived = 0;
+    m_dcqcnAlphaUpdates = 0;
+    m_dcqcnAlphaCnpUpdates = 0;
+    m_dcqcnRateDecreaseEvents = 0;
+    m_dcqcnActualRateDecreases = 0;
+    m_dcqcnRateIncreaseEvents = 0;
+    m_dcqcnActualRateIncreases = 0;
     m_guardRateGrantsSent = 0;
     m_guardRateGrantBytesSent = 0;
     m_guardRateGrantsReceived = 0;
@@ -521,6 +530,10 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
             cnp_total++;
             if (ecnbits) cnp_by_ecn++;
             if (cnp_check) cnp_by_ooo++;
+            if (m_cc_mode == CC_MODE_DCQCN) {
+                if (ecnbits) m_dcqcnCnpGeneratedEcn++;
+                if (cnp_check) m_dcqcnCnpGeneratedOoo++;
+            }
             seqh.SetCnp();
         }
 
@@ -852,6 +865,7 @@ int RdmaHw::ReceiveAck(Ptr<Packet> p, CustomHeader &ch) {
     // handle cnp
     if (cnp) {
         if (m_cc_mode == 1) {  // mlx version
+            m_dcqcnCnpReceived++;
             cnp_received_mlx(qp);
         }
     }
@@ -1244,7 +1258,9 @@ void RdmaHw::UpdateAlphaMlx(Ptr<RdmaQueuePair> q) {
 // %.6lf->", Simulator::Now().GetTimeStep(), q->sip.Get(), q->dip.Get(), q->sport, q->dport,
 // q->mlx.m_alpha);
 #endif
+    m_dcqcnAlphaUpdates++;
     if (q->mlx.m_alpha_cnp_arrived) {                       // cnp -> increase
+        m_dcqcnAlphaCnpUpdates++;
         q->mlx.m_alpha = (1 - m_g) * q->mlx.m_alpha + m_g;  // binary feedback
     } else {                                                // no cnp -> decrease
         q->mlx.m_alpha = (1 - m_g) * q->mlx.m_alpha;        // binary feedback
@@ -1280,6 +1296,7 @@ void RdmaHw::cnp_received_mlx(Ptr<RdmaQueuePair> q) {
 void RdmaHw::CheckRateDecreaseMlx(Ptr<RdmaQueuePair> q) {
     ScheduleDecreaseRateMlx(q, 0);
     if (q->mlx.m_decrease_cnp_arrived) {
+        m_dcqcnRateDecreaseEvents++;
 #if PRINT_LOG
         printf("%lu rate dec: %08x %08x %u %u (%0.3lf %.3lf)->", Simulator::Now().GetTimeStep(),
                q->sip.Get(), q->dip.Get(), q->sport, q->dport,
@@ -1292,7 +1309,9 @@ void RdmaHw::CheckRateDecreaseMlx(Ptr<RdmaQueuePair> q) {
         if (clamp) {
             q->mlx.m_targetRate = q->m_rate;
         }
+        DataRate old_rate = q->m_rate;
         q->m_rate = std::max(m_minRate, q->m_rate * (1 - q->mlx.m_alpha / 2));
+        if (q->m_rate != old_rate) m_dcqcnActualRateDecreases++;
         // reset rate increase related things
         q->mlx.m_rpTimeStage = 0;
         q->mlx.m_decrease_cnp_arrived = false;
@@ -1318,6 +1337,8 @@ void RdmaHw::RateIncEventTimerMlx(Ptr<RdmaQueuePair> q) {
     q->mlx.m_rpTimeStage++;
 }
 void RdmaHw::RateIncEventMlx(Ptr<RdmaQueuePair> q) {
+    m_dcqcnRateIncreaseEvents++;
+    DataRate old_rate = q->m_rate;
     // check which increase phase: fast recovery, active increase, hyper increase
     if (q->mlx.m_rpTimeStage < m_rpgThreshold) {  // fast recovery
         FastRecoveryMlx(q);
@@ -1326,6 +1347,7 @@ void RdmaHw::RateIncEventMlx(Ptr<RdmaQueuePair> q) {
     } else {  // hyper increase
         HyperIncreaseMlx(q);
     }
+    if (q->m_rate != old_rate) m_dcqcnActualRateIncreases++;
 }
 
 void RdmaHw::FastRecoveryMlx(Ptr<RdmaQueuePair> q) {

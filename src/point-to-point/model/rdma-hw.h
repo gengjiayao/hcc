@@ -140,6 +140,17 @@ class RdmaHw : public Object {
     uint32_t cnp_by_ecn;
     uint32_t cnp_by_ooo;
     uint32_t cnp_total;
+    // Constant-space, cumulative evidence for CC_MODE_DCQCN.  The legacy
+    // 100us CNP monitor resets its buckets, while these counters do not.
+    uint64_t m_dcqcnCnpGeneratedEcn;
+    uint64_t m_dcqcnCnpGeneratedOoo;
+    uint64_t m_dcqcnCnpReceived;
+    uint64_t m_dcqcnAlphaUpdates;
+    uint64_t m_dcqcnAlphaCnpUpdates;
+    uint64_t m_dcqcnRateDecreaseEvents;
+    uint64_t m_dcqcnActualRateDecreases;
+    uint64_t m_dcqcnRateIncreaseEvents;
+    uint64_t m_dcqcnActualRateIncreases;
     size_t getIrnBufferOverhead();  // get buffer overhead for IRN
 
     /******************************

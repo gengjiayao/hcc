@@ -2430,6 +2430,39 @@ int main(int argc, char *argv[]) {
     }
     fclose(guard_stats_output);
 
+    // Dedicated, cumulative DCQCN-like counters stay separate from the
+    // legacy GUARD total-row schema.  This is constant-space evidence; the
+    // bucketed out_cnp.txt diagnostic is not the admission source of truth.
+    FILE *dcqcn_stats_output = fopen(guard_stats_output_file.c_str(), "a");
+    fprintf(dcqcn_stats_output,
+            "dcqcn node_id cnp_generated_ecn cnp_generated_ooo cnp_received "
+            "alpha_updates alpha_cnp_updates rate_decrease_events "
+            "actual_rate_decreases rate_increase_events actual_rate_increases\n");
+    uint64_t dcqcn_totals[9] = {0};
+    for (uint32_t i = 0; i < node_num; i++) {
+        if (n.Get(i)->GetNodeType() != 0) continue;
+        Ptr<RdmaDriver> driver = n.Get(i)->GetObject<RdmaDriver>();
+        Ptr<RdmaHw> hw = driver->m_rdma;
+        uint64_t values[9] = {
+            hw->m_dcqcnCnpGeneratedEcn, hw->m_dcqcnCnpGeneratedOoo,
+            hw->m_dcqcnCnpReceived, hw->m_dcqcnAlphaUpdates,
+            hw->m_dcqcnAlphaCnpUpdates, hw->m_dcqcnRateDecreaseEvents,
+            hw->m_dcqcnActualRateDecreases, hw->m_dcqcnRateIncreaseEvents,
+            hw->m_dcqcnActualRateIncreases,
+        };
+        fprintf(dcqcn_stats_output,
+                "dcqcn %u %lu %lu %lu %lu %lu %lu %lu %lu %lu\n", i,
+                values[0], values[1], values[2], values[3], values[4], values[5],
+                values[6], values[7], values[8]);
+        for (uint32_t j = 0; j < 9; j++) dcqcn_totals[j] += values[j];
+    }
+    fprintf(dcqcn_stats_output,
+            "dcqcn_total %lu %lu %lu %lu %lu %lu %lu %lu %lu\n",
+            dcqcn_totals[0], dcqcn_totals[1], dcqcn_totals[2], dcqcn_totals[3],
+            dcqcn_totals[4], dcqcn_totals[5], dcqcn_totals[6], dcqcn_totals[7],
+            dcqcn_totals[8]);
+    fclose(dcqcn_stats_output);
+
     /*-----------------------------------------------------------------------------*/
     /*----- we don't need below. Just we can enforce to close this simulation. -----*/
     /*-----------------------------------------------------------------------------*/
