@@ -361,6 +361,10 @@ below 100 Gb/s.  Do not examine FCT when advancing the tier.  An earlier K=3
 pilot using destinations 8--14 is invalid: those flows shared the target
 fabric uplink and throttled the purportedly unrestricted source.  Preserve it
 only as a rejected design diagnostic, never as a formal observation.
+The heterogeneous audit measures the latter two payload rates only over the
+common N=2 interval: it uses receiver `next_seq` progress from the max-active
+grant event through the first release event.  Traffic after the active set
+falls to one cannot hide or exaggerate unused C/N share.
 
 After strict per-run audits, aggregate exactly five seeds with:
 
