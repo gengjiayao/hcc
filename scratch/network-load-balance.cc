@@ -2201,8 +2201,8 @@ int main(int argc, char *argv[]) {
     NS_LOG_INFO("Total number of packets: " << RdmaHw::nAllPkts);
     NS_LOG_INFO("Done.");
     endt = clock();
-    fclose(bw_output);
-    fclose(qlen_output);
-    fclose(flow_bw_output);
+    if (bw_output != NULL) fclose(bw_output);
+    if (qlen_output != NULL) fclose(qlen_output);
+    if (flow_bw_output != NULL) fclose(flow_bw_output);
     std::cerr << (double)(endt - begint) / CLOCKS_PER_SEC << "\n";
 }

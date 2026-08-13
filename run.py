@@ -542,8 +542,14 @@ def main():
         history.write("\n")
 
     print(run_command)
-    os.system("./waf --run 'scratch/network-load-balance {config_name}' > {output_log} 2>&1".format(
-        config_name=config_name, output_log=output_log))
+    with open(output_log, "w") as simulation_log:
+        simulation = subprocess.run(
+            ["./waf", "--run", "scratch/network-load-balance {}".format(config_name)],
+            stdout=simulation_log, stderr=subprocess.STDOUT)
+    if simulation.returncode != 0:
+        raise RuntimeError(
+            "ns-3 simulation failed with status {}; see {}".format(
+                simulation.returncode, output_log))
 
     ####################################################
     #                 Analyze the output FCT           #
