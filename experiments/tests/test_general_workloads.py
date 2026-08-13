@@ -1,4 +1,5 @@
 import csv
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -7,6 +8,7 @@ from experiments.run_general_workloads import (
     CampaignError,
     choose_profile,
     inspect_flow_file,
+    load_admission,
     planned_runs,
     read_spec,
     run_command,
@@ -109,6 +111,17 @@ class GeneralWorkloadRunnerTests(unittest.TestCase):
         self.assertEqual(len(plans), 12)
         self.assertEqual({plan[0]["name"] for plan in plans}, {"AliStorage2019"})
         self.assertEqual({plan[1]["seed"] for plan in plans}, {2, 3, 4, 5})
+
+    def test_formal_phase_rejects_stale_admission(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "summary").mkdir()
+            (root / "preflight.json").write_text("{}\n")
+            (root / "summary/admission.json").write_text(json.dumps({
+                "preflight_sha256": "stale", "workloads": {},
+            }))
+            with self.assertRaisesRegex(CampaignError, "changed after admission"):
+                load_admission(root, {"workloads": []})
 
 
 class GeneralWorkloadSummaryTests(unittest.TestCase):

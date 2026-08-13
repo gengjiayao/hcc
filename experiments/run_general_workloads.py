@@ -371,6 +371,8 @@ def load_admission(campaign_dir: Path, preflight_manifest: Mapping[str, object])
         raise CampaignError("formal phase requires summary/admission.json")
     with path.open(encoding="utf-8") as stream:
         admission = json.load(stream)
+    if admission.get("preflight_sha256") != sha256_file(campaign_dir / "preflight.json"):
+        raise CampaignError("preflight manifest changed after admission")
     decisions = dict(admission.get("workloads", {}))
     selected = set(selected_workloads(preflight_manifest))
     if set(decisions) != selected:
