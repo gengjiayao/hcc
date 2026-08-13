@@ -224,6 +224,7 @@ python3 run.py --cc guard-active-only --seed 3 ...
 | `--cdf`          | 流大小 CDF：默认 `AliStorage2019`，可选 `WebSearch` 等 |
 | `--seed`         | 同时设置流量发生器和 ns-3 RNG；也进入流量文件名，默认 1 |
 | `--monitor_profile` | `bulk` 只保留核心输出和队列摘要；`full` 额外输出详细时序 |
+| `--error_rate_per_link` | 每条链路独立的 packet error 概率，范围 `[0,1)`，默认 0 |
 | `--qlen_monitoring_interval` | `full` 时队列时序及所有模式队列摘要的采样间隔（ns） |
 | `--guard_beta`   | OFLM EWMA 的历史样本权重，范围 [0,1]，默认 0.125 |
 | `--guard_gamma`  | OFLM 主动释放阈值倍数，非负，默认 1.0 |
@@ -330,6 +331,13 @@ python3 experiments/generate_workload.py \
 area、grant、drop/recovery 和产物上限，再由 `select_oflm_churn_tier.py` 决定是否
 解封性能。只有各 seed 选择相同层级且 flow SHA 相同时，才能用
 `aggregate_oflm_churn.py` 计算配对置信区间。
+
+PFC/IRN 恢复对比的预设 repeated-incast、负载和误码阶梯保存在
+`experiments/recovery_ladder.json`。`gate_recovery_cohort.py` 先要求同一层级的五个
+IRN seed 全部完成、有 NACK 和实际重传且没有 timeout；只有整组通过后才允许运行
+相同五份 flow SHA 的 PFC 臂。`analyze_recovery.py` 分开报告 PFC pause interval 与
+IRN/timeout/drop，避免把拥塞暂停描述成链路误码恢复。任何层级在机制门槛失败时均不
+解封 FCT/queue，且只能按已经冻结的顺序进入下一层级。
 
 `--flow_file` 完全绕过 Poisson/CDF 随机生成。`run.py` 先检查首行声明的 flow 数，
 再将输入复制到本次 `mix/output/<ID>/`；配置和模拟器只使用这份只读快照，因此原文件
