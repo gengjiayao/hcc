@@ -12,6 +12,7 @@ from experiments.analyze_oflm_churn import (
     grouped_fct_metrics,
     lifecycle_metrics,
     parse_lifecycle,
+    target_queue_metrics,
 )
 from experiments.select_oflm_churn_tier import evaluate
 
@@ -87,6 +88,21 @@ class OflmChurnAnalysisTests(unittest.TestCase):
         self.assertEqual(metrics["le_bdp_churn"]["mean_slowdown"], 2.0)
         self.assertEqual(metrics["gt_bdp_churn"]["mean_slowdown"], 3.0)
 
+    def test_target_queue_metrics_select_receiver_egress(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "queue.txt"
+            path.write_text(
+                "port node_id if_index neighbor_id samples positive_samples average_bytes "
+                "positive_average_bytes p95_bytes p99_bytes max_bytes tx_bytes\n"
+                "port 16 1 18 100 10 2 20 0 8 16 1000\n"
+                "port 17 8 15 100 50 32 64 48 96 128 2000\n",
+                encoding="utf-8")
+            metrics = target_queue_metrics(path, 15)
+        self.assertEqual(metrics["node_id"], 17)
+        self.assertEqual(metrics["neighbor_id"], 15)
+        self.assertEqual(metrics["p99_bytes"], 96)
+        self.assertEqual(metrics["tx_bytes"], 2000)
+
     def test_frozen_selector_withholds_performance_until_mechanisms_pass(self):
         ladder = json.loads((
             Path(__file__).resolve().parents[1] / "oflm_churn_ladder.json"
@@ -136,7 +152,15 @@ class OflmChurnAnalysisTests(unittest.TestCase):
         before = {
             "fct_mean_slowdown": 2.0, "fct_p99_slowdown": 2.0,
             "queue_mean_bytes": 2.0, "queue_p99_bytes": 2.0,
-            "queue_max_bytes": 2.0, "fct_groups": groups,
+            "queue_max_bytes": 2.0,
+            "target_receiver_queue": {
+                "node_id": 17, "if_index": 8, "neighbor_id": 15,
+                "samples": 2, "positive_samples": 2,
+                "average_bytes": 2.0, "positive_average_bytes": 2.0,
+                "p95_bytes": 2.0, "p99_bytes": 2.0, "max_bytes": 2.0,
+                "tx_bytes": 2,
+            },
+            "fct_groups": groups,
         }
         after = copy.deepcopy(before)
         for name in ("fct_mean_slowdown", "fct_p99_slowdown",
@@ -145,6 +169,11 @@ class OflmChurnAnalysisTests(unittest.TestCase):
         for metrics in after["fct_groups"].values():
             metrics["mean_slowdown"] = 1.0
             metrics["p99_slowdown"] = 1.0
+        for name in (
+            "average_bytes", "positive_average_bytes", "p95_bytes", "p99_bytes",
+            "max_bytes",
+        ):
+            after["target_receiver_queue"][name] = 1.0
 
         selection = {
             "decision": "selected", "flow_sha256": "same-flow",
