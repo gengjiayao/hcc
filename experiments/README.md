@@ -66,8 +66,10 @@ This creates:
 - `summary/rejections.txt`: failed manifests, invariant violations, incomplete
   pairs, and traffic-hash mismatches.
 
-The summarizer reads raw FCT, `config.txt`, GUARD statistics, PFC events, and
-the queue trace when available.  It rejects incomplete runs and checks that:
+The summarizer reads raw FCT, `config.txt`, the extended GUARD/recovery/drop
+statistics, seven-column per-priority PFC events, and the bounded
+`out_queue_stats` summary.  It falls back to the legacy queue trace only for old
+artifacts.  It rejects incomplete runs and checks that:
 
 - full GUARD has both grants and HPCC feedback updates;
 - HPCC-only has no grants and does have feedback updates;
@@ -75,11 +77,13 @@ the queue trace when available.  It rejects incomplete runs and checks that:
 - config values agree with the manifest.
 
 FCT metrics are separated into `<=8 KB`, `8 KB--1 BDP`, `1 BDP--1 MiB`, and
-`>1 MiB`.  P99.9 is emitted only with at least 1,000 observations.  Queue metric
-names explicitly say `nonzero`, because the current legacy queue trace omits
-zero-valued samples.  PFC events provide event counts only; precise per-priority
-pause duration requires the separate trace extension described in the main
-README.
+`>1 MiB`.  P99.9 is emitted only with at least 1,000 observations.  The bounded
+queue summary includes zero-valued samples and reports sample count, mean, P95,
+P99, and maximum queue bytes.  For legacy traces only, queue metric names say
+`nonzero`, because those traces omit zero-valued samples.  PFC results include
+per-priority counts, matched intervals, cumulative and maximum pause duration,
+and unmatched transitions.  Recovery results include switch drops, recovery
+and IRN NACKs, retransmitted packets and bytes, and timeouts.
 
 Every run first yields one value per metric and seed.  Aggregate rows compute a
 two-sided 95% Student-t confidence interval over those seed-level values.

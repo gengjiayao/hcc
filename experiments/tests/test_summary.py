@@ -1,10 +1,14 @@
 import tempfile
 import unittest
+from pathlib import Path
 
 from experiments.summarize_campaign import (
     confidence_interval,
+    parse_guard_stats,
+    parse_pfc,
     paired_rows,
     percentile,
+    queue_summary_metrics,
     validate_mode,
 )
 
@@ -23,6 +27,53 @@ def metric_row(cc, seed, value, flow_hash="same"):
 
 
 class SummaryTests(unittest.TestCase):
+    def test_extended_guard_stats_include_recovery_drops_and_pfc_priority(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            path.write_text(
+                "node_id grants_sent grants_received hpcc_feedback_updates max_active_flows "
+                "recovery_nacks_generated recovery_nacks_received irn_nacks_generated "
+                "irn_nacks_received irn_retransmit_packets irn_retransmit_bytes timeout_recoveries\n"
+                "total 10 10 20 3 4 5 6 7 8 9000 9\n"
+                "switch_drops ingress 2 egress 3 total 5\n"
+                "pfc_priority qindex pause_count resume_count matched_intervals "
+                "cumulative_pause_ns max_pause_ns unmatched_pauses unmatched_resumes\n"
+                "pfc_priority 3 4 4 4 1000 400 0 0\n",
+                encoding="utf-8",
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["irn_retransmit_bytes"], 9000)
+            self.assertEqual(stats["switch_drops_total"], 5)
+            self.assertEqual(stats["pfc_priority"][3]["cumulative_pause_ns"], 1000)
+            self.assertEqual(stats["pfc_max_pause_ns"], 400)
+
+    def test_extended_pfc_trace_skips_header_and_keeps_priority(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pfc.txt"
+            path.write_text(
+                "# time_ns node_id node_type if_index q_index event advertised_pause_us\n"
+                "10 1 0 2 3 1 5\n20 1 0 2 3 0 0\n",
+                encoding="utf-8",
+            )
+            stats = parse_pfc(path)
+            self.assertEqual(stats["pfc_pause_events"], 1)
+            self.assertEqual(stats["pfc_resume_events"], 1)
+            self.assertEqual(stats["pfc_event_priority"][3]["pause_count"], 1)
+
+    def test_queue_summary_is_preaggregated_and_includes_zero_samples(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "queue.txt"
+            path.write_text(
+                "samples 100\naverage_bytes 12.5\np95_bytes 100\n"
+                "p99_bytes 200\nmax_bytes 300\n",
+                encoding="utf-8",
+            )
+            metrics = dict((metric, value) for metric, _category, value, _n
+                           in queue_summary_metrics(path))
+            self.assertEqual(metrics["queue_sample_count"], 100)
+            self.assertEqual(metrics["queue_bytes_mean"], 12.5)
+            self.assertEqual(metrics["queue_bytes_max"], 300)
+
     def test_t_interval_is_computed_across_seed_values(self):
         mean, low, high = confidence_interval([1, 2, 3, 4, 5])
         self.assertEqual(mean, 3)

@@ -42,7 +42,12 @@ RUN_COLUMNS = (
     "run_key", "stage", "status", "valid", "rejection_reason", "output_id", "git_sha",
     *PARAM_COLUMNS, "flow_sha256", "flow_count", "completed_flow_count", "analyzed_flow_count",
     "config_sha256", "grants_sent", "grants_received", "hpcc_feedback_updates",
-    "max_active_flows", "pfc_pause_events", "pfc_resume_events", "output_bytes",
+    "max_active_flows", "recovery_nacks_generated", "recovery_nacks_received",
+    "irn_nacks_generated", "irn_nacks_received", "irn_retransmit_packets",
+    "irn_retransmit_bytes", "timeout_recoveries", "switch_drops_ingress",
+    "switch_drops_egress", "switch_drops_total", "pfc_pause_events", "pfc_resume_events",
+    "pfc_matched_intervals", "pfc_cumulative_pause_ns", "pfc_max_pause_ns",
+    "pfc_unmatched_pauses", "pfc_unmatched_resumes", "output_bytes",
 )
 METRIC_COLUMNS = (
     "row_type", "comparison", "stage", *tuple(column for column in PARAM_COLUMNS if column != "seed"),
@@ -64,35 +69,77 @@ def parse_config(path: Path) -> Dict[str, str]:
     return values
 
 
-def parse_guard_stats(path: Path) -> Dict[str, int]:
+GUARD_TOTAL_FIELDS = (
+    "grants_sent", "grants_received", "hpcc_feedback_updates", "max_active_flows",
+    "recovery_nacks_generated", "recovery_nacks_received", "irn_nacks_generated",
+    "irn_nacks_received", "irn_retransmit_packets", "irn_retransmit_bytes",
+    "timeout_recoveries",
+)
+PFC_PRIORITY_FIELDS = (
+    "pause_count", "resume_count", "matched_intervals", "cumulative_pause_ns",
+    "max_pause_ns", "unmatched_pauses", "unmatched_resumes",
+)
+
+
+def parse_guard_stats(path: Path) -> Dict[str, object]:
     if not path.is_file():
         raise SummaryError(f"missing GUARD stats: {path}")
     total = None
+    switch_drops = {"ingress": 0, "egress": 0, "total": 0}
+    priorities: Dict[int, Dict[str, int]] = {}
     with path.open(encoding="utf-8", errors="replace") as stream:
         for line in stream:
             parts = line.split()
-            if parts and parts[0] == "total" and len(parts) == 5:
+            if parts and parts[0] == "total" and len(parts) in (5, 12):
                 total = tuple(map(int, parts[1:]))
+            elif parts[:2] == ["switch_drops", "ingress"] and len(parts) == 7:
+                switch_drops = {
+                    "ingress": int(parts[2]), "egress": int(parts[4]), "total": int(parts[6])
+                }
+            elif parts and parts[0] == "pfc_priority" and len(parts) == 9:
+                try:
+                    qindex = int(parts[1])
+                    priorities[qindex] = dict(zip(PFC_PRIORITY_FIELDS, map(int, parts[2:])))
+                except ValueError:
+                    # Column header starts with the same pfc_priority token.
+                    continue
     if total is None:
         raise SummaryError(f"missing total row in GUARD stats: {path}")
-    return dict(zip(
-        ("grants_sent", "grants_received", "hpcc_feedback_updates", "max_active_flows"),
-        total,
-    ))
+    result: Dict[str, object] = {field: 0 for field in GUARD_TOTAL_FIELDS}
+    result.update(dict(zip(GUARD_TOTAL_FIELDS, total)))
+    result.update({f"switch_drops_{key}": value for key, value in switch_drops.items()})
+    result["pfc_priority"] = priorities
+    for field in PFC_PRIORITY_FIELDS:
+        values = [priority[field] for priority in priorities.values()]
+        result[f"pfc_{field}"] = max(values, default=0) if field == "max_pause_ns" else sum(values)
+    return result
 
 
-def parse_pfc(path: Path) -> Dict[str, int]:
-    counts = {"pfc_pause_events": 0, "pfc_resume_events": 0}
+def parse_pfc(path: Path) -> Dict[str, object]:
+    counts: Dict[str, object] = {
+        "pfc_pause_events": 0, "pfc_resume_events": 0, "pfc_event_priority": {}
+    }
     if not path.is_file():
         raise SummaryError(f"missing PFC trace: {path}")
     with path.open(encoding="utf-8", errors="replace") as stream:
         for line_number, line in enumerate(stream, 1):
             parts = line.split()
-            if not parts:
+            if not parts or parts[0].startswith("#"):
                 continue
-            if len(parts) != 5 or parts[4] not in ("0", "1"):
+            if len(parts) == 5:  # Legacy: no priority or advertised pause time.
+                event_index, priority = 4, None
+            elif len(parts) == 7:
+                event_index, priority = 5, int(parts[4])
+            else:
                 raise SummaryError(f"malformed PFC row {path}:{line_number}")
-            counts["pfc_pause_events" if parts[4] == "1" else "pfc_resume_events"] += 1
+            if parts[event_index] not in ("0", "1"):
+                raise SummaryError(f"invalid PFC event {path}:{line_number}")
+            field = "pfc_pause_events" if parts[event_index] == "1" else "pfc_resume_events"
+            counts[field] = int(counts[field]) + 1
+            if priority is not None:
+                priorities = counts["pfc_event_priority"]
+                bucket = priorities.setdefault(priority, {"pause_count": 0, "resume_count": 0})
+                bucket["pause_count" if parts[event_index] == "1" else "resume_count"] += 1
     return counts
 
 
@@ -195,14 +242,40 @@ def queue_metrics(path: Path) -> List[Tuple[str, str, float, int]]:
     ]
 
 
-def validate_mode(params: Mapping[str, object], config: Mapping[str, str], stats: Mapping[str, int]) -> List[str]:
+def queue_summary_metrics(path: Path) -> List[Tuple[str, str, float, int]]:
+    values: Dict[str, float] = {}
+    with path.open(encoding="utf-8", errors="replace") as stream:
+        for line_number, line in enumerate(stream, 1):
+            parts = line.split()
+            if not parts:
+                continue
+            if len(parts) != 2:
+                raise SummaryError(f"malformed queue summary {path}:{line_number}")
+            try:
+                values[parts[0]] = float(parts[1])
+            except ValueError as exc:
+                raise SummaryError(f"non-numeric queue summary {path}:{line_number}") from exc
+    required = {"samples", "average_bytes", "p95_bytes", "p99_bytes", "max_bytes"}
+    if set(values) != required:
+        raise SummaryError(f"queue summary fields differ from {sorted(required)}: {path}")
+    samples = int(values["samples"])
+    return [
+        ("queue_sample_count", "all", values["samples"], samples),
+        ("queue_bytes_mean", "all", values["average_bytes"], samples),
+        ("queue_bytes_p95", "all", values["p95_bytes"], samples),
+        ("queue_bytes_p99", "all", values["p99_bytes"], samples),
+        ("queue_bytes_max", "all", values["max_bytes"], samples),
+    ]
+
+
+def validate_mode(params: Mapping[str, object], config: Mapping[str, str], stats: Mapping[str, object]) -> List[str]:
     errors: List[str] = []
     cc = str(params.get("cc", ""))
     expected_mode = CC_MODES.get(cc)
     if expected_mode is not None and int(config.get("CC_MODE", -1)) != expected_mode:
         errors.append(f"CC_MODE is {config.get('CC_MODE')}, expected {expected_mode}")
-    grants = stats["grants_sent"] + stats["grants_received"]
-    updates = stats["hpcc_feedback_updates"]
+    grants = int(stats["grants_sent"]) + int(stats["grants_received"])
+    updates = int(stats["hpcc_feedback_updates"])
     if cc == "guard" and (grants == 0 or updates == 0):
         errors.append("full GUARD must have nonzero grants and HPCC updates")
     elif cc == "guard-active-only" and (grants == 0 or updates != 0):
@@ -249,8 +322,11 @@ def process_manifest(manifest_path: Path, bdp: int) -> Tuple[Dict[str, object], 
         "completed_flow_count": manifest.get("completed_flow_count", ""),
         "analyzed_flow_count": 0,
         "config_sha256": "",
-        "grants_sent": "", "grants_received": "", "hpcc_feedback_updates": "",
-        "max_active_flows": "", "pfc_pause_events": "", "pfc_resume_events": "",
+        **{field: "" for field in GUARD_TOTAL_FIELDS},
+        "switch_drops_ingress": "", "switch_drops_egress": "", "switch_drops_total": "",
+        "pfc_pause_events": "", "pfc_resume_events": "", "pfc_matched_intervals": "",
+        "pfc_cumulative_pause_ns": "", "pfc_max_pause_ns": "",
+        "pfc_unmatched_pauses": "", "pfc_unmatched_resumes": "",
         "output_bytes": manifest.get("output_bytes", ""),
     }
     metric_rows: List[Dict[str, object]] = []
@@ -266,6 +342,17 @@ def process_manifest(manifest_path: Path, bdp: int) -> Tuple[Dict[str, object], 
         pfc = parse_pfc(output_dir / f"{output_id}_out_pfc.txt")
         flows = parse_fct(output_dir / f"{output_id}_out_fct.txt")
         errors = validate_mode(params, config, stats)
+        raw_priorities = pfc.get("pfc_event_priority", {})
+        summary_priorities = stats.get("pfc_priority", {})
+        for priority in set(raw_priorities) | set(summary_priorities):
+            raw_priority = raw_priorities.get(priority, {})
+            summary_priority = summary_priorities.get(priority, {})
+            for field in ("pause_count", "resume_count"):
+                if int(raw_priority.get(field, 0)) != int(summary_priority.get(field, 0)):
+                    errors.append(
+                        f"PFC q{priority} {field} raw={raw_priority.get(field, 0)} "
+                        f"summary={summary_priority.get(field, 0)}"
+                    )
         expected_count = int(dict(manifest.get("traffic", {})).get("flow_count", -1))
         if len(flows) != expected_count:
             errors.append(f"completed flows {len(flows)} != generated flows {expected_count}")
@@ -285,7 +372,11 @@ def process_manifest(manifest_path: Path, bdp: int) -> Tuple[Dict[str, object], 
         run["rejection_reason"] = "; ".join(errors)
         if not errors:
             raw_metrics = fct_metrics(selected, bdp)
-            raw_metrics.extend(queue_metrics(output_dir / f"{output_id}_out_qlen.txt"))
+            queue_summary = output_dir / f"{output_id}_out_queue_stats.txt"
+            if queue_summary.is_file():
+                raw_metrics.extend(queue_summary_metrics(queue_summary))
+            else:
+                raw_metrics.extend(queue_metrics(output_dir / f"{output_id}_out_qlen.txt"))
             raw_metrics.extend([
                 ("grants_sent", "all", float(stats["grants_sent"]), 1),
                 ("grants_received", "all", float(stats["grants_received"]), 1),
@@ -294,6 +385,13 @@ def process_manifest(manifest_path: Path, bdp: int) -> Tuple[Dict[str, object], 
                 ("pfc_pause_events", "all", float(pfc["pfc_pause_events"]), 1),
                 ("pfc_resume_events", "all", float(pfc["pfc_resume_events"]), 1),
             ])
+            for field in GUARD_TOTAL_FIELDS[4:]:
+                raw_metrics.append((field, "all", float(stats[field]), 1))
+            for field in ("switch_drops_ingress", "switch_drops_egress", "switch_drops_total"):
+                raw_metrics.append((field, "all", float(stats[field]), 1))
+            for priority, values in sorted(stats.get("pfc_priority", {}).items()):
+                for field in PFC_PRIORITY_FIELDS:
+                    raw_metrics.append((f"pfc_{field}", f"q{priority}", float(values[field]), 1))
             for metric, category, value, count in raw_metrics:
                 metric_rows.append({
                     "row_type": "run", "comparison": "", "stage": run["stage"],
