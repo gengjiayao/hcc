@@ -224,7 +224,6 @@ python3 run.py --cc guard-active-only --seed 3 ...
 | `--cdf`          | 流大小 CDF：默认 `AliStorage2019`，可选 `WebSearch` 等 |
 | `--seed`         | 同时设置流量发生器和 ns-3 RNG；也进入流量文件名，默认 1 |
 | `--monitor_profile` | `bulk` 只保留核心输出和队列摘要；`full` 额外输出详细时序 |
-| `--error_rate_per_link` | 每条链路独立的 packet error 概率，范围 `[0,1)`，默认 0 |
 | `--qlen_monitoring_interval` | `full` 时队列时序及所有模式队列摘要的采样间隔（ns） |
 | `--guard_beta`   | OFLM EWMA 的历史样本权重，范围 [0,1]，默认 0.125 |
 | `--guard_gamma`  | OFLM 主动释放阈值倍数，非负，默认 1.0 |
@@ -332,12 +331,33 @@ area、grant、drop/recovery 和产物上限，再由 `select_oflm_churn_tier.py
 解封性能。只有各 seed 选择相同层级且 flow SHA 相同时，才能用
 `aggregate_oflm_churn.py` 计算配对置信区间。
 
-PFC/IRN 恢复对比的预设 repeated-incast、负载和误码阶梯保存在
-`experiments/recovery_ladder.json`。`gate_recovery_cohort.py` 先要求同一层级的五个
-IRN seed 全部完成、有 NACK 和实际重传且没有 timeout；只有整组通过后才允许运行
-相同五份 flow SHA 的 PFC 臂。`analyze_recovery.py` 分开报告 PFC pause interval 与
-IRN/timeout/drop，避免把拥塞暂停描述成链路误码恢复。任何层级在机制门槛失败时均不
-解封 FCT/queue，且只能按已经冻结的顺序进入下一层级。
+OFLM 参数敏感性在选定 tier1 后使用独立的固定六格，不得增删参数点：
+`gamma=1` 时 `beta={0,0.125,0.5,0.875}`，以及 `beta=0.125` 时
+`gamma={0.5,1,2}`；`beta=0.125,gamma=1` 只运行一次并作为配对基线。正式
+trace 必须用 `--priority-group 4 --oflm-churn-jitter-us 5` 分别生成 seeds 1–5，
+同一 seed 的六格复用同一份 flow snapshot，不同 seed 的 SHA-256 必须不同。每格使用
+`--guard_lifecycle_trace 1 --guard_lifecycle_max_lines 100` 和 bulk monitor，controller
+trace 关闭。先仅运行 seed1 六格；只有 72/72 完成、40/40 注册均 proactive、无
+drop/recovery、lifecycle 未截断，并且 beta 与 gamma 两条轴都改变 release lead、
+remaining bytes 与 active-set area 后，才能无选择地扩展 seeds 2–5。
+
+每格先用 `analyze_oflm_churn.py` 生成严格校验的 JSON，再将六格（或正式 30 格）交给：
+
+```bash
+python3 experiments/aggregate_oflm_sensitivity.py \
+  --summary b0-g1:1=/path/to/summary.json \
+  --summary b0p125-g1:1=/path/to/summary.json \
+  --summary b0p5-g1:1=/path/to/summary.json \
+  --summary b0p875-g1:1=/path/to/summary.json \
+  --summary b0p125-g0p5:1=/path/to/summary.json \
+  --summary b0p125-g2:1=/path/to/summary.json \
+  --json-out /path/to/oflm_sensitivity.json \
+  --csv-out /path/to/oflm_sensitivity.csv
+```
+
+正式 5-seed 输入按相同格式追加 seeds 2–5。结果同时保留每 seed 数值、Student-t
+95% CI，以及相对基线的同 seed 配对绝对差和百分比差；百分比正值表示该指标高于
+基线，不能据性能结果删除或更换参数格。
 
 `--flow_file` 完全绕过 Poisson/CDF 随机生成。`run.py` 先检查首行声明的 flow 数，
 再将输入复制到本次 `mix/output/<ID>/`；配置和模拟器只使用这份只读快照，因此原文件
