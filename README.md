@@ -313,6 +313,24 @@ python3 run.py --cc guard --pfc 1 --irn 0 \
   --flow_file config/reviewer_hybrid_seed3.txt
 ```
 
+`oflm-churn` 是机制优先的高 churn 实验。八条跨 ToR、发往同一 receiver 的
+16 MiB elephant 在统计 warmup 内同步启动；warmup 后以固定 25 us 间隔注入
+8 轮流，每轮各含两条 103,999、104,000、104,001 和 208,000 B 的流。预设层级与
+机制阈值在 `experiments/oflm_churn_ladder.json`，必须按顺序选择首个满足全部阈值的
+层级，不能检查 FCT/queue 后再挑配置。默认 tier1 的生成命令为：
+
+```bash
+python3 experiments/generate_workload.py \
+  --workload oflm-churn --oflm-churn-rounds 8 \
+  --oflm-churn-interval-us 25 --seed 1 \
+  --output config/reviewer_oflm_churn_tier1_seed1.txt
+```
+
+四组合先用 `analyze_oflm_churn.py` 检查完成率、注册数、release lead、active-set
+area、grant、drop/recovery 和产物上限，再由 `select_oflm_churn_tier.py` 决定是否
+解封性能。只有各 seed 选择相同层级且 flow SHA 相同时，才能用
+`aggregate_oflm_churn.py` 计算配对置信区间。
+
 `--flow_file` 完全绕过 Poisson/CDF 随机生成。`run.py` 先检查首行声明的 flow 数，
 再将输入复制到本次 `mix/output/<ID>/`；配置和模拟器只使用这份只读快照，因此原文件
 随后变化也不会影响已启动的运行。`--simul_time` 应与 manifest 的
