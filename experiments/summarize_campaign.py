@@ -36,13 +36,15 @@ T_975 = {
 CC_MODES = {"hpcc": 3, "guard": 11, "guard-active-only": 13}
 PARAM_COLUMNS = (
     "cc", "topo", "cdf", "netload", "simul_time", "bw", "seed", "pfc", "irn",
-    "guard_lambda", "guard_beta", "guard_gamma", "guard_keep_last_hop_int",
+    "guard_lambda", "guard_beta", "guard_gamma", "guard_oflm", "guard_keep_last_hop_int",
 )
 RUN_COLUMNS = (
     "run_key", "stage", "status", "valid", "rejection_reason", "output_id", "git_sha",
     *PARAM_COLUMNS, "flow_sha256", "flow_count", "completed_flow_count", "analyzed_flow_count",
     "config_sha256", "grants_sent", "grants_received", "hpcc_feedback_updates",
-    "max_active_flows", "recovery_nacks_generated", "recovery_nacks_received",
+    "registrations", "selected_registrations", "proactive_releases",
+    "completion_releases", "max_active_flows", "recovery_nacks_generated",
+    "recovery_nacks_received",
     "irn_nacks_generated", "irn_nacks_received", "irn_retransmit_packets",
     "irn_retransmit_bytes", "timeout_recoveries", "switch_drops_ingress",
     "switch_drops_egress", "switch_drops_total", "pfc_pause_events", "pfc_resume_events",
@@ -70,7 +72,8 @@ def parse_config(path: Path) -> Dict[str, str]:
 
 
 GUARD_TOTAL_FIELDS = (
-    "grants_sent", "grants_received", "hpcc_feedback_updates", "max_active_flows",
+    "grants_sent", "grants_received", "hpcc_feedback_updates", "registrations",
+    "selected_registrations", "proactive_releases", "completion_releases", "max_active_flows",
     "recovery_nacks_generated", "recovery_nacks_received", "irn_nacks_generated",
     "irn_nacks_received", "irn_retransmit_packets", "irn_retransmit_bytes",
     "timeout_recoveries",
@@ -90,8 +93,23 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
     with path.open(encoding="utf-8", errors="replace") as stream:
         for line in stream:
             parts = line.split()
-            if parts and parts[0] == "total" and len(parts) in (5, 12):
-                total = tuple(map(int, parts[1:]))
+            if parts and parts[0] == "total" and len(parts) in (5, 12, 16):
+                values = tuple(map(int, parts[1:]))
+                if len(values) == 4:
+                    total = dict(zip(
+                        ("grants_sent", "grants_received", "hpcc_feedback_updates",
+                         "max_active_flows"), values))
+                elif len(values) == 11:
+                    legacy_fields = (
+                        "grants_sent", "grants_received", "hpcc_feedback_updates",
+                        "max_active_flows", "recovery_nacks_generated",
+                        "recovery_nacks_received", "irn_nacks_generated",
+                        "irn_nacks_received", "irn_retransmit_packets",
+                        "irn_retransmit_bytes", "timeout_recoveries",
+                    )
+                    total = dict(zip(legacy_fields, values))
+                else:
+                    total = dict(zip(GUARD_TOTAL_FIELDS, values))
             elif parts[:2] == ["switch_drops", "ingress"] and len(parts) == 7:
                 switch_drops = {
                     "ingress": int(parts[2]), "egress": int(parts[4]), "total": int(parts[6])
@@ -106,7 +124,7 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
     if total is None:
         raise SummaryError(f"missing total row in GUARD stats: {path}")
     result: Dict[str, object] = {field: 0 for field in GUARD_TOTAL_FIELDS}
-    result.update(dict(zip(GUARD_TOTAL_FIELDS, total)))
+    result.update(total)
     result.update({f"switch_drops_{key}": value for key, value in switch_drops.items()})
     result["pfc_priority"] = priorities
     for field in PFC_PRIORITY_FIELDS:
@@ -289,6 +307,7 @@ def validate_mode(params: Mapping[str, object], config: Mapping[str, str], stats
         "GUARD_LAMBDA": params.get("guard_lambda"),
         "GUARD_EWMA_BETA": params.get("guard_beta"),
         "GUARD_RELEASE_GAMMA": params.get("guard_gamma"),
+        "GUARD_OFLM": params.get("guard_oflm"),
         "GUARD_KEEP_LAST_HOP_INT": params.get("guard_keep_last_hop_int"),
     }
     for key, value in expected.items():
@@ -385,7 +404,9 @@ def process_manifest(manifest_path: Path, bdp: int) -> Tuple[Dict[str, object], 
                 ("pfc_pause_events", "all", float(pfc["pfc_pause_events"]), 1),
                 ("pfc_resume_events", "all", float(pfc["pfc_resume_events"]), 1),
             ])
-            for field in GUARD_TOTAL_FIELDS[4:]:
+            for field in GUARD_TOTAL_FIELDS[3:7]:
+                raw_metrics.append((field, "all", float(stats[field]), 1))
+            for field in GUARD_TOTAL_FIELDS[8:]:
                 raw_metrics.append((field, "all", float(stats[field]), 1))
             for field in ("switch_drops_ingress", "switch_drops_egress", "switch_drops_total"):
                 raw_metrics.append((field, "all", float(stats[field]), 1))

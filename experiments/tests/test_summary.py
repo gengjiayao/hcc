@@ -19,7 +19,8 @@ def metric_row(cc, seed, value, flow_hash="same"):
         "cc": cc, "topo": "topo", "cdf": "cdf", "netload": 40,
         "simul_time": 0.02, "bw": 100, "pfc": 1, "irn": 0,
         "guard_lambda": 1.0, "guard_beta": 0.125, "guard_gamma": 1.0,
-        "guard_keep_last_hop_int": 0, "seed": seed, "metric": "fct_slowdown_mean",
+        "guard_oflm": 1, "guard_keep_last_hop_int": 0, "seed": seed,
+        "metric": "fct_slowdown_mean",
         "category": "all", "value": value, "n": 100, "mean": "",
         "ci95_low": "", "ci95_high": "", "flow_sha256": flow_hash,
         "run_key": f"{cc}-{seed}",
@@ -59,6 +60,20 @@ class SummaryTests(unittest.TestCase):
             self.assertEqual(stats["pfc_pause_events"], 1)
             self.assertEqual(stats["pfc_resume_events"], 1)
             self.assertEqual(stats["pfc_event_priority"][3]["pause_count"], 1)
+
+    def test_oflm_stats_format_preserves_lifecycle_counters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            path.write_text(
+                "total 10 10 20 30 25 22 8 4 1 1 2 2 3 3000 4\n",
+                encoding="utf-8",
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["registrations"], 30)
+            self.assertEqual(stats["selected_registrations"], 25)
+            self.assertEqual(stats["proactive_releases"], 22)
+            self.assertEqual(stats["completion_releases"], 8)
+            self.assertEqual(stats["max_active_flows"], 4)
 
     def test_queue_summary_is_preaggregated_and_includes_zero_samples(self):
         with tempfile.TemporaryDirectory() as directory:
