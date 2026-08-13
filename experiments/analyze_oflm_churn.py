@@ -97,6 +97,8 @@ def lifecycle_metrics(rows: Sequence[Mapping[str, object]], elephant_bytes: int)
 
     leads = [int(row["complete_ns"]) - int(row["release_ns"]) for row in rows]
     churn_leads = [int(row["complete_ns"]) - int(row["release_ns"]) for row in churn]
+    remaining = [int(row["remaining_bytes_at_release"]) for row in rows]
+    churn_remaining = [int(row["remaining_bytes_at_release"]) for row in churn]
     proactive = sum(row["release_reason"] == "proactive" for row in rows)
     return {
         "trace_rows": len(rows),
@@ -110,6 +112,12 @@ def lifecycle_metrics(rows: Sequence[Mapping[str, object]], elephant_bytes: int)
         "churn_release_lead_mean_ns": statistics.fmean(churn_leads),
         "churn_release_lead_median_ns": statistics.median(churn_leads),
         "churn_release_lead_p95_ns": percentile(churn_leads, 95),
+        "remaining_bytes_mean": statistics.fmean(remaining),
+        "remaining_bytes_median": statistics.median(remaining),
+        "remaining_bytes_p95": percentile(remaining, 95),
+        "churn_remaining_bytes_mean": statistics.fmean(churn_remaining),
+        "churn_remaining_bytes_median": statistics.median(churn_remaining),
+        "churn_remaining_bytes_p95": percentile(churn_remaining, 95),
         "trace_max_active_flows": max(int(row["active_after_register"]) for row in rows),
     }
 
@@ -141,12 +149,16 @@ def grouped_fct_metrics(output_dir: Path, bdp_bytes: int,
     for name, rows in groups.items():
         if not rows:
             raise SummaryError(f"FCT group {name} is empty")
-        slowdowns = [float(row["slowdown"]) for row in rows]
-        result[name] = {
-            "flows": len(rows),
-            "mean_slowdown": statistics.fmean(slowdowns),
-            "p99_slowdown": percentile(slowdowns, 99),
+        values = {
+            "fct_us": [float(row["fct_us"]) for row in rows],
+            "slowdown": [float(row["slowdown"]) for row in rows],
         }
+        metrics: Dict[str, object] = {"flows": len(rows)}
+        for metric, samples in values.items():
+            metrics[f"mean_{metric}"] = statistics.fmean(samples)
+            metrics[f"p95_{metric}"] = percentile(samples, 95)
+            metrics[f"p99_{metric}"] = percentile(samples, 99)
+        result[name] = metrics
     return result
 
 
@@ -220,6 +232,10 @@ def analyze(output_dir: Path, manifest_path: Path, lifecycle_path: Path,
         max_flows = int(parameters["max_flows"])
         bdp_bytes = int(parameters["oflm_bdp_bytes"])
         elephant_bytes = int(parameters["oflm_elephant_bytes"])
+        priority_group = int(parameters["priority_group"])
+        churn_rounds = int(parameters["oflm_churn_rounds"])
+        churn_interval_us = float(parameters["oflm_churn_interval_us"])
+        churn_jitter_us = float(parameters["oflm_churn_jitter_us"])
     except (KeyError, TypeError, ValueError) as exc:
         raise SummaryError("manifest lacks OFLM churn parameters") from exc
 
@@ -230,13 +246,25 @@ def analyze(output_dir: Path, manifest_path: Path, lifecycle_path: Path,
     try:
         selective = int(config["GUARD_SELECTIVE_REGISTRATION"])
         proactive = int(config["GUARD_PROACTIVE_RELEASE"])
+        lifecycle_enabled = int(config["GUARD_LIFECYCLE_TRACE"])
+        lifecycle_max_lines = int(config["GUARD_LIFECYCLE_TRACE_MAX_LINES"])
+        controller_enabled = int(config["GUARD_CONTROLLER_TRACE"])
         controller_max_lines = int(config["GUARD_CONTROLLER_TRACE_MAX_LINES"])
+        beta = float(config["GUARD_EWMA_BETA"])
+        gamma = float(config["GUARD_RELEASE_GAMMA"])
+        seed = int(config["RANDOM_SEED"])
     except (KeyError, ValueError) as exc:
         raise SummaryError("config lacks valid independent OFLM switches") from exc
     if selective not in (0, 1) or proactive not in (0, 1):
         raise SummaryError("OFLM switches must be 0 or 1")
+    if lifecycle_enabled != 1:
+        raise SummaryError("OFLM churn analysis requires the lifecycle trace")
+    if controller_enabled not in (0, 1):
+        raise SummaryError("controller trace switch must be 0 or 1")
 
     rows = parse_lifecycle(lifecycle_path)
+    if len(rows) > lifecycle_max_lines:
+        raise SummaryError("lifecycle trace exceeds configured line bound")
     receivers = {int(flow["dst"]) for flow in flows}
     if len(receivers) != 1:
         raise SummaryError("OFLM churn workload must use exactly one receiver")
@@ -302,8 +330,17 @@ def analyze(output_dir: Path, manifest_path: Path, lifecycle_path: Path,
         raise SummaryError("full GUARD controller diagnostics lack active HPCC evidence")
     if controller_counters["hpcc_fast_computations"] != 0:
         raise SummaryError("FAST_REACT=0 run unexpectedly reports fast HPCC computations")
-    controller_trace = controller_trace_metrics(
-        one_artifact(output_dir, "_out_guard_controller.csv"), controller_max_lines)
+    if controller_enabled:
+        controller_trace = controller_trace_metrics(
+            one_artifact(output_dir, "_out_guard_controller.csv"), controller_max_lines)
+    else:
+        controller_trace = {
+            "status": "disabled_by_configuration",
+            "attempted_rows": 0,
+            "written_rows": 0,
+            "truncated_rows": 0,
+            "time_weighted_analysis_valid": False,
+        }
     return {
         "schema_version": 1,
         "status": "validated_complete",
@@ -318,13 +355,24 @@ def analyze(output_dir: Path, manifest_path: Path, lifecycle_path: Path,
         "configuration": {
             "selective_registration": selective,
             "proactive_release": proactive,
+            "beta": beta,
+            "gamma": gamma,
+            "seed": seed,
             "bdp_bytes": bdp_bytes,
             "elephant_bytes": elephant_bytes,
+            "priority_group": priority_group,
+            "churn_rounds": churn_rounds,
+            "churn_interval_us": churn_interval_us,
+            "churn_jitter_us": churn_jitter_us,
+            "lifecycle_trace_max_lines": lifecycle_max_lines,
+            "controller_trace_enabled": controller_enabled,
         },
         "validation": {
             **base["validation"],
             "switch_drops": int(stats["switch_drops_total"]),
             "recovery_events": recovery_events,
+            "pfc_pause_events": int(stats["pfc_pause_count"]),
+            "pfc_resume_events": int(stats["pfc_resume_count"]),
             "artifact_bytes": artifact_bytes,
         },
         "mechanism": mechanism,
@@ -336,6 +384,7 @@ def analyze(output_dir: Path, manifest_path: Path, lifecycle_path: Path,
             "fct_mean_slowdown": metric_value(base, "slowdown_mean"),
             "fct_p99_slowdown": metric_value(base, "slowdown_p99"),
             "queue_mean_bytes": metric_value(base, "queue_bytes_mean"),
+            "queue_p95_bytes": metric_value(base, "queue_bytes_p95"),
             "queue_p99_bytes": metric_value(base, "queue_bytes_p99"),
             "queue_max_bytes": metric_value(base, "queue_bytes_max"),
             "target_receiver_queue": target_queue_metrics(
