@@ -237,7 +237,7 @@ python3 run.py --cc guard-active-only --seed 3 ...
 - `<id>_flow_bw.txt`：每条流的吞吐采样
 - `<id>_out_pfc.txt`：PFC 触发记录
 - `<id>_out_guard_stats.txt`：逐 host 和总计的 rate-grant 发送/接收数、完整
-  GUARD HPCC feedback 更新数，以及 receiver 注册数、选择性注册数、主动释放数、
+  GUARD HPCC feedback 调用数、含有效 INT hop 的反馈数、实际应用速率更新数，以及 receiver 注册数、选择性注册数、主动释放数、
   完成释放数和最大活跃流数，可用于验证双环执行和组件消融。关闭
   `--guard_selective_registration` 时 `selected_registrations` 应为 0；关闭
   `--guard_proactive_release` 时 `proactive_releases` 应为 0。单包流由
@@ -313,10 +313,12 @@ python3 -m unittest tests/test_generate_workload.py
 
 ## 7. 验证（leaf_spine_8_100G_OS1, simul_time=0.01s, netload=25%）
 
-> **历史结果，禁止作为当前双环 GUARD 的论文数据。** 这些数字生成时，
-> `cc_mode=11` 的 ACK 路径没有调用 `HandleAckHp`，实际只运行了 receiver rate
-> cap。该缺陷现已修复，下面表格仅保留为历史记录；所有 GUARD 对比、图表和结论
-> 必须用当前代码、多随机种子和置信区间重新运行。
+> **历史结果，禁止作为当前双环 GUARD 的论文数据。** 最早一批数字生成时，
+> `cc_mode=11` 的 ACK 路径没有调用 `HandleAckHp`；随后截至提交 `8336f6e` 的
+> 重跑虽然进入了该函数，但交换机仍只为 `cc_mode=3` 写 INT hop，因而 mode 11
+> 收到的 `nhop=0`，HPCC 速率仍未实际更新。这两个缺陷均已修复。下面表格仅保留
+> 为历史记录；在 `hpcc_valid_feedback` 与 `hpcc_rate_updates_applied` 都非零之前，
+> 任何 GUARD 运行都不得被视为完整双环证据。
 
 | 模式            | `--pfc/--irn` | <1BDP 平均/p99   | >1BDP 平均/p99   |
 | --------------- | ------------- | ---------------- | ---------------- |
@@ -338,7 +340,7 @@ python3 -m unittest tests/test_generate_workload.py
 
 短消息 p99 显著改善（来自 §1.2 改进 #6 的 8 priority queue 路由），长消息基本不变（guard 已有的等分配额 + Proactive Release 仍然主导长流）。
 
-- 历史 guard 数字不能用于声明完整双环 GUARD 相对 HPCC 的收益
+- 历史 guard 数字以及提交 `8336f6e` 产生的 reviewer campaign 不能用于声明完整双环 GUARD 相对 HPCC 的收益
 - homa-inspired 数字来自尚未通过协议一致性审计的实验原型；由于上述 ACK/NACK、overcommit 和 RESEND 差异，它们不得解释为标准 Homa 的性能，也不得进入正式论文基线
 
 ---

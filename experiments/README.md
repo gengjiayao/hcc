@@ -86,9 +86,9 @@ statistics, seven-column per-priority PFC events, and the bounded
 `out_queue_stats` summary.  It falls back to the legacy queue trace only for old
 artifacts.  It rejects incomplete runs and checks that:
 
-- full GUARD has both grants and HPCC feedback updates;
-- HPCC-only has no grants and does have feedback updates;
-- receiver-rate-only has grants and no HPCC updates; and
+- full GUARD has grants, valid INT-hop feedback, and actually applied HPCC rate updates;
+- HPCC-only has no grants and does have valid, applied HPCC updates;
+- receiver-rate-only has grants and no HPCC feedback activity; and
 - config values agree with the manifest.
 
 FCT metrics are separated into `<=8 KB`, `8 KB--1 BDP`, `1 BDP--1 MiB`, and
