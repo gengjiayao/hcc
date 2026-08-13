@@ -320,6 +320,21 @@ def execute_limited(
                 break
             time.sleep(1)
         returncode = process.wait()
+        current = output_directories(repo)
+        new_outputs = [path for key, path in current.items() if key not in baseline_outputs]
+        final_run_bytes = log_path.stat().st_size + sum(
+            directory_size(path) for path in new_outputs
+        )
+        final_campaign_bytes = (
+            directory_size(campaign_dir)
+            + sum(path.stat().st_size for path in set(created_flows) if path.exists())
+            + sum(directory_size(path) for path in prior_outputs)
+            + sum(directory_size(path) for path in new_outputs)
+        )
+        if reason == "completed" and final_run_bytes > run_byte_limit:
+            reason = f"run-storage>{run_byte_limit}"
+        if reason == "completed" and final_campaign_bytes > campaign_byte_limit:
+            reason = f"campaign-storage>{campaign_byte_limit}"
     return returncode, reason, int(time.monotonic() - started)
 
 
