@@ -24,11 +24,17 @@ def positive_int(value):
     return parsed
 
 
-def make_incast(hosts, destination, flow_bytes, pg, start_s, duration_s):
+def make_incast(hosts, destination, flow_bytes, pg, start_s, duration_s,
+                seed=None, jitter_us=0.0):
     trigger_s = start_s + duration_s * 0.35
     senders = [host for host in range(hosts) if host != destination]
+    if jitter_us > 0:
+        rng = random.Random(seed)
+        offsets = [rng.uniform(0, jitter_us * 1e-6) for _ in senders]
+    else:
+        offsets = [index * 1e-9 for index in range(len(senders))]
     return [
-        Flow(src, destination, pg, flow_bytes, trigger_s + index * 1e-9)
+        Flow(src, destination, pg, flow_bytes, trigger_s + offsets[index])
         for index, src in enumerate(senders)
     ]
 
@@ -79,6 +85,7 @@ def make_all_to_all(hosts, flow_bytes, pg, start_s, duration_s):
 
 
 def generate(args):
+    duration_s = args.duration_ms / 1000.0
     if args.hosts < 2:
         raise ValueError("--hosts must be at least 2")
     if not math.isfinite(args.duration_ms) or args.duration_ms < MIN_DURATION_S * 1000:
@@ -89,18 +96,23 @@ def generate(args):
         raise ValueError("--priority-group must be in [0, 7]")
     if not 0 <= args.incast_destination < args.hosts:
         raise ValueError("--incast-destination must name an existing host")
+    if not math.isfinite(args.incast_jitter_us) or args.incast_jitter_us < 0:
+        raise ValueError("--incast-jitter-us must be finite and non-negative")
+    if args.incast_jitter_us * 1e-6 >= duration_s:
+        raise ValueError("--incast-jitter-us must be shorter than the workload duration")
     if not 1 <= args.max_flows <= HARD_MAX_FLOWS:
         raise ValueError("--max-flows must be in [1, {}]".format(HARD_MAX_FLOWS))
 
-    duration_s = args.duration_ms / 1000.0
     if args.workload == "incast":
         flows = make_incast(
             args.hosts, args.incast_destination, args.flow_bytes,
-            args.priority_group, args.base_time, duration_s)
+            args.priority_group, args.base_time, duration_s,
+            args.seed, args.incast_jitter_us)
     elif args.workload == "hybrid":
         flows = make_incast(
             args.hosts, args.incast_destination, args.flow_bytes,
-            args.priority_group, args.base_time, duration_s)
+            args.priority_group, args.base_time, duration_s,
+            args.seed, args.incast_jitter_us)
         flows += make_background(
             args.hosts, args.background_flows, args.background_flow_bytes,
             args.priority_group, args.base_time, duration_s, args.seed)
@@ -202,6 +214,8 @@ def parse_args(argv=None):
     parser.add_argument("--max-flows", type=positive_int, default=HARD_MAX_FLOWS)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--incast-destination", type=int, default=0)
+    parser.add_argument("--incast-jitter-us", type=float, default=0.0,
+                        help="seeded uniform incast start jitter (default: 0us)")
     parser.add_argument("--flow-bytes", type=positive_int, default=512 * 1024)
     parser.add_argument("--background-flows", type=positive_int, default=512)
     parser.add_argument("--background-flow-bytes", type=positive_int, default=64 * 1024)
@@ -247,6 +261,7 @@ def main(argv=None):
             "max_flows": args.max_flows,
             "seed": args.seed,
             "incast_destination": args.incast_destination,
+            "incast_jitter_us": args.incast_jitter_us,
             "flow_bytes": args.flow_bytes,
             "background_flows": args.background_flows,
             "background_flow_bytes": args.background_flow_bytes,
