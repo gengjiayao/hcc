@@ -107,16 +107,29 @@ def aggregate(selections: Mapping[int, Mapping[str, object]]) -> Dict[str, objec
             for metric in sorted(metric_names)
         }
     paired_reductions: Dict[str, object] = {}
+    paired_differences: Dict[str, object] = {}
     for name, (before, after) in COMPARISONS.items():
         paired_reductions[name] = {}
+        paired_differences[name] = {}
         for metric in sorted(metric_names):
-            values = []
+            baselines = []
+            after_values = []
             for seed in sorted(flattened):
-                baseline = flattened[seed][before][metric]
-                if baseline <= 0:
-                    raise AggregateError(f"non-positive baseline for {name}/{metric}/seed{seed}")
-                values.append(1.0 - flattened[seed][after][metric] / baseline)
-            paired_reductions[name][metric] = interval(values)
+                baselines.append(flattened[seed][before][metric])
+                after_values.append(flattened[seed][after][metric])
+            paired_differences[name][metric] = interval([
+                baseline - after_value
+                for baseline, after_value in zip(baselines, after_values)
+            ])
+            if any(baseline <= 0 for baseline in baselines):
+                paired_reductions[name][metric] = {
+                    "status": "undefined_nonpositive_baseline", "n": len(baselines),
+                }
+            else:
+                paired_reductions[name][metric] = interval([
+                    1.0 - after_value / baseline
+                    for baseline, after_value in zip(baselines, after_values)
+                ])
 
     criterion_names = set(
         selections[next(iter(selections))].get("criterion_values", {})
@@ -136,6 +149,7 @@ def aggregate(selections: Mapping[int, Mapping[str, object]]) -> Dict[str, objec
         "seeds": sorted(selections),
         "mechanism_criterion_values": mechanism,
         "performance_by_combination": aggregates,
+        "paired_absolute_differences": paired_differences,
         "paired_relative_reductions": paired_reductions,
     }
 
