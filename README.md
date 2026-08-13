@@ -12,6 +12,7 @@
 | `dctcp`       | 8         | DCTCP（原仓库自带）                                         |
 | **`guard`**     | **11**    | HPCC + 接收端等分配额上限 + EWMA 主动配额释放                |
 | **`homa`** | **12**    | Homa 标准版：SRPT + overcommit + per-packet 优先级 + RESEND 自恢复 |
+| `guard-active-only` | 13 | GUARD receiver-rate-only 组件消融（无 INT/HPCC 环） |
 
 > "guard" 是本仓库提出的算法，目标是在保留 HPCC in-network 反馈的同时，在接收端再加一层基于活跃流数的等分配额上限 + 主动尾部释放，主要改善大流的尾延迟。
 
@@ -32,6 +33,10 @@
 3. **发送端处理**：发送端把 grant 速率写进 `qp->hp.m_grantRate`，最终发送速率取 `min(HPCC 算出的速率, m_grantRate)`，由新增的 `SyncHwRate()` 统一下发。也就是说 grant 只起**封顶**作用，"用满剩余容量"这件事仍由 HPCC 那一层负责。
 4. **主动配额释放（Proactive Release）**：接收端用 EWMA（`β=0.125`）实时估算每条流的瞬时接收速率，当 *剩余字节* < `est_rate × baseRTT × γ`（`γ=1.0`）时，认为这条流的剩余流量已经全部在飞行中，主动把它从集合里移除并广播新一轮 grant。
 5. **INT hop 截断**：guard 模式下，接收端在回 ACK 前 *删掉最后一跳的 INT 信息*——因为最后一跳（接收端 NIC）的拥塞已经由 RCC 直接接管了，HPCC 不需要再为这一跳算速率。
+
+组件消融使用明确的名字：`--cc hpcc` 是 reactive-only，`--cc guard-active-only`
+是 receiver-rate-only，`--cc guard` 才是两环同时运行的完整 GUARD。不要把
+`guard-active-only` 称为 Homa 或 ACC。
 
 控制包用一个新的 IPv4 协议号 `0xFB`（与 ACK=0xFC、NACK=0xFD、CNP=0xFF 并列），交换机按最高优先级转发。
 
@@ -130,6 +135,28 @@ python3 run.py --cc <hpcc|guard|homa|...> \
                --topo leaf_spine_8_100G_OS1
 ```
 
+reviewer 实验的示例：
+
+```bash
+# 完整 GUARD；有效 HPCC target = 0.95 * 1.4 = 1.33
+python3 run.py --cc guard --guard_lambda 1.4 --guard_beta 0.125 \
+  --guard_gamma 1.0 --seed 3 --pfc 1 --irn 0 \
+  --simul_time 0.01 --netload 25 --topo leaf_spine_8_100G_OS1
+
+# 保留 last-hop INT，测量两个控制环重复响应的消融
+python3 run.py --cc guard --guard_keep_last_hop_int 1 --seed 3 \
+  --pfc 1 --irn 0 --simul_time 0.01 --netload 25 \
+  --topo leaf_spine_8_100G_OS1
+
+# 两个单组件基线
+python3 run.py --cc hpcc --seed 3 ...
+python3 run.py --cc guard-active-only --seed 3 ...
+```
+
+`lambda * 0.95` 不截断到 1：HPCC 的归一化拥塞量还包含归一化队列项，
+不是单纯的物理链路利用率。`config.log` 会记录 `EFFECTIVE_U_TARGET`；HPCC
+及其他基线始终使用未缩放的 0.95。
+
 参数说明：
 
 | 参数             | 含义                                        |
@@ -142,6 +169,11 @@ python3 run.py --cc <hpcc|guard|homa|...> \
 | `--topo`         | 拓扑名（见 `config/leaf_spine_*` 等）         |
 | `--bw`           | 网卡带宽（Gbps，默认 100）                   |
 | `--cdf`          | 流大小 CDF：默认 `AliStorage2019`，可选 `WebSearch` 等 |
+| `--seed`         | 同时设置流量发生器和 ns-3 RNG；也进入流量文件名，默认 1 |
+| `--guard_beta`   | OFLM EWMA 的历史样本权重，范围 [0,1]，默认 0.125 |
+| `--guard_gamma`  | OFLM 主动释放阈值倍数，非负，默认 1.0 |
+| `--guard_lambda` | 完整 GUARD 的 HPCC target 倍数，至少 1，默认 1.0 |
+| `--guard_keep_last_hop_int` | last-hop INT 消融；0=默认删除，1=保留 |
 
 每次仿真创建 `mix/output/<10位ID>/`，里面包含：
 
@@ -151,7 +183,15 @@ python3 run.py --cc <hpcc|guard|homa|...> \
 - `<id>_out_bw.txt`：节点级吞吐采样（每 100µs）
 - `<id>_flow_bw.txt`：每条流的吞吐采样
 - `<id>_out_pfc.txt`：PFC 触发记录
+- `<id>_out_guard_stats.txt`：逐 host 和总计的 rate-grant 发送/接收数、完整
+  GUARD HPCC feedback 更新数、receiver 最大活跃流数，可用于验证双环执行和
+  分析 grant 放大
 - `config.txt` / `config.log`：本次仿真的输入配置和 stdout 输出
+
+`out_pfc` 每行是 `time_ns node_id node_type interface event`，其中 event 1/0
+分别表示该设备**收到** pause/resume。当前 trace 不含 priority/qIndex，也不直接
+累计 pause 时长；因此它可以统计事件数、设备/端口覆盖率和事件时间线，不能仅凭
+该文件精确报告 per-priority pause duration。若论文需要后者，须扩展 trace 参数。
 
 ---
 
@@ -184,11 +224,16 @@ python3 traffic_gen/traffic_gen.py \
         -o config/L_25_..._flow.txt
 ```
 
-`run.py` 会按 `(load, cdf, n_host, time, bw)` 自动构造文件名，已存在则跳过生成。
+`run.py` 会按 `(load, cdf, n_host, time, bw, seed)` 自动构造文件名，已存在则跳过生成。
 
 ---
 
 ## 7. 验证（leaf_spine_8_100G_OS1, simul_time=0.01s, netload=25%）
+
+> **历史结果，禁止作为当前双环 GUARD 的论文数据。** 这些数字生成时，
+> `cc_mode=11` 的 ACK 路径没有调用 `HandleAckHp`，实际只运行了 receiver rate
+> cap。该缺陷现已修复，下面表格仅保留为历史记录；所有 GUARD 对比、图表和结论
+> 必须用当前代码、多随机种子和置信区间重新运行。
 
 | 模式            | `--pfc/--irn` | <1BDP 平均/p99   | >1BDP 平均/p99   |
 | --------------- | ------------- | ---------------- | ---------------- |
@@ -210,7 +255,7 @@ python3 traffic_gen/traffic_gen.py \
 
 短消息 p99 显著改善（来自 §1.2 改进 #6 的 8 priority queue 路由），长消息基本不变（guard 已有的等分配额 + Proactive Release 仍然主导长流）。
 
-- guard 在大流尾延迟上比 vanilla HPCC 改进约 32%，符合"接收端公平分配 + 主动释放"的设计意图
+- 历史 guard 数字不能用于声明完整双环 GUARD 相对 HPCC 的收益
 - homa 通过 8 priority queue 真正路由 + unscheduled cutoffs，把短消息 p99 压到 1.88（vs vanilla HPCC 的 2.28）；长消息 p99 暂时受限于保守的 overcommit_degree=1 + RESEND 一 MTU/15µs 的恢复节奏，调参留给后续
 
 ---
