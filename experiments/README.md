@@ -20,6 +20,12 @@ HPCC-only, receiver-rate-only, last-hop INT, lambda/beta/gamma sensitivity,
 matched PFC/IRN settings, AliStorage, WebSearch, two offered loads, and five
 seeds.  Identical traffic parameters reuse a byte-identical input.
 
+OFLM exposes independent `guard_selective_registration` and
+`guard_proactive_release` parameters.  Their four combinations isolate BDP
+filtering from early release.  The legacy `guard_oflm=0` command-line parameter
+still disables both, while `guard_oflm=1` leaves explicitly supplied component
+values unchanged.
+
 By default the runner enforces these hard bounds:
 
 - 25,000 generated flows per run;

@@ -182,7 +182,13 @@ python3 run.py --cc guard --guard_keep_last_hop_int 1 --seed 3 \
   --pfc 1 --irn 0 --simul_time 0.01 --netload 25 \
   --topo leaf_spine_8_100G_OS1
 
-# 关闭 OFLM：不按 BDP 选择，所有流从首包注册并仅在完整接收后释放
+# 分开消融 OFLM 的两部分：所有流注册，但仍允许提前释放
+python3 run.py --cc guard --guard_selective_registration 0 \
+  --guard_proactive_release 1 --seed 3 \
+  --pfc 1 --irn 0 --simul_time 0.01 --netload 25 \
+  --topo leaf_spine_8_100G_OS1
+
+# 旧命令仍可用：显式 0 会同时关闭选择性注册和提前释放
 python3 run.py --cc guard --guard_oflm 0 --seed 3 \
   --pfc 1 --irn 0 --simul_time 0.01 --netload 25 \
   --topo leaf_spine_8_100G_OS1
@@ -216,7 +222,9 @@ python3 run.py --cc guard-active-only --seed 3 ...
 | `--guard_beta`   | OFLM EWMA 的历史样本权重，范围 [0,1]，默认 0.125 |
 | `--guard_gamma`  | OFLM 主动释放阈值倍数，非负，默认 1.0 |
 | `--guard_lambda` | 完整 GUARD 的 HPCC target 倍数，至少 1，默认 1.0 |
-| `--guard_oflm` | OFLM 消融；1=按 BDP 选择并主动尾部释放，0=所有流首包注册、完成时释放 |
+| `--guard_selective_registration` | 1=仅大于 1 BDP 的流在首包注册；0=所有流在首包注册，默认 1 |
+| `--guard_proactive_release` | 1=按剩余字节阈值提前释放已注册流；0=仅在完整接收时释放，默认 1 |
+| `--guard_oflm` | 兼容旧脚本；显式 0 无条件关闭上述两项，显式 1 不覆盖单独给出的新开关 |
 | `--guard_keep_last_hop_int` | last-hop INT 消融；0=默认删除，1=保留 |
 
 每次仿真创建 `mix/output/<10位ID>/`，里面包含：
@@ -230,8 +238,9 @@ python3 run.py --cc guard-active-only --seed 3 ...
 - `<id>_out_pfc.txt`：PFC 触发记录
 - `<id>_out_guard_stats.txt`：逐 host 和总计的 rate-grant 发送/接收数、完整
   GUARD HPCC feedback 更新数，以及 receiver 注册数、选择性注册数、主动释放数、
-  完成释放数和最大活跃流数，可用于验证双环执行和组件消融。`--guard_oflm 0`
-  时 `selected_registrations` 和 `proactive_releases` 应为 0；单包流由
+  完成释放数和最大活跃流数，可用于验证双环执行和组件消融。关闭
+  `--guard_selective_registration` 时 `selected_registrations` 应为 0；关闭
+  `--guard_proactive_release` 时 `proactive_releases` 应为 0。单包流由
   `FLOW_START_AND_END` 同时触发注册和完成释放，乱序尾包则以连续接收进度达到
   `flow_size` 为完成判据
 - `config.txt` / `config.log`：本次仿真的输入配置和 stdout 输出

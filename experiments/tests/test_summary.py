@@ -19,7 +19,8 @@ def metric_row(cc, seed, value, flow_hash="same"):
         "cc": cc, "topo": "topo", "cdf": "cdf", "netload": 40,
         "simul_time": 0.02, "bw": 100, "pfc": 1, "irn": 0,
         "guard_lambda": 1.0, "guard_beta": 0.125, "guard_gamma": 1.0,
-        "guard_oflm": 1, "guard_keep_last_hop_int": 0, "seed": seed,
+        "guard_selective_registration": 1, "guard_proactive_release": 1,
+        "guard_keep_last_hop_int": 0, "seed": seed,
         "metric": "fct_slowdown_mean",
         "category": "all", "value": value, "n": 100, "mean": "",
         "ci95_low": "", "ci95_high": "", "flow_sha256": flow_hash,
@@ -106,6 +107,19 @@ class SummaryTests(unittest.TestCase):
         bad = dict(good, hpcc_feedback_updates=0)
         self.assertEqual(validate_mode(params, config, good), [])
         self.assertIn("nonzero grants and HPCC updates", validate_mode(params, config, bad)[0])
+
+    def test_component_switches_are_checked_against_config(self):
+        params = {
+            "cc": "guard", "guard_selective_registration": 0,
+            "guard_proactive_release": 1,
+        }
+        config = {
+            "CC_MODE": "11", "GUARD_SELECTIVE_REGISTRATION": "1",
+            "GUARD_PROACTIVE_RELEASE": "1",
+        }
+        stats = {"grants_sent": 1, "grants_received": 1, "hpcc_feedback_updates": 1}
+        errors = validate_mode(params, config, stats)
+        self.assertIn("GUARD_SELECTIVE_REGISTRATION is 1, expected 0", errors)
 
     def test_paired_difference_preserves_all_seeds(self):
         rows = []

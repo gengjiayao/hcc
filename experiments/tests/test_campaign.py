@@ -12,6 +12,7 @@ from experiments.run_campaign import (
     select_stages,
     traffic_identity,
 )
+from run import resolve_guard_components
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -23,6 +24,18 @@ class CampaignDefinitionTests(unittest.TestCase):
         runs = list(expand_campaign(campaign))
         self.assertEqual(len(runs), 165)
         self.assertEqual(len({run["run_key"] for run in runs}), 165)
+        params = runs[0]["params"]
+        self.assertEqual(params["guard_selective_registration"], 1)
+        self.assertEqual(params["guard_proactive_release"], 1)
+        self.assertNotIn("guard_oflm", params)
+
+    def test_independent_oflm_switches_and_legacy_precedence(self):
+        self.assertEqual(resolve_guard_components(None, 1, 1), (1, 1))
+        self.assertEqual(resolve_guard_components(None, 0, 1), (0, 1))
+        self.assertEqual(resolve_guard_components(None, 1, 0), (1, 0))
+        self.assertEqual(resolve_guard_components(None, 0, 0), (0, 0))
+        self.assertEqual(resolve_guard_components(0, 1, 1), (0, 0))
+        self.assertEqual(resolve_guard_components(1, 0, 1), (0, 1))
 
     def test_traffic_identity_accounts_for_oversubscription(self):
         params = {
