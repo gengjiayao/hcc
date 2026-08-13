@@ -7,8 +7,10 @@ import unittest
 
 from experiments.aggregate_oflm_churn import AggregateError, aggregate
 from experiments.analyze_oflm_churn import (
+    CONTROLLER_FIELDS,
     LIFECYCLE_FIELDS,
     SummaryError,
+    controller_trace_metrics,
     grouped_fct_metrics,
     lifecycle_metrics,
     parse_lifecycle,
@@ -102,6 +104,29 @@ class OflmChurnAnalysisTests(unittest.TestCase):
         self.assertEqual(metrics["neighbor_id"], 15)
         self.assertEqual(metrics["p99_bytes"], 96)
         self.assertEqual(metrics["tx_bytes"], 2000)
+
+    def test_controller_trace_metrics_enforce_bound_and_valid_hops(self):
+        grant = [
+            "100", "1", "10", "20", "grant", "100", "50", "50", "grant",
+            "1", "0", "0", "10", "-1", "0.95", "-1",
+        ]
+        hpcc = [
+            "200", "1", "10", "20", "hpcc", "40", "50", "40", "reactive",
+            "1", "0", "2", "20", "1.0", "0.95", "1.05",
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "controller.csv"
+            path.write_text(
+                ",".join(CONTROLLER_FIELDS) + "\n" +
+                ",".join(grant) + "\n" + ",".join(hpcc) + "\n" +
+                "# attempted 3 written 2 truncated 1\n",
+                encoding="utf-8")
+            metrics = controller_trace_metrics(path, 2)
+            self.assertEqual(metrics["max_nhop_written"], 2)
+            self.assertEqual(metrics["truncated_rows"], 1)
+            self.assertFalse(metrics["time_weighted_analysis_valid"])
+            with self.assertRaisesRegex(SummaryError, "exceeds configured"):
+                controller_trace_metrics(path, 1)
 
     def test_frozen_selector_withholds_performance_until_mechanisms_pass(self):
         ladder = json.loads((
