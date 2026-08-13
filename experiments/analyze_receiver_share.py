@@ -238,7 +238,10 @@ def analyze(
     received = [row for row in trace if row["event"] == "received"]
     sent_bytes = sum(int(row["serialized_bytes"]) for row in sent)
     serialized_sizes = sorted({int(row["serialized_bytes"]) for row in sent})
-    expected_bytes = int(ladder["homogeneous"]["simulated_serialized_grant_bytes_per_packet"])
+    controller = "guard" if config["CC_MODE"] == "11" else "guard-active-only"
+    expected_bytes = int(
+        ladder["homogeneous"]["simulated_serialized_grant_bytes_per_packet"][controller]
+    )
     if serialized_sizes != [expected_bytes]:
         raise SummaryError(f"raw serialized grant sizes {serialized_sizes}, expected {[expected_bytes]}")
     if len(sent) != int(stats["grants_sent"]) or len(received) != int(stats["grants_received"]):
@@ -260,13 +263,15 @@ def analyze(
         for row in target_fct
     }
     packet_count = len(sent)
-    ethernet_bytes_per_packet = int(ladder["homogeneous"]["ethernet_equivalent_bytes_per_packet"])
+    ethernet_bytes_per_packet = int(
+        ladder["homogeneous"]["ethernet_equivalent_bytes_per_packet"][controller]
+    )
     result = {
         "schema_version": 1,
         "status": "validated_mechanism",
         "scenario": scenario,
         "expected_active_flows": expected_n,
-        "controller": "guard" if config["CC_MODE"] == "11" else "guard-active-only",
+        "controller": controller,
         "seed": int(config["RANDOM_SEED"]),
         "flow_sha256": base["provenance"]["flow_sha256"],
         "output_directory": str(output_dir.resolve()),
@@ -283,6 +288,7 @@ def analyze(
             "ethernet_equivalent_bytes": packet_count * ethernet_bytes_per_packet,
             "ethernet_equivalent_bytes_per_grant": ethernet_bytes_per_packet,
             "ethernet_equivalent_definition": ladder["homogeneous"]["ethernet_equivalent_accounting"],
+            "controller_size_explanation": ladder["homogeneous"]["controller_size_explanation"],
         },
         "health": {
             "switch_drops": int(stats["switch_drops_total"]),

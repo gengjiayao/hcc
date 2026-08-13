@@ -27,7 +27,7 @@ class ReceiverShareTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires --guard_grant_trace"):
             validate_guard_grant_options(0, "guard", "/tmp/grants.csv", 16)
 
-    def test_raw_trace_preserves_simulated_60_byte_packets_and_received_rate(self):
+    def test_raw_trace_preserves_packet_bytes_and_received_rate(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "grants.csv"
             path.write_text(
@@ -49,6 +49,19 @@ class ReceiverShareTests(unittest.TestCase):
                 audit["sender_applied_grants_by_flow"]["0"]["rates_bps"],
                 [50_000_000_000],
             )
+
+    def test_full_guard_raw_trace_can_include_int_header_area(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "grants.csv"
+            path.write_text(
+                HEADER
+                + "100,sent,registration,15,0,1,2,1,100000000000,100000000000,1000,94\n"
+                + "110,received,none,0,0,1,2,0,100000000000,100000000000,9000,94\n"
+                + "# attempted 2 written 2 truncated 0\n",
+                encoding="utf-8",
+            )
+            rows, _counts = parse_bounded_trace(path)
+            self.assertEqual([row["serialized_bytes"] for row in rows], [94, 94])
 
     def test_trace_rejects_truncation_and_send_receive_mismatch(self):
         with tempfile.TemporaryDirectory() as directory:
