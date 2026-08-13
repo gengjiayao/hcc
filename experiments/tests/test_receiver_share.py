@@ -3,7 +3,9 @@ from pathlib import Path
 import unittest
 
 from experiments.aggregate_receiver_share import ci, parse_runtime, validate_matrix
-from experiments.analyze_receiver_share import parse_bounded_trace, rate_metrics
+from experiments.analyze_receiver_share import (
+    common_active_window_metrics, parse_bounded_trace, rate_metrics,
+)
 from experiments.summarize_campaign import SummaryError
 from run import HARD_GUARD_GRANT_MAX_LINES, validate_guard_grant_options
 
@@ -111,6 +113,25 @@ class ReceiverShareTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertEqual(parse_runtime(path), (62.5, 54321))
+
+    def test_common_active_rate_uses_receiver_progress_at_first_release(self):
+        trace = [
+            {"event": "sent", "host_node": 15, "flow_id": 0,
+             "active_flows": 2, "time_ns": 100, "next_seq": 10,
+             "set_change": "registration", "line_rate_bps": 100_000_000_000},
+            {"event": "sent", "host_node": 15, "flow_id": 1,
+             "active_flows": 2, "time_ns": 100, "next_seq": 20,
+             "set_change": "registration", "line_rate_bps": 100_000_000_000},
+            {"event": "sent", "host_node": 15, "flow_id": 0,
+             "active_flows": 1, "time_ns": 200, "next_seq": 60,
+             "set_change": "release", "line_rate_bps": 100_000_000_000},
+        ]
+        flows = [{"src": 0, "size": 100}, {"src": 1, "size": 100}]
+        result = common_active_window_metrics(trace, flows, 15, [0, 1], 2)
+        self.assertEqual(result["duration_ns"], 100)
+        self.assertEqual(result["per_source"]["0"]["delivered_bytes"], 50)
+        self.assertEqual(result["per_source"]["1"]["delivered_bytes"], 80)
+        self.assertAlmostEqual(result["aggregate_payload_goodput_gbps"], 10.4)
 
 
 if __name__ == "__main__":
