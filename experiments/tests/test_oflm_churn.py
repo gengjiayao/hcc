@@ -157,7 +157,7 @@ class OflmChurnAnalysisTests(unittest.TestCase):
                 "node_id": 17, "if_index": 8, "neighbor_id": 15,
                 "samples": 2, "positive_samples": 2,
                 "average_bytes": 2.0, "positive_average_bytes": 2.0,
-                "p95_bytes": 2.0, "p99_bytes": 2.0, "max_bytes": 2.0,
+                "p95_bytes": 0.0, "p99_bytes": 2.0, "max_bytes": 2.0,
                 "tx_bytes": 2,
             },
             "fct_groups": groups,
@@ -190,6 +190,12 @@ class OflmChurnAnalysisTests(unittest.TestCase):
             "selective_with_proactive_off"]["fct_mean_slowdown"]
         self.assertEqual(reduction["mean"], 0.5)
         self.assertEqual(reduction["n"], 2)
+        zero_baseline = result["paired_relative_reductions"][
+            "selective_with_proactive_off"]["target_queue_p95_bytes"]
+        self.assertEqual(zero_baseline["status"], "undefined_nonpositive_baseline")
+        absolute = result["paired_absolute_differences"][
+            "selective_with_proactive_off"]["target_queue_p95_bytes"]
+        self.assertEqual(absolute["mean"], -1.0)
 
         mismatched = copy.deepcopy(selection)
         mismatched["flow_sha256"] = "different-flow"
