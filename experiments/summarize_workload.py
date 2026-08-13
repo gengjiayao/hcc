@@ -215,6 +215,10 @@ def flow_key(flow: Mapping[str, object]) -> Tuple[int, int, int, int]:
     return tuple(int(flow[field]) for field in ("src", "dst", "size", "start_ns"))
 
 
+def endpoint_size_key(flow: Mapping[str, object]) -> Tuple[int, int, int]:
+    return tuple(int(flow[field]) for field in ("src", "dst", "size"))
+
+
 def validate_completions(
     flows: Sequence[Mapping[str, object]], completions: Sequence[Mapping[str, object]], hosts: int
 ) -> None:
@@ -226,14 +230,33 @@ def validate_completions(
         src, dst = int(row["src"]), int(row["dst"])
         if not 0 <= src < hosts or not 0 <= dst < hosts:
             raise SummaryError(f"completed flow has out-of-range endpoint {src}->{dst}")
-    expected = Counter(flow_key(flow) for flow in flows)
-    observed = Counter(flow_key(row) for row in completions)
-    if expected != observed:
-        missing = list((expected - observed).elements())[:3]
-        unexpected = list((observed - expected).elements())[:3]
+    # The ns-3 driver truncates configured floating-point start times by up to
+    # two nanoseconds while serializing events.  First match endpoint/size
+    # multiplicities exactly, then compare sorted starts within each group
+    # using that narrow serialization tolerance.
+    expected_groups: MutableMapping[Tuple[int, int, int], List[int]] = defaultdict(list)
+    observed_groups: MutableMapping[Tuple[int, int, int], List[int]] = defaultdict(list)
+    for flow in flows:
+        expected_groups[endpoint_size_key(flow)].append(int(flow["start_ns"]))
+    for row in completions:
+        observed_groups[endpoint_size_key(row)].append(int(row["start_ns"]))
+    if set(expected_groups) != set(observed_groups):
+        missing = sorted(set(expected_groups) - set(observed_groups))[:3]
+        unexpected = sorted(set(observed_groups) - set(expected_groups))[:3]
         raise SummaryError(
-            f"completion tuples differ from snapshot; missing={missing}, unexpected={unexpected}"
+            f"completion endpoint/size groups differ; missing={missing}, unexpected={unexpected}"
         )
+    for key in expected_groups:
+        expected_starts = sorted(expected_groups[key])
+        observed_starts = sorted(observed_groups[key])
+        if len(expected_starts) != len(observed_starts):
+            raise SummaryError(f"completion multiplicity differs for {key}")
+        for expected_start, observed_start in zip(expected_starts, observed_starts):
+            if abs(expected_start - observed_start) > 2:
+                raise SummaryError(
+                    f"completion start differs by more than 2ns for {key}: "
+                    f"expected={expected_start} observed={observed_start}"
+                )
 
 
 def metric(

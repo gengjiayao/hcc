@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from experiments.summarize_campaign import SummaryError
-from experiments.summarize_workload import main, summarize
+from experiments.summarize_workload import main, summarize, validate_completions
 
 
 def sha256(path):
@@ -14,6 +14,17 @@ def sha256(path):
 
 
 class WorkloadSummaryTests(unittest.TestCase):
+    def test_completion_start_allows_two_nanosecond_driver_truncation(self):
+        flows = [{"src": 1, "dst": 0, "size": 1000, "start_ns": 2000000001}]
+        completions = [{"src": 1, "dst": 0, "size": 1000, "start_ns": 1999999999}]
+        validate_completions(flows, completions, 2)
+
+    def test_completion_start_rejects_larger_time_shift(self):
+        flows = [{"src": 1, "dst": 0, "size": 1000, "start_ns": 2000000003}]
+        completions = [{"src": 1, "dst": 0, "size": 1000, "start_ns": 1999999999}]
+        with self.assertRaisesRegex(SummaryError, "more than 2ns"):
+            validate_completions(flows, completions, 2)
+
     def make_run(self, directory, workload="incast"):
         root = Path(directory)
         output = root / "123"
@@ -129,7 +140,7 @@ class WorkloadSummaryTests(unittest.TestCase):
                 output, manifest = self.make_run(directory)
                 fct = output / "123_out_fct.txt"
                 fct.write_text(fct.read_text(encoding="utf-8").replace(old, new, 1), encoding="utf-8")
-                with self.assertRaisesRegex(SummaryError, "completion tuples differ"):
+                with self.assertRaisesRegex(SummaryError, "completion .* differ"):
                     summarize(output, manifest)
 
     def test_manifest_hash_must_match_private_snapshot(self):
