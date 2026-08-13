@@ -36,7 +36,8 @@ T_975 = {
 CC_MODES = {"hpcc": 3, "guard": 11, "guard-active-only": 13}
 PARAM_COLUMNS = (
     "cc", "topo", "cdf", "netload", "simul_time", "bw", "seed", "pfc", "irn",
-    "guard_lambda", "guard_beta", "guard_gamma", "guard_oflm", "guard_keep_last_hop_int",
+    "guard_lambda", "guard_beta", "guard_gamma", "guard_selective_registration",
+    "guard_proactive_release", "guard_oflm", "guard_keep_last_hop_int",
 )
 RUN_COLUMNS = (
     "run_key", "stage", "status", "valid", "rejection_reason", "output_id", "git_sha",
@@ -307,6 +308,8 @@ def validate_mode(params: Mapping[str, object], config: Mapping[str, str], stats
         "GUARD_LAMBDA": params.get("guard_lambda"),
         "GUARD_EWMA_BETA": params.get("guard_beta"),
         "GUARD_RELEASE_GAMMA": params.get("guard_gamma"),
+        "GUARD_SELECTIVE_REGISTRATION": params.get("guard_selective_registration"),
+        "GUARD_PROACTIVE_RELEASE": params.get("guard_proactive_release"),
         "GUARD_OFLM": params.get("guard_oflm"),
         "GUARD_KEEP_LAST_HOP_INT": params.get("guard_keep_last_hop_int"),
     }

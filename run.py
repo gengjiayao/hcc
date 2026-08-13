@@ -87,7 +87,8 @@ U_TARGET 0.95
 GUARD_LAMBDA {guard_lambda}
 GUARD_EWMA_BETA {guard_beta}
 GUARD_RELEASE_GAMMA {guard_gamma}
-GUARD_OFLM {guard_oflm}
+GUARD_SELECTIVE_REGISTRATION {guard_selective_registration}
+GUARD_PROACTIVE_RELEASE {guard_proactive_release}
 GUARD_KEEP_LAST_HOP_INT {guard_keep_last_hop_int}
 MULTI_RATE 0
 SAMPLE_FEEDBACK 0
@@ -145,6 +146,13 @@ MIN_SMOKE_TIME = 0.005
 MIN_FORMAL_TIME = 0.010
 
 
+def resolve_guard_components(guard_oflm, selective_registration, proactive_release):
+    """Resolve the legacy combined OFLM switch without masking new ablations."""
+    if guard_oflm == 0:
+        return 0, 0
+    return selective_registration, proactive_release
+
+
 def main():
     # make directory if not exists
     isExist = os.path.exists(os.getcwd() + "/mix/output/")
@@ -196,8 +204,12 @@ def main():
                         help="GUARD proactive-release threshold multiplier >= 0 (default: 1.0)")
     parser.add_argument('--guard_lambda', type=float, default=1.0,
                         help="GUARD HPCC-target multiplier >= 1 (default: 1.0)")
-    parser.add_argument('--guard_oflm', type=int, choices=(0, 1), default=1,
-                        help="enable GUARD selective registration and proactive release (default: 1)")
+    parser.add_argument('--guard_oflm', type=int, choices=(0, 1), default=None,
+                        help="legacy alias; an explicit 0 disables both OFLM components")
+    parser.add_argument('--guard_selective_registration', type=int, choices=(0, 1), default=1,
+                        help="register only flows larger than one BDP (default: 1)")
+    parser.add_argument('--guard_proactive_release', type=int, choices=(0, 1), default=1,
+                        help="release registered flows before completion (default: 1)")
     parser.add_argument('--guard_keep_last_hop_int', type=int, choices=(0, 1), default=0,
                         help="retain last-hop INT in GUARD for ablation (default: 0)")
     parser.add_argument('--seed', type=int, default=1,
@@ -216,6 +228,8 @@ def main():
     #                     type=int, default=1000, help="timeout value of ConWeave Tx for CLEAR signal (default: 1000us)")
 
     args = parser.parse_args()
+    guard_selective_registration, guard_proactive_release = resolve_guard_components(
+        args.guard_oflm, args.guard_selective_registration, args.guard_proactive_release)
 
     # make running ID of this config
     # need to check directory exists or not
@@ -503,7 +517,8 @@ def main():
                                         fast_react=fast_react, mi=mi, int_multi=int_multi, ewma_gain=ewma_gain,
                                         guard_beta=args.guard_beta, guard_gamma=args.guard_gamma,
                                         guard_lambda=args.guard_lambda,
-                                        guard_oflm=args.guard_oflm,
+                                        guard_selective_registration=guard_selective_registration,
+                                        guard_proactive_release=guard_proactive_release,
                                         guard_keep_last_hop_int=args.guard_keep_last_hop_int,
                                         seed=args.seed,
                                         kmax_map=kmax_map, kmin_map=kmin_map, pmax_map=pmax_map)

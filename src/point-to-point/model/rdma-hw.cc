@@ -111,9 +111,14 @@ TypeId RdmaHw::GetTypeId(void) {
                           "Multiplier for GUARD's proactive-release in-flight threshold",
                           DoubleValue(1.0), MakeDoubleAccessor(&RdmaHw::m_guardReleaseGamma),
                           MakeDoubleChecker<double>(0.0))
-            .AddAttribute("GuardOflm",
-                          "Enable GUARD selective registration and proactive release",
-                          BooleanValue(true), MakeBooleanAccessor(&RdmaHw::m_guardOflm),
+            .AddAttribute("GuardSelectiveRegistration",
+                          "Register only GUARD flows larger than one BDP",
+                          BooleanValue(true),
+                          MakeBooleanAccessor(&RdmaHw::m_guardSelectiveRegistration),
+                          MakeBooleanChecker())
+            .AddAttribute("GuardProactiveRelease",
+                          "Release registered GUARD flows before completion",
+                          BooleanValue(true), MakeBooleanAccessor(&RdmaHw::m_guardProactiveRelease),
                           MakeBooleanChecker())
             .AddAttribute("GuardKeepLastHopInt",
                           "Retain last-hop INT in GUARD ACKs for the double-control ablation",
@@ -537,7 +542,7 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
                 bdp = (uint64_t)(fst.GetBaseRttSeconds() * rate.GetBitRate() / 8.0);
                 if (bdp == 0) bdp = 104000;  // safety
             }
-            if (flow_start && (!m_guardOflm || flow_size > bdp)) {
+            if (flow_start && (!m_guardSelectiveRegistration || flow_size > bdp)) {
                 HandleRccRequest(rxQp, p, ch);
             }
             if (rxQp->m_base_rtt_sec == 0 && fst.HasBaseRtt()) {
@@ -558,7 +563,8 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
             if (HandleRccRemove(rxQp, p, ch)) {
                 m_guardCompletionReleases++;
             }
-        } else if (m_guardOflm) {
+        } else if (m_guardProactiveRelease &&
+                   m_rate_flow_ctl_set.find(PeekPointer(rxQp)) != m_rate_flow_ctl_set.end()) {
             Time now = Simulator::Now();
             if (rxQp->m_last_pkt_time.IsZero()) {
                 rxQp->m_est_rate = 0;
@@ -1352,7 +1358,7 @@ void RdmaHw::HandleRccRequest(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomH
     }
     m_rate_flow_ctl_set.emplace(PeekPointer(rx_qp));
     m_guardRegistrations++;
-    if (m_guardOflm) m_guardSelectedRegistrations++;
+    if (m_guardSelectiveRegistration) m_guardSelectedRegistrations++;
     m_guardMaxActiveFlows = std::max<uint64_t>(m_guardMaxActiveFlows,
                                                m_rate_flow_ctl_set.size());
 

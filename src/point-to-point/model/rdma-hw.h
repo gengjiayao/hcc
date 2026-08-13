@@ -161,7 +161,8 @@ class RdmaHw : public Object {
      ***********************/
     double m_guardEwmaBeta;
     double m_guardReleaseGamma;
-    bool m_guardOflm;
+    bool m_guardSelectiveRegistration;
+    bool m_guardProactiveRelease;
     bool m_guardKeepLastHopInt;
     uint64_t m_guardRateGrantsSent;
     uint64_t m_guardRateGrantsReceived;

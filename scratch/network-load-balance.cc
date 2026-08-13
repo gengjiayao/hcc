@@ -165,7 +165,8 @@ double u_target = 0.95;
 double guard_lambda = 1.0;
 double guard_ewma_beta = 0.125;
 double guard_release_gamma = 1.0;
-bool guard_oflm = true;
+bool guard_selective_registration = true;
+bool guard_proactive_release = true;
 bool guard_keep_last_hop_int = false;
 uint32_t int_multi = 1;
 bool rate_bound = true;
@@ -1198,8 +1199,18 @@ int main(int argc, char *argv[]) {
                 conf >> guard_release_gamma;
                 std::cerr << "GUARD_RELEASE_GAMMA\t" << guard_release_gamma << '\n';
             } else if (key.compare("GUARD_OFLM") == 0) {
+                bool guard_oflm;
                 conf >> guard_oflm;
-                std::cerr << "GUARD_OFLM\t\t\t" << guard_oflm << '\n';
+                guard_selective_registration = guard_oflm;
+                guard_proactive_release = guard_oflm;
+                std::cerr << "GUARD_OFLM (legacy)\t\t" << guard_oflm << '\n';
+            } else if (key.compare("GUARD_SELECTIVE_REGISTRATION") == 0) {
+                conf >> guard_selective_registration;
+                std::cerr << "GUARD_SELECTIVE_REGISTRATION\t"
+                          << guard_selective_registration << '\n';
+            } else if (key.compare("GUARD_PROACTIVE_RELEASE") == 0) {
+                conf >> guard_proactive_release;
+                std::cerr << "GUARD_PROACTIVE_RELEASE\t" << guard_proactive_release << '\n';
             } else if (key.compare("GUARD_KEEP_LAST_HOP_INT") == 0) {
                 conf >> guard_keep_last_hop_int;
                 std::cerr << "GUARD_KEEP_LAST_HOP_INT\t" << guard_keep_last_hop_int << '\n';
@@ -1679,7 +1690,10 @@ int main(int argc, char *argv[]) {
             rdmaHw->SetAttribute("TargetUtil", DoubleValue(effective_u_target));
             rdmaHw->SetAttribute("GuardEwmaBeta", DoubleValue(guard_ewma_beta));
             rdmaHw->SetAttribute("GuardReleaseGamma", DoubleValue(guard_release_gamma));
-            rdmaHw->SetAttribute("GuardOflm", BooleanValue(guard_oflm));
+            rdmaHw->SetAttribute("GuardSelectiveRegistration",
+                                 BooleanValue(guard_selective_registration));
+            rdmaHw->SetAttribute("GuardProactiveRelease",
+                                 BooleanValue(guard_proactive_release));
             rdmaHw->SetAttribute("GuardKeepLastHopInt", BooleanValue(guard_keep_last_hop_int));
             rdmaHw->SetAttribute("RateBound", BooleanValue(rate_bound));
             rdmaHw->SetAttribute("DctcpRateAI", DataRateValue(DataRate(dctcp_rate_ai)));

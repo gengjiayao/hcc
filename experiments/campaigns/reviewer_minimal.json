@@ -16,7 +16,8 @@
     "guard_lambda": 1.0,
     "guard_beta": 0.125,
     "guard_gamma": 1.0,
-    "guard_oflm": 1,
+    "guard_selective_registration": 1,
+    "guard_proactive_release": 1,
     "guard_keep_last_hop_int": 0
   },
   "stages": [
