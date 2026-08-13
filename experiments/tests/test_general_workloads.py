@@ -1,4 +1,4 @@
-import json
+import csv
 from pathlib import Path
 import tempfile
 import unittest
@@ -10,6 +10,14 @@ from experiments.run_general_workloads import (
     planned_runs,
     read_spec,
     run_command,
+)
+from experiments.summarize_general_workloads import (
+    AnalysisError,
+    aggregate_formal,
+    fct_metrics,
+    flow_scope,
+    mechanism_checks,
+    parse_controller,
 )
 
 
@@ -101,6 +109,99 @@ class GeneralWorkloadRunnerTests(unittest.TestCase):
         self.assertEqual(len(plans), 12)
         self.assertEqual({plan[0]["name"] for plan in plans}, {"AliStorage2019"})
         self.assertEqual({plan[1]["seed"] for plan in plans}, {2, 3, 4, 5})
+
+
+class GeneralWorkloadSummaryTests(unittest.TestCase):
+    def setUp(self):
+        self.buckets = [
+            {"name": "le_8KB", "max_bytes": 8192},
+            {"name": "8KB_to_1BDP", "min_exclusive_bytes": 8192,
+             "max_bytes": 104000},
+            {"name": "1BDP_to_1MB", "min_exclusive_bytes": 104000,
+             "max_bytes": 1048576},
+            {"name": "gt_1MB", "min_exclusive_bytes": 1048576},
+        ]
+
+    def test_size_buckets_and_fct_statistics_cover_boundaries(self):
+        self.assertEqual(flow_scope(8192, self.buckets), "le_8KB")
+        self.assertEqual(flow_scope(104000, self.buckets), "8KB_to_1BDP")
+        self.assertEqual(flow_scope(1048576, self.buckets), "1BDP_to_1MB")
+        self.assertEqual(flow_scope(1048577, self.buckets), "gt_1MB")
+        rows = [
+            {"size": 1000, "fct_us": 2.0, "slowdown": 1.0},
+            {"size": 1000, "fct_us": 4.0, "slowdown": 3.0},
+            {"size": 2 * 1024 * 1024, "fct_us": 20.0, "slowdown": 4.0},
+        ]
+        metrics = fct_metrics(rows, self.buckets)
+        self.assertEqual(metrics["overall_fct_us_mean"], 26.0 / 3.0)
+        self.assertEqual(metrics["le_8KB_slowdown_mean"], 2.0)
+        self.assertEqual(metrics["gt_1MB_slowdown_p99"], 4.0)
+        self.assertEqual(metrics["long_to_small_slowdown_mean_ratio"], 2.0)
+
+    def test_mechanism_checks_distinguish_three_arms(self):
+        base = {
+            "grants_sent": 0, "grants_received": 0,
+            "hpcc_feedback_updates": 0, "hpcc_valid_feedback": 0,
+            "hpcc_rate_updates_applied": 0, "hpcc_full_computations": 0,
+            "hpcc_fast_computations": 0, "hpcc_actual_rate_changes": 0,
+            "reactive_binding_updates": 0,
+        }
+        full = dict(base, grants_sent=1, hpcc_valid_feedback=1,
+                    hpcc_actual_rate_changes=1, reactive_binding_updates=1)
+        hpcc = dict(base, hpcc_valid_feedback=1, hpcc_actual_rate_changes=1)
+        receiver = dict(base, grants_sent=1)
+        self.assertTrue(all(mechanism_checks("full", full).values()))
+        self.assertTrue(all(mechanism_checks("hpcc", hpcc).values()))
+        self.assertTrue(all(mechanism_checks("receiver", receiver).values()))
+        receiver["hpcc_actual_rate_changes"] = 1
+        self.assertFalse(mechanism_checks("receiver", receiver)["receiver_zero_hpcc"])
+
+    def test_controller_trace_is_bounded_and_bucketed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "controller.csv"
+            fields = ("time_ns", "flow_id", "event_type", "binding", "fast_react")
+            with path.open("w", newline="") as stream:
+                writer = csv.DictWriter(stream, fieldnames=fields)
+                writer.writeheader()
+                writer.writerows([
+                    {"time_ns": 1, "flow_id": 0, "event_type": "hpcc",
+                     "binding": "reactive", "fast_react": 0},
+                    {"time_ns": 2, "flow_id": 0, "event_type": "complete",
+                     "binding": "reactive", "fast_react": 0},
+                    {"time_ns": 1, "flow_id": 1, "event_type": "grant",
+                     "binding": "grant", "fast_react": 0},
+                ])
+                stream.write("# attempted 3 written 3 truncated 0\n")
+            footer, metrics = parse_controller(
+                path, {0: 1000, 1: 2 * 1024 * 1024}, self.buckets, 3
+            )
+            self.assertEqual(footer["attempted"], 3)
+            self.assertEqual(metrics["controller_le_8KB_reactive_event_share"], 1.0)
+            self.assertEqual(metrics["controller_gt_1MB_grant_event_share"], 1.0)
+            with self.assertRaisesRegex(AnalysisError, "line bound"):
+                parse_controller(path, {0: 1000, 1: 2 * 1024 * 1024}, self.buckets, 2)
+
+    def test_paired_t95_uses_five_hash_matched_seeds(self):
+        rows = []
+        for seed in range(1, 6):
+            for arm, value in (("full", seed + 1.0), ("hpcc", float(seed)),
+                               ("receiver", seed + 2.0)):
+                rows.append({
+                    "workload": "AliStorage2019", "cdf": "AliStorage2019",
+                    "seed": seed, "arm": arm, "git_sha": "sha",
+                    "flow_sha256": f"flow-{seed}", "output_id": f"{arm}-{seed}",
+                    "output_dir": "/tmp", "passed": True, "failures": [],
+                    "overall_slowdown_mean": value,
+                })
+        report, _csv = aggregate_formal(
+            rows, (("full", "hpcc"), ("full", "receiver"))
+        )
+        paired = report["AliStorage2019"]["paired"]["full_minus_hpcc"]
+        self.assertEqual(paired["overall_slowdown_mean"]["difference"]["n"], 5)
+        self.assertEqual(paired["overall_slowdown_mean"]["difference"]["mean"], 1.0)
+        rows[-1]["flow_sha256"] = "wrong"
+        with self.assertRaisesRegex(AnalysisError, "flow hash mismatch"):
+            aggregate_formal(rows, (("receiver", "hpcc"),))
 
 
 if __name__ == "__main__":
