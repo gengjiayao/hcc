@@ -111,6 +111,14 @@
       "vary": "cc",
       "a": "guard",
       "b": "guard-active-only"
+    },
+    {
+      "name": "drop_vs_keep_last_hop_int",
+      "stages": ["components_ali", "last_hop_int"],
+      "where": {"cc": "guard"},
+      "vary": "guard_keep_last_hop_int",
+      "a": 0,
+      "b": 1
     }
   ]
 }
