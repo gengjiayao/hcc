@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from experiments.aggregate_oflm_churn import AggregateError, aggregate
 from experiments.analyze_oflm_churn import (
     LIFECYCLE_FIELDS,
     SummaryError,
@@ -126,6 +127,45 @@ class OflmChurnAnalysisTests(unittest.TestCase):
         rejected = evaluate(ladder, "tier1", failed)
         self.assertEqual(rejected["decision"], "advance_to_next_tier")
         self.assertNotIn("post_selection_performance", rejected)
+
+    def test_multi_seed_aggregate_uses_paired_selected_runs(self):
+        groups = {
+            group: {"flows": 1, "mean_slowdown": 2.0, "p99_slowdown": 2.0}
+            for group in ("all", "elephant", "churn", "le_bdp_churn", "gt_bdp_churn")
+        }
+        before = {
+            "fct_mean_slowdown": 2.0, "fct_p99_slowdown": 2.0,
+            "queue_mean_bytes": 2.0, "queue_p99_bytes": 2.0,
+            "queue_max_bytes": 2.0, "fct_groups": groups,
+        }
+        after = copy.deepcopy(before)
+        for name in ("fct_mean_slowdown", "fct_p99_slowdown",
+                     "queue_mean_bytes", "queue_p99_bytes", "queue_max_bytes"):
+            after[name] = 1.0
+        for metrics in after["fct_groups"].values():
+            metrics["mean_slowdown"] = 1.0
+            metrics["p99_slowdown"] = 1.0
+
+        selection = {
+            "decision": "selected", "flow_sha256": "same-flow",
+            "tier": {"name": "tier1"},
+            "criterion_values": {"registration_reduction": 0.4},
+            "post_selection_performance": {
+                "00": before, "01": before, "10": after, "11": after,
+            },
+        }
+        result = aggregate({1: selection, 2: copy.deepcopy(selection)})
+        self.assertEqual(result["status"], "validated_selected_aggregate")
+        self.assertEqual(result["seeds"], [1, 2])
+        reduction = result["paired_relative_reductions"][
+            "selective_with_proactive_off"]["fct_mean_slowdown"]
+        self.assertEqual(reduction["mean"], 0.5)
+        self.assertEqual(reduction["n"], 2)
+
+        mismatched = copy.deepcopy(selection)
+        mismatched["flow_sha256"] = "different-flow"
+        with self.assertRaisesRegex(AggregateError, "one flow SHA"):
+            aggregate({1: selection, 2: mismatched})
 
 
 if __name__ == "__main__":
