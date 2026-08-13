@@ -31,6 +31,7 @@ PFC_OUTPUT_FILE mix/output/{id}/{id}_out_pfc.txt
 GUARD_STATS_OUTPUT_FILE mix/output/{id}/{id}_out_guard_stats.txt
 GUARD_LIFECYCLE_TRACE_OUTPUT_FILE {guard_lifecycle_output}
 GUARD_CONTROLLER_TRACE_OUTPUT_FILE {guard_controller_output}
+GUARD_GRANT_TRACE_OUTPUT_FILE {guard_grant_output}
 QUEUE_STATS_OUTPUT_FILE mix/output/{id}/{id}_out_queue_stats.txt
 QLEN_MON_FILE mix/output/{id}/{id}_out_qlen.txt
 VOQ_MON_FILE mix/output/{id}/{id}_out_voq.txt
@@ -97,6 +98,8 @@ GUARD_LIFECYCLE_TRACE {guard_lifecycle_trace}
 GUARD_LIFECYCLE_TRACE_MAX_LINES {guard_lifecycle_max_lines}
 GUARD_CONTROLLER_TRACE {guard_controller_trace}
 GUARD_CONTROLLER_TRACE_MAX_LINES {guard_controller_max_lines}
+GUARD_GRANT_TRACE {guard_grant_trace}
+GUARD_GRANT_TRACE_MAX_LINES {guard_grant_max_lines}
 MULTI_RATE 0
 SAMPLE_FEEDBACK 0
 
@@ -155,6 +158,8 @@ DEFAULT_GUARD_LIFECYCLE_MAX_LINES = 1024
 HARD_GUARD_LIFECYCLE_MAX_LINES = 10000
 DEFAULT_GUARD_CONTROLLER_MAX_LINES = 10000
 HARD_GUARD_CONTROLLER_MAX_LINES = 300000
+DEFAULT_GUARD_GRANT_MAX_LINES = 1000
+HARD_GUARD_GRANT_MAX_LINES = 10000
 
 
 def resolve_guard_components(guard_oflm, selective_registration, proactive_release):
@@ -202,6 +207,18 @@ def resolve_ecn_thresholds(kmin_kb=None, kmax_kb=None, pmax=None):
     if not 0 < pmax <= 1:
         raise ValueError("ECN pmax must be in (0, 1]")
     return kmin_kb, kmax_kb, pmax
+
+
+def validate_guard_grant_options(enabled, cc, output, max_lines):
+    """Keep the mechanism-only grant audit applicable and strictly bounded."""
+    if not 1 <= max_lines <= HARD_GUARD_GRANT_MAX_LINES:
+        raise ValueError(
+            "--guard_grant_max_lines must be in [1, {}]".format(
+                HARD_GUARD_GRANT_MAX_LINES))
+    if enabled and cc not in ("guard", "guard-active-only"):
+        raise ValueError("--guard_grant_trace requires a GUARD mode")
+    if not enabled and output:
+        raise ValueError("--guard_grant_output requires --guard_grant_trace 1")
 
 
 def main():
@@ -287,6 +304,13 @@ def main():
     parser.add_argument('--guard_controller_max_lines', type=int,
                         default=DEFAULT_GUARD_CONTROLLER_MAX_LINES,
                         help="maximum controller rows (default: 10000; hard maximum: 300000)")
+    parser.add_argument('--guard_grant_trace', type=int, choices=(0, 1), default=0,
+                        help="write a bounded GUARD grant send/receive audit CSV (default: 0)")
+    parser.add_argument('--guard_grant_output', type=str,
+                        help="grant audit CSV path (default: the run output directory)")
+    parser.add_argument('--guard_grant_max_lines', type=int,
+                        default=DEFAULT_GUARD_GRANT_MAX_LINES,
+                        help="maximum grant audit rows (default: 1000; hard maximum: 10000)")
     parser.add_argument('--seed', type=int, default=1,
                         help="traffic-generator and ns-3 random seed (default: 1)")
 
@@ -355,6 +379,9 @@ def main():
             args.guard_controller_max_lines)
         ecn_kmin_kb, ecn_kmax_kb, ecn_pmax = resolve_ecn_thresholds(
             args.ecn_kmin_kb, args.ecn_kmax_kb, args.ecn_pmax)
+        validate_guard_grant_options(
+            args.guard_grant_trace, args.cc, args.guard_grant_output,
+            args.guard_grant_max_lines)
     except ValueError as error:
         raise Exception("CONFIG ERROR: {}.".format(error))
     if simul_time < MIN_SMOKE_TIME:
@@ -501,6 +528,18 @@ def main():
         raise Exception("CONFIG ERROR: --guard_controller_output cannot contain whitespace.")
     if args.guard_controller_trace:
         output_parent = os.path.dirname(guard_controller_output)
+        if output_parent:
+            os.makedirs(output_parent, exist_ok=True)
+    guard_grant_output = args.guard_grant_output
+    if guard_grant_output is None:
+        guard_grant_output = os.path.join(
+            output_dir, "{}_out_guard_grants.csv".format(config_ID))
+    else:
+        guard_grant_output = os.path.abspath(os.path.expanduser(guard_grant_output))
+    if any(character.isspace() for character in guard_grant_output):
+        raise Exception("CONFIG ERROR: --guard_grant_output cannot contain whitespace.")
+    if args.guard_grant_trace:
+        output_parent = os.path.dirname(guard_grant_output)
         if output_parent:
             os.makedirs(output_parent, exist_ok=True)
 
@@ -651,6 +690,9 @@ def main():
                                         guard_controller_trace=args.guard_controller_trace,
                                         guard_controller_output=guard_controller_output,
                                         guard_controller_max_lines=args.guard_controller_max_lines,
+                                        guard_grant_trace=args.guard_grant_trace,
+                                        guard_grant_output=guard_grant_output,
+                                        guard_grant_max_lines=args.guard_grant_max_lines,
                                         seed=args.seed,
                                         kmax_map=kmax_map, kmin_map=kmin_map, pmax_map=pmax_map)
     # else:

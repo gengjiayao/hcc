@@ -196,6 +196,7 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardMaxActiveFlows = 0;
     m_guardLifecycleTraceSink = NULL;
     m_guardControllerTraceSink = NULL;
+    m_guardGrantTraceSink = NULL;
     m_recoveryNacksGenerated = 0;
     m_recoveryNacksReceived = 0;
     m_irnNacksGenerated = 0;
@@ -740,6 +741,7 @@ int RdmaHw::ReceiveRate(Ptr<Packet> p, CustomHeader &ch) {
 
     qp->hp.m_grantRate = curRate;
     m_guardRateGrantsReceived++;
+    TraceGuardGrantReceive(qp, p, curRate.GetBitRate());
     DataRate old_rate = qp->m_rate;
     SyncHwRate(qp, qp->hp.m_curRate);
     const char *binding = qp->hp.m_curRate < qp->hp.m_grantRate
@@ -1438,7 +1440,7 @@ void RdmaHw::HandleRccRequest(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomH
     uint32_t rate_data = rate.GetBitRate() / 1000000; // in Mbps
 
     for (auto &it : m_rate_flow_ctl_set) {
-        SendRateControlPacket(it, ch, rate_data);
+        SendRateControlPacket(it, ch, rate_data, "registration");
     }
 }
 
@@ -1464,7 +1466,7 @@ bool RdmaHw::HandleRccRemove(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomHe
     uint32_t rate_data = rate.GetBitRate() / 1000000; // in Mbps
 
     for (auto &it : m_rate_flow_ctl_set) {
-        SendRateControlPacket(it, ch, rate_data);
+        SendRateControlPacket(it, ch, rate_data, "release");
     }
     return true;
 }
@@ -1475,6 +1477,10 @@ void RdmaHw::ConfigureGuardLifecycleTrace(GuardLifecycleTraceSink *sink) {
 
 void RdmaHw::ConfigureGuardControllerTrace(GuardControllerTraceSink *sink) {
     m_guardControllerTraceSink = sink;
+}
+
+void RdmaHw::ConfigureGuardGrantTrace(GuardGrantTraceSink *sink) {
+    m_guardGrantTraceSink = sink;
 }
 
 void RdmaHw::TraceGuardControllerEvent(Ptr<RdmaQueuePair> qp, const char *event_type,
@@ -1569,7 +1575,41 @@ void RdmaHw::FlushGuardLifecycleTrace() {
     m_guardLifecycleStates.clear();
 }
 
-void RdmaHw::SendRateControlPacket(Ptr<RdmaRxQueuePair> rx_qp, CustomHeader &ch, uint32_t rate_data) {
+void RdmaHw::TraceGuardGrant(Ptr<RdmaRxQueuePair> qp, const char *event,
+                             const char *set_change, uint64_t active_flows,
+                             uint64_t line_rate_bps, uint64_t grant_rate_bps,
+                             uint64_t next_seq, uint64_t serialized_bytes) {
+    GuardGrantTraceSink *sink = m_guardGrantTraceSink;
+    if (sink == NULL || sink->file == NULL) return;
+    sink->attempted++;
+    if (sink->written >= sink->max_lines) return;
+    fprintf(sink->file, "%ld,%s,%s,%u,%d,%u,%u,%lu,%lu,%lu,%lu,%lu\n",
+            Simulator::Now().GetNanoSeconds(), event, set_change, m_node->GetId(),
+            qp->m_flow_id, qp->dip, qp->sip, active_flows, line_rate_bps,
+            grant_rate_bps, next_seq, serialized_bytes);
+    sink->written++;
+}
+
+void RdmaHw::TraceGuardGrantReceive(Ptr<RdmaQueuePair> qp, Ptr<Packet> packet,
+                                    uint64_t grant_rate_bps) {
+    GuardGrantTraceSink *sink = m_guardGrantTraceSink;
+    if (sink == NULL || sink->file == NULL) return;
+    sink->attempted++;
+    if (sink->written >= sink->max_lines) return;
+    uint64_t line_rate_bps = 0;
+    uint32_t nic_idx = GetNicIdxOfQp(qp);
+    if (nic_idx < m_nic.size() && m_nic[nic_idx].dev != NULL) {
+        line_rate_bps = m_nic[nic_idx].dev->GetDataRate().GetBitRate();
+    }
+    fprintf(sink->file, "%ld,received,none,%u,%d,%u,%u,0,%lu,%lu,%lu,%u\n",
+            Simulator::Now().GetNanoSeconds(), m_node->GetId(), qp->m_flow_id,
+            qp->sip.Get(), qp->dip.Get(), line_rate_bps, grant_rate_bps,
+            qp->snd_nxt, packet->GetSize());
+    sink->written++;
+}
+
+void RdmaHw::SendRateControlPacket(Ptr<RdmaRxQueuePair> rx_qp, CustomHeader &ch,
+                                   uint32_t rate_data, const char *set_change) {
     m_guardRateGrantsSent++;
     qbbHeader seqh;
     seqh.SetSeq(rate_data); // PS: send rate in Mbps, used field: seq
@@ -1591,6 +1631,10 @@ void RdmaHw::SendRateControlPacket(Ptr<RdmaRxQueuePair> rx_qp, CustomHeader &ch,
     newp->AddHeader(head);
     AddHeader(newp, 0x800);  // Attach PPP header
     m_guardRateGrantBytesSent += newp->GetSize();
+    TraceGuardGrant(rx_qp, "sent", set_change, m_rate_flow_ctl_set.size(),
+                    m_nic[GetNicIdxOfRxQp(rx_qp)].dev->GetDataRate().GetBitRate(),
+                    static_cast<uint64_t>(rate_data) * 1000000,
+                    rx_qp->ReceiverNextExpectedSeq, newp->GetSize());
 
     // send
     uint32_t nic_idx = GetNicIdxOfRxQp(rx_qp);

@@ -49,6 +49,15 @@ struct GuardControllerTraceSink {
     GuardControllerTraceSink() : file(NULL), max_lines(0), attempted(0), written(0) {}
 };
 
+struct GuardGrantTraceSink {
+    FILE *file;
+    uint64_t max_lines;
+    uint64_t attempted;
+    uint64_t written;
+
+    GuardGrantTraceSink() : file(NULL), max_lines(0), attempted(0), written(0) {}
+};
+
 class RdmaHw : public Object {
    public:
     static TypeId GetTypeId(void);
@@ -258,10 +267,12 @@ class RdmaHw : public Object {
 
     GuardLifecycleTraceSink *m_guardLifecycleTraceSink;
     GuardControllerTraceSink *m_guardControllerTraceSink;
+    GuardGrantTraceSink *m_guardGrantTraceSink;
     std::unordered_map<RdmaRxQueuePair*, GuardLifecycleState> m_guardLifecycleStates;
     std::unordered_set<RdmaRxQueuePair*> m_rate_flow_ctl_set;
     void ConfigureGuardLifecycleTrace(GuardLifecycleTraceSink *sink);
     void ConfigureGuardControllerTrace(GuardControllerTraceSink *sink);
+    void ConfigureGuardGrantTrace(GuardGrantTraceSink *sink);
     void TraceGuardControllerEvent(Ptr<RdmaQueuePair> qp, const char *event_type,
                                    DataRate hpcc_rate, const char *binding,
                                    bool rate_changed, bool fast_react, uint32_t nhop,
@@ -272,7 +283,14 @@ class RdmaHw : public Object {
     void HandleRccRequest(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch);
     bool HandleRccRemove(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch,
                          GuardReleaseReason reason, uint64_t remaining_bytes);
-    void SendRateControlPacket(Ptr<RdmaRxQueuePair> qp, CustomHeader &ch, uint32_t rate);
+    void TraceGuardGrant(Ptr<RdmaRxQueuePair> qp, const char *event,
+                         const char *set_change, uint64_t active_flows,
+                         uint64_t line_rate_bps, uint64_t grant_rate_bps,
+                         uint64_t next_seq, uint64_t serialized_bytes);
+    void TraceGuardGrantReceive(Ptr<RdmaQueuePair> qp, Ptr<Packet> packet,
+                                uint64_t grant_rate_bps);
+    void SendRateControlPacket(Ptr<RdmaRxQueuePair> qp, CustomHeader &ch, uint32_t rate,
+                               const char *set_change);
 
    private:
     void TraceGuardRegistration(Ptr<RdmaRxQueuePair> qp, uint64_t flow_size,

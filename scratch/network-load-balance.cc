@@ -137,6 +137,7 @@ std::string pfc_output_file = "pfc.txt";
 std::string guard_stats_output_file = "guard_stats.txt";
 std::string guard_lifecycle_trace_output_file = "guard_lifecycle.csv";
 std::string guard_controller_trace_output_file = "guard_controller.csv";
+std::string guard_grant_trace_output_file = "guard_grants.csv";
 std::string queue_stats_output_file = "queue_stats.txt";
 std::string cnp_output_file = "cnp.txt";
 std::string qlen_mon_file = "qlen.txt";
@@ -177,6 +178,9 @@ const uint64_t guard_lifecycle_trace_hard_max_lines = 10000;
 bool guard_controller_trace = false;
 uint64_t guard_controller_trace_max_lines = 10000;
 const uint64_t guard_controller_trace_hard_max_lines = 300000;
+bool guard_grant_trace = false;
+uint64_t guard_grant_trace_max_lines = 1000;
+const uint64_t guard_grant_trace_hard_max_lines = 10000;
 uint32_t int_multi = 1;
 bool rate_bound = true;
 unordered_map<uint64_t, uint32_t> rate2kmax, rate2kmin;
@@ -1261,6 +1265,13 @@ int main(int argc, char *argv[]) {
                 conf >> guard_controller_trace_max_lines;
                 std::cerr << "GUARD_CONTROLLER_TRACE_MAX_LINES\t"
                           << guard_controller_trace_max_lines << '\n';
+            } else if (key.compare("GUARD_GRANT_TRACE") == 0) {
+                conf >> guard_grant_trace;
+                std::cerr << "GUARD_GRANT_TRACE\t\t" << guard_grant_trace << '\n';
+            } else if (key.compare("GUARD_GRANT_TRACE_MAX_LINES") == 0) {
+                conf >> guard_grant_trace_max_lines;
+                std::cerr << "GUARD_GRANT_TRACE_MAX_LINES\t"
+                          << guard_grant_trace_max_lines << '\n';
             } else if (key.compare("INT_MULTI") == 0) {
                 conf >> int_multi;
                 std::cerr << "INT_MULTI\t\t\t\t" << int_multi << '\n';
@@ -1286,6 +1297,10 @@ int main(int argc, char *argv[]) {
                 conf >> guard_controller_trace_output_file;
                 std::cerr << "GUARD_CONTROLLER_TRACE_OUTPUT_FILE\t"
                           << guard_controller_trace_output_file << '\n';
+            } else if (key.compare("GUARD_GRANT_TRACE_OUTPUT_FILE") == 0) {
+                conf >> guard_grant_trace_output_file;
+                std::cerr << "GUARD_GRANT_TRACE_OUTPUT_FILE\t"
+                          << guard_grant_trace_output_file << '\n';
             } else if (key.compare("QUEUE_STATS_OUTPUT_FILE") == 0) {
                 conf >> queue_stats_output_file;
                 std::cerr << "QUEUE_STATS_OUTPUT_FILE\t\t" << queue_stats_output_file << '\n';
@@ -1421,6 +1436,17 @@ int main(int argc, char *argv[]) {
                   << guard_controller_trace_hard_max_lines << "]\n";
         return 1;
     }
+    if (guard_grant_trace && cc_mode != 11 && cc_mode != 13) {
+        std::cerr << "GUARD_GRANT_TRACE requires CC_MODE 11 or 13\n";
+        return 1;
+    }
+    if (guard_grant_trace &&
+        (guard_grant_trace_max_lines == 0 ||
+         guard_grant_trace_max_lines > guard_grant_trace_hard_max_lines)) {
+        std::cerr << "GUARD_GRANT_TRACE_MAX_LINES must be in [1, "
+                  << guard_grant_trace_hard_max_lines << "]\n";
+        return 1;
+    }
 
     GuardLifecycleTraceSink guard_lifecycle_trace_sink;
     if (guard_lifecycle_trace) {
@@ -1452,6 +1478,19 @@ int main(int argc, char *argv[]) {
                 "time_ns,flow_id,sip,dip,event_type,hpcc_rate_bps,grant_rate_bps,"
                 "final_rate_bps,binding,rate_changed,fast_react,nhop,next_seq,"
                 "congestion_metric,effective_target,threshold_ratio\n");
+    }
+    GuardGrantTraceSink guard_grant_trace_sink;
+    if (guard_grant_trace) {
+        guard_grant_trace_sink.file = fopen(guard_grant_trace_output_file.c_str(), "w");
+        if (guard_grant_trace_sink.file == NULL) {
+            std::cerr << "Cannot open GUARD grant trace: "
+                      << guard_grant_trace_output_file << '\n';
+            return 1;
+        }
+        guard_grant_trace_sink.max_lines = guard_grant_trace_max_lines;
+        fprintf(guard_grant_trace_sink.file,
+                "time_ns,event,set_change,host_node,flow_id,data_source_ip,data_destination_ip,"
+                "active_flows,line_rate_bps,grant_rate_bps,next_seq,serialized_bytes\n");
     }
     // HPCC's congestion metric is normalized load plus a normalized queue
     // term, not physical link utilization alone.  Therefore lambda * 0.95
@@ -1810,6 +1849,9 @@ int main(int argc, char *argv[]) {
             }
             if (guard_controller_trace) {
                 rdmaHw->ConfigureGuardControllerTrace(&guard_controller_trace_sink);
+            }
+            if (guard_grant_trace) {
+                rdmaHw->ConfigureGuardGrantTrace(&guard_grant_trace_sink);
             }
             rdmaHw->SetAttribute("RateBound", BooleanValue(rate_bound));
             rdmaHw->SetAttribute("DctcpRateAI", DataRateValue(DataRate(dctcp_rate_ai)));
@@ -2225,6 +2267,14 @@ int main(int argc, char *argv[]) {
                 guard_controller_trace_sink.attempted - guard_controller_trace_sink.written);
         fclose(guard_controller_trace_sink.file);
         guard_controller_trace_sink.file = NULL;
+    }
+    if (guard_grant_trace) {
+        fprintf(guard_grant_trace_sink.file,
+                "# attempted %lu written %lu truncated %lu\n",
+                guard_grant_trace_sink.attempted, guard_grant_trace_sink.written,
+                guard_grant_trace_sink.attempted - guard_grant_trace_sink.written);
+        fclose(guard_grant_trace_sink.file);
+        guard_grant_trace_sink.file = NULL;
     }
 
     if (guard_lifecycle_trace) {
