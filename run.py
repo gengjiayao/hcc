@@ -190,6 +190,20 @@ def validate_guard_controller_options(enabled, cc, output, max_lines):
             "--guard_controller_output requires --guard_controller_trace 1")
 
 
+def resolve_ecn_thresholds(kmin_kb=None, kmax_kb=None, pmax=None):
+    """Validate an explicit ECN threshold override as one indivisible tuple."""
+    values = (kmin_kb, kmax_kb, pmax)
+    if all(value is None for value in values):
+        return 100, 400, 0.2
+    if any(value is None for value in values):
+        raise ValueError("ECN kmin, kmax, and pmax overrides must be supplied together")
+    if not 0 <= kmin_kb < kmax_kb:
+        raise ValueError("ECN thresholds must satisfy 0 <= kmin < kmax")
+    if not 0 < pmax <= 1:
+        raise ValueError("ECN pmax must be in (0, 1]")
+    return kmin_kb, kmax_kb, pmax
+
+
 def main():
     # make directory if not exists
     isExist = os.path.exists(os.getcwd() + "/mix/output/")
@@ -237,6 +251,12 @@ def main():
                         help="bulk keeps bounded summaries; full adds detailed time series (default: bulk)")
     parser.add_argument('--error_rate_per_link', type=float, default=0.0,
                         help="independent packet error probability per link in [0,1) (default: 0)")
+    parser.add_argument('--ecn_kmin_kb', type=int,
+                        help="override ECN Kmin in decimal KB; requires kmax and pmax")
+    parser.add_argument('--ecn_kmax_kb', type=int,
+                        help="override ECN Kmax in decimal KB; requires kmin and pmax")
+    parser.add_argument('--ecn_pmax', type=float,
+                        help="override ECN maximum marking probability; requires kmin/kmax")
     parser.add_argument('--guard_beta', type=float, default=0.125,
                         help="GUARD EWMA historical-sample weight in [0,1] (default: 0.125)")
     parser.add_argument('--guard_gamma', type=float, default=1.0,
@@ -333,6 +353,8 @@ def main():
         validate_guard_controller_options(
             args.guard_controller_trace, args.cc, args.guard_controller_output,
             args.guard_controller_max_lines)
+        ecn_kmin_kb, ecn_kmax_kb, ecn_pmax = resolve_ecn_thresholds(
+            args.ecn_kmin_kb, args.ecn_kmax_kb, args.ecn_pmax)
     except ValueError as error:
         raise Exception("CONFIG ERROR: {}.".format(error))
     if simul_time < MIN_SMOKE_TIME:
@@ -572,13 +594,21 @@ def main():
     bdp = int(topo2bdp[topo])
     print("1BDP = {}".format(bdp))
 
-    # DCQCN parameters (NOTE: HPCC's 400KB/1600KB is too large, although used in Microsoft)
+    # ECN thresholds apply uniformly to every configured link speed.  The
+    # defaults preserve all historical runs; explicit overrides support a
+    # preregistered safety ladder and are recorded in config.txt.
     kmax_map = "6 %d %d %d %d %d %d %d %d %d %d %d %d" % (
-        bw*200000000, 400, bw*500000000, 400, bw*1000000000, 400, bw*2*1000000000, 400, bw*2500000000, 400, bw*4*1000000000, 400)
+        bw*200000000, ecn_kmax_kb, bw*500000000, ecn_kmax_kb,
+        bw*1000000000, ecn_kmax_kb, bw*2*1000000000, ecn_kmax_kb,
+        bw*2500000000, ecn_kmax_kb, bw*4*1000000000, ecn_kmax_kb)
     kmin_map = "6 %d %d %d %d %d %d %d %d %d %d %d %d" % (
-        bw*200000000, 100, bw*500000000, 100, bw*1000000000, 100, bw*2*1000000000, 100, bw*2500000000, 100, bw*4*1000000000, 100)
+        bw*200000000, ecn_kmin_kb, bw*500000000, ecn_kmin_kb,
+        bw*1000000000, ecn_kmin_kb, bw*2*1000000000, ecn_kmin_kb,
+        bw*2500000000, ecn_kmin_kb, bw*4*1000000000, ecn_kmin_kb)
     pmax_map = "6 %d %d %d %d %d %.2f %d %.2f %d %.2f %d %.2f" % (
-        bw*200000000, 0.2, bw*500000000, 0.2, bw*1000000000, 0.2, bw*2*1000000000, 0.2, bw*2500000000, 0.2, bw*4*1000000000, 0.2)
+        bw*200000000, ecn_pmax, bw*500000000, ecn_pmax,
+        bw*1000000000, ecn_pmax, bw*2*1000000000, ecn_pmax,
+        bw*2500000000, ecn_pmax, bw*4*1000000000, ecn_pmax)
 
     # queue monitoring
     qlen_mon_start = flowgen_start_time

@@ -16,6 +16,7 @@ from run import (
     HARD_GUARD_CONTROLLER_MAX_LINES,
     HARD_GUARD_LIFECYCLE_MAX_LINES,
     resolve_guard_components,
+    resolve_ecn_thresholds,
     validate_guard_controller_options,
     validate_guard_lifecycle_options,
 )
@@ -25,6 +26,13 @@ REPO = Path(__file__).resolve().parents[2]
 
 
 class CampaignDefinitionTests(unittest.TestCase):
+    def test_ecn_threshold_override_is_an_atomic_valid_tuple(self):
+        self.assertEqual(resolve_ecn_thresholds(), (100, 400, 0.2))
+        self.assertEqual(resolve_ecn_thresholds(50, 200, 1.0), (50, 200, 1.0))
+        for values in ((50, None, 1.0), (200, 50, 1.0), (20, 100, 0.0), (20, 100, 1.1)):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                resolve_ecn_thresholds(*values)
+
     def test_minimal_campaign_expands_to_unique_runs(self):
         campaign = read_json(REPO / "experiments/campaigns/reviewer_minimal.json")
         runs = list(expand_campaign(campaign))
