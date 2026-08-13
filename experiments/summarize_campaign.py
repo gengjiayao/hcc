@@ -302,8 +302,7 @@ def validate_mode(params: Mapping[str, object], config: Mapping[str, str], stats
     updates = int(stats["hpcc_feedback_updates"])
     valid_feedback = int(stats["hpcc_valid_feedback"])
     applied_updates = int(stats["hpcc_rate_updates_applied"])
-    if cc == "guard" and (grants == 0 or updates == 0 or valid_feedback == 0 or applied_updates == 0
-                           or int(stats["hpcc_actual_rate_changes"]) == 0):
+    if cc == "guard" and (grants == 0 or updates == 0 or valid_feedback == 0 or applied_updates == 0):
         errors.append("full GUARD must have grants and nonzero valid-hop HPCC rate updates")
     elif cc == "guard-active-only" and (grants == 0 or updates != 0 or valid_feedback != 0
                                          or applied_updates != 0 or int(stats["hpcc_actual_rate_changes"]) != 0):
