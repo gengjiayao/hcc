@@ -162,6 +162,42 @@ overhead and time-weighted binding; and emits five-seed Student-t intervals and
 matched pair differences.  PFC counts are retained as outcomes rather than
 used to select or retune an arm.
 
+### Paired all-to-all component analysis
+
+For a formal full-GUARD/HPCC/receiver-only comparison, write an explicit JSON
+run index and pass it to the stricter component analyzer:
+
+```bash
+python3 experiments/summarize_alltoall_components.py \
+  experiments/results/alltoall-formal/run_index.json \
+  --analysis-dir experiments/results/alltoall-formal/analysis
+```
+
+The index has `schema_version: 1`, a `design` object, and exactly one `runs`
+entry per arm and seed.  Design fields are `hosts`, `flows`,
+`priority_group`, `flow_size_bytes`, `max_jitter_us`, `topology_file`, and the
+seed list.  Every run entry names its `arm`, `seed`, raw `output_dir`, and
+workload `manifest`; relative paths are resolved from the index directory.
+The default aggregate raw-source limit is 100 MiB.
+
+Admission requires all 240 ordered pairs once, 240/240 completions, explicit
+PG4, the same manifest and traffic SHA-256 across arms within each seed, and a
+different traffic hash across seeds.  It also checks config/seed/topology,
+per-priority raw PFC counts against GUARD stats, zero drops and recovery, and
+complete bounded lifecycle traces where applicable.  Full GUARD must exercise
+grants, valid HPCC computations, actual rate changes, reactive binding, grant
+binding, and INT stripping.  HPCC must exercise actual HPCC rate changes with
+no grants; receiver-only must exercise grants with zero HPCC activity.
+
+Only after every run passes, the analyzer atomically writes `per_run.csv`,
+`arm_ci.csv`, `paired_difference.csv`, `paired_percent.csv`, and
+`admission.json`.  Arm and paired intervals use one value per seed and a
+two-sided Student-t 95% interval.  Paired percentages are computed as
+`(arm_a-arm_b)/arm_b*100` within each seed before aggregation, not as a ratio
+of cross-seed means.  `admission.json` includes raw artifact hashes and keeps
+any unmatched PFC transition counts visible; those counts must not be silently
+reclassified as matched pause intervals or recovery events.
+
 For a directed controller audit, `run.py --guard_controller_trace 1` writes a
 bounded CSV containing HPCC, grant, and completion events with computed,
 granted, and final rates.  Its final comment records attempted, written, and
