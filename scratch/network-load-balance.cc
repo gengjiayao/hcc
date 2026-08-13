@@ -111,6 +111,7 @@ std::string data_rate, link_delay, topology_file, flow_file;
 std::string flow_input_file = "flow.txt";
 std::string fct_output_file = "fct.txt";
 std::string pfc_output_file = "pfc.txt";
+std::string guard_stats_output_file = "guard_stats.txt";
 std::string cnp_output_file = "cnp.txt";
 std::string qlen_mon_file = "qlen.txt";
 std::string voq_mon_file = "voq.txt";
@@ -1119,6 +1120,9 @@ int main(int argc, char *argv[]) {
             } else if (key.compare("PFC_OUTPUT_FILE") == 0) {
                 conf >> pfc_output_file;
                 std::cerr << "PFC_OUTPUT_FILE\t\t\t\t" << pfc_output_file << '\n';
+            } else if (key.compare("GUARD_STATS_OUTPUT_FILE") == 0) {
+                conf >> guard_stats_output_file;
+                std::cerr << "GUARD_STATS_OUTPUT_FILE\t\t" << guard_stats_output_file << '\n';
             } else if (key.compare("LINK_DOWN") == 0) {
                 conf >> link_down_time >> link_down_A >> link_down_B;
                 std::cerr << "LINK_DOWN\t\t\t\t" << link_down_time << ' ' << link_down_A << ' '
@@ -1969,6 +1973,29 @@ int main(int argc, char *argv[]) {
                         &stop_simulation_middle);  // check every 100us
     Simulator::Stop(Seconds(flowgen_stop_time + 10.0));
     Simulator::Run();
+
+    FILE *guard_stats_output = fopen(guard_stats_output_file.c_str(), "w");
+    fprintf(guard_stats_output,
+            "node_id grants_sent grants_received hpcc_feedback_updates max_active_flows\n");
+    uint64_t total_grants_sent = 0;
+    uint64_t total_grants_received = 0;
+    uint64_t total_hpcc_feedback_updates = 0;
+    uint64_t max_active_flows = 0;
+    for (uint32_t i = 0; i < node_num; i++) {
+        if (n.Get(i)->GetNodeType() != 0) continue;
+        Ptr<RdmaDriver> driver = n.Get(i)->GetObject<RdmaDriver>();
+        Ptr<RdmaHw> hw = driver->m_rdma;
+        fprintf(guard_stats_output, "%u %lu %lu %lu %lu\n", i, hw->m_guardRateGrantsSent,
+                hw->m_guardRateGrantsReceived, hw->m_guardHpccFeedbackUpdates,
+                hw->m_guardMaxActiveFlows);
+        total_grants_sent += hw->m_guardRateGrantsSent;
+        total_grants_received += hw->m_guardRateGrantsReceived;
+        total_hpcc_feedback_updates += hw->m_guardHpccFeedbackUpdates;
+        max_active_flows = std::max(max_active_flows, hw->m_guardMaxActiveFlows);
+    }
+    fprintf(guard_stats_output, "total %lu %lu %lu %lu\n", total_grants_sent,
+            total_grants_received, total_hpcc_feedback_updates, max_active_flows);
+    fclose(guard_stats_output);
 
     /*-----------------------------------------------------------------------------*/
     /*----- we don't need below. Just we can enforce to close this simulation. -----*/

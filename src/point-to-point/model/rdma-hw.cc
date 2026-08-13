@@ -149,6 +149,10 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     cnp_total = 0;
     cnp_by_ecn = 0;
     cnp_by_ooo = 0;
+    m_guardRateGrantsSent = 0;
+    m_guardRateGrantsReceived = 0;
+    m_guardHpccFeedbackUpdates = 0;
+    m_guardMaxActiveFlows = 0;
 }
 
 void RdmaHw::SetNode(Ptr<Node> node) { m_node = node; }
@@ -650,6 +654,7 @@ int RdmaHw::ReceiveRate(Ptr<Packet> p, CustomHeader &ch) {
     DataRate curRate(rate_str);
 
     qp->hp.m_grantRate = curRate;
+    m_guardRateGrantsReceived++;
     SyncHwRate(qp, qp->hp.m_curRate);
 
     return 0;
@@ -1296,6 +1301,8 @@ void RdmaHw::HandleRccRequest(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomH
         return;
     }
     m_rate_flow_ctl_set.emplace(PeekPointer(rx_qp));
+    m_guardMaxActiveFlows = std::max<uint64_t>(m_guardMaxActiveFlows,
+                                               m_rate_flow_ctl_set.size());
 
     // TODO: this is send rate, not receive rate
     uint32_t nic_idx = GetNicIdxOfRxQp(rx_qp);
@@ -1330,6 +1337,7 @@ void RdmaHw::HandleRccRemove(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomHe
 }
 
 void RdmaHw::SendRateControlPacket(Ptr<RdmaRxQueuePair> rx_qp, CustomHeader &ch, uint32_t rate_data) {
+    m_guardRateGrantsSent++;
     qbbHeader seqh;
     seqh.SetSeq(rate_data); // PS: send rate in Mbps, used field: seq
     seqh.SetPG(ch.udp.pg);
@@ -1985,6 +1993,9 @@ void RdmaHw::HandleAckHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch)
 }
 
 void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch, bool fast_react) {
+    if (m_cc_mode == 11) {
+        m_guardHpccFeedbackUpdates++;
+    }
     uint32_t next_seq = qp->snd_nxt;
     bool print = !fast_react || true;
     if (qp->hp.m_lastUpdateSeq == 0) {  // first RTT
