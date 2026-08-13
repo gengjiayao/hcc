@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "selection_policy": "Run tiers in listed order and select the first tier satisfying every mechanism criterion. Do not inspect FCT or queue metrics until selection is complete.",
+  "fixed_run": {
+    "topo": "leaf_spine_16_100G_OS4",
+    "cc": "guard",
+    "pfc": 1,
+    "irn": 0,
+    "monitor_profile": "bulk",
+    "simul_time": 0.02,
+    "netload": 40,
+    "seed": 1,
+    "bdp_bytes": 104000,
+    "elephant_flows": 8,
+    "elephant_bytes": 16777216,
+    "flow_limit": 1000,
+    "artifact_limit_bytes": 104857600,
+    "wall_time_limit_seconds": 1800
+  },
+  "tiers": [
+    {
+      "name": "tier1",
+      "rounds": 8,
+      "arrival_interval_us": 25.0,
+      "expected_flows": 72
+    },
+    {
+      "name": "tier2",
+      "rounds": 16,
+      "arrival_interval_us": 25.0,
+      "expected_flows": 136
+    },
+    {
+      "name": "tier3",
+      "rounds": 16,
+      "arrival_interval_us": 12.5,
+      "expected_flows": 136
+    }
+  ],
+  "mechanism_acceptance": {
+    "completed_fraction_min": 1.0,
+    "switch_drops_max": 0,
+    "recovery_events_max": 0,
+    "registration_reduction_fraction_min": 0.30,
+    "proactive_release_fraction_min": 0.90,
+    "churn_release_lead_median_ns_min": 4000,
+    "churn_active_set_area_reduction_fraction_min": 0.05,
+    "selective_total_grants_reduction_fraction_min": 0.20
+  },
+  "selection_comparisons": {
+    "selective_registration": ["00_vs_10", "01_vs_11"],
+    "proactive_release": ["00_vs_01", "10_vs_11"]
+  },
+  "post_selection_only": [
+    "fct_mean_slowdown",
+    "fct_p99_slowdown",
+    "queue_mean_bytes",
+    "queue_p99_bytes",
+    "queue_max_bytes"
+  ]
+}
