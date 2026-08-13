@@ -20,7 +20,7 @@ MAX_RAND_RANGE = 1000000000
 
 # config template
 config_template = """TOPOLOGY_FILE config/{topo}.txt
-FLOW_FILE config/{flow}.txt
+FLOW_FILE {flow_file}
 
 FLOW_INPUT_FILE mix/output/{id}/{id}_in.txt
 FLOW_BW_OUTPUT_FILE mix/output/{id}/{id}_flow_bw.txt
@@ -169,6 +169,8 @@ def main():
                         help="warm-up excluded from formal FCT analysis in seconds (default: 0.005)")
     parser.add_argument('--max_flows', type=int, default=150000,
                         help="abort before ns-3 when traffic exceeds this flow count (default: 150000)")
+    parser.add_argument('--flow_file', type=str,
+                        help="use an existing flow file instead of generating random CDF traffic")
     parser.add_argument('--buffer', dest="buffer", action='store',
                         default='9', help="the switch buffer size (MB) (default: 9)")
     parser.add_argument('--netload', dest='netload', action='store', type=int,
@@ -285,46 +287,90 @@ def main():
         n_host = int(line[0]) - int(line[1])
 
     assert (hostload >= 0 and hostload < 100)
-    flow = "L_{load:.2f}_CDF_{cdf}_N_{n_host}_T_{time}ms_B_{bw}_S_{seed}_flow".format(
-        load=hostload, cdf=args.cdf, n_host=n_host,
-        time=int(float(args.simul_time)*1000), bw=bw, seed=args.seed)
+    custom_flow_source = None
+    if args.flow_file:
+        custom_flow_source = os.path.abspath(os.path.expanduser(args.flow_file))
+        if not os.path.isfile(custom_flow_source):
+            raise Exception("CONFIG ERROR: --flow_file is not a regular file: {}".format(
+                custom_flow_source))
+        try:
+            with open(custom_flow_source, "r") as traffic_file:
+                custom_declared_count = int(traffic_file.readline().strip())
+        except (OSError, ValueError) as error:
+            raise Exception("CONFIG ERROR: cannot read flow count from {}: {}".format(
+                custom_flow_source, error))
+        if custom_declared_count < 0:
+            raise Exception("CONFIG ERROR: traffic declares a negative flow count: {}".format(
+                custom_declared_count))
+        if custom_declared_count > args.max_flows:
+            raise Exception(
+                "CONFIG ERROR: traffic has {} flows, exceeding --max_flows {}; ns-3 was not started.".format(
+                    custom_declared_count, args.max_flows))
 
-    # check the file exists
-    if (exists(os.getcwd() + "/config/" + flow + ".txt")):
-        print("Input traffic file with load:{load:.2f}, cdf:{cdf}, n_host:{n_host} already exists".format(
-            load=hostload, cdf=cdf, n_host=n_host))
-    else:  # make the input traffic file
-        print("Generate a input traffic file...")
-        print("python ./traffic_gen/traffic_gen.py -c {cdf} -n {n_host} -l {load} -b {bw} -t {time} -s {seed} -o {output}".format(
-            cdf=os.getcwd() + "/../traffic_gen/" + args.cdf + ".txt",
-            n_host=n_host,
-            load=hostload / 100.0,
-            bw=args.bw + "G",
-            time=args.simul_time,
-            seed=args.seed,
-            output=os.getcwd() + "/config/" + flow + ".txt"))
+    # Each custom run consumes its private copy, so concurrent changes to the
+    # source cannot alter the traffic after preflight.
+    output_dir = os.path.join(os.getcwd(), "mix", "output", config_ID)
 
-        os.system("python ./traffic_gen/traffic_gen.py -c {cdf} -n {n_host} -l {load} -b {bw} -t {time} -s {seed} -o {output}".format(
-            cdf=os.getcwd() + "/traffic_gen/" + args.cdf + ".txt",
-            n_host=n_host,
-            load=hostload / 100.0,
-            bw=args.bw + "G",
-            time=args.simul_time,
-            seed=args.seed,
-            output=os.getcwd() + "/config/" + flow + ".txt"))
+    if args.flow_file:
+        assert not os.path.exists(output_dir)
+        os.makedirs(output_dir)
+        print("The new directory is created  - {}".format(output_dir + "/"))
+        flow_path = os.path.join(output_dir, "{}_input_flow.txt".format(config_ID))
+        shutil.copyfile(custom_flow_source, flow_path)
+        flow_config_path = os.path.relpath(flow_path, os.getcwd())
+        print("Custom traffic snapshot: {} -> {}".format(
+            custom_flow_source, flow_config_path))
+    else:
+        flow = "L_{load:.2f}_CDF_{cdf}_N_{n_host}_T_{time}ms_B_{bw}_S_{seed}_flow".format(
+            load=hostload, cdf=args.cdf, n_host=n_host,
+            time=int(float(args.simul_time)*1000), bw=bw, seed=args.seed)
 
-    flow_path = os.getcwd() + "/config/" + flow + ".txt"
+        # check the file exists
+        if (exists(os.getcwd() + "/config/" + flow + ".txt")):
+            print("Input traffic file with load:{load:.2f}, cdf:{cdf}, n_host:{n_host} already exists".format(
+                load=hostload, cdf=cdf, n_host=n_host))
+        else:  # make the input traffic file
+            print("Generate a input traffic file...")
+            print("python ./traffic_gen/traffic_gen.py -c {cdf} -n {n_host} -l {load} -b {bw} -t {time} -s {seed} -o {output}".format(
+                cdf=os.getcwd() + "/../traffic_gen/" + args.cdf + ".txt",
+                n_host=n_host,
+                load=hostload / 100.0,
+                bw=args.bw + "G",
+                time=args.simul_time,
+                seed=args.seed,
+                output=os.getcwd() + "/config/" + flow + ".txt"))
+
+            os.system("python ./traffic_gen/traffic_gen.py -c {cdf} -n {n_host} -l {load} -b {bw} -t {time} -s {seed} -o {output}".format(
+                cdf=os.getcwd() + "/traffic_gen/" + args.cdf + ".txt",
+                n_host=n_host,
+                load=hostload / 100.0,
+                bw=args.bw + "G",
+                time=args.simul_time,
+                seed=args.seed,
+                output=os.getcwd() + "/config/" + flow + ".txt"))
+
+        flow_path = os.getcwd() + "/config/" + flow + ".txt"
+        flow_config_path = "config/{}.txt".format(flow)
+
     try:
         with open(flow_path, "r") as traffic_file:
             flow_count = int(traffic_file.readline().strip())
     except (OSError, ValueError) as error:
         raise Exception("CONFIG ERROR: cannot read flow count from {}: {}".format(
             flow_path, error))
+    if flow_count < 0:
+        raise Exception("CONFIG ERROR: traffic declares a negative flow count: {}".format(
+            flow_count))
     if flow_count > args.max_flows:
         raise Exception(
             "CONFIG ERROR: traffic has {} flows, exceeding --max_flows {}; ns-3 was not started.".format(
                 flow_count, args.max_flows))
     print("Preflight flow count: {}/{}".format(flow_count, args.max_flows))
+
+    if not args.flow_file:
+        assert not os.path.exists(output_dir)
+        os.makedirs(output_dir)
+        print("The new directory is created  - {}".format(output_dir + "/"))
 
     # sanity check - bandwidth
     with open("config/{topo}.txt".format(topo=args.topo), 'r') as f_topo:
@@ -372,14 +418,6 @@ def main():
         cwh_tx_expiry_time = 1000
 
     ##################################################################
-
-    # make directory if not exists
-    isExist = os.path.exists(os.getcwd() + "/mix/output/" + config_ID + "/")
-    assert (not isExist)
-    # if not isExist:
-    os.makedirs(os.getcwd() + "/mix/output/" + config_ID + "/")
-    print("The new directory is created  - {}".format(os.getcwd() +
-          "/mix/output/" + config_ID + "/"))
 
     config_name = os.getcwd() + "/mix/output/" + config_ID + "/config.txt"
     print("Config filename:{}".format(config_name))
@@ -445,7 +483,7 @@ def main():
         int_multi = 1
         ewma_gain = 0.00390625
 
-        config = config_template.format(id=config_ID, topo=topo, flow=flow,
+        config = config_template.format(id=config_ID, topo=topo, flow_file=flow_config_path,
                                         qlen_mon_start=qlen_mon_start, qlen_mon_end=qlen_mon_end, flowgen_start_time=flowgen_start_time,
                                         flowgen_stop_time=flowgen_stop_time, sw_monitoring_interval=sw_monitoring_interval,
                                         qlen_monitoring_interval=qlen_monitoring_interval,
