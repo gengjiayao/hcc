@@ -1,4 +1,6 @@
 import csv
+import copy
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -10,6 +12,7 @@ from experiments.analyze_oflm_churn import (
     lifecycle_metrics,
     parse_lifecycle,
 )
+from experiments.select_oflm_churn_tier import evaluate
 
 
 class OflmChurnAnalysisTests(unittest.TestCase):
@@ -82,6 +85,47 @@ class OflmChurnAnalysisTests(unittest.TestCase):
         self.assertEqual(metrics["churn"]["flows"], 2)
         self.assertEqual(metrics["le_bdp_churn"]["mean_slowdown"], 2.0)
         self.assertEqual(metrics["gt_bdp_churn"]["mean_slowdown"], 3.0)
+
+    def test_frozen_selector_withholds_performance_until_mechanisms_pass(self):
+        ladder = json.loads((
+            Path(__file__).resolve().parents[1] / "oflm_churn_ladder.json"
+        ).read_text(encoding="utf-8"))
+        summaries = {}
+        for combo in ("00", "01", "10", "11"):
+            selective, proactive = map(int, combo)
+            summaries[combo] = {
+                "status": "validated_complete", "workload": "oflm-churn",
+                "configuration": {
+                    "selective_registration": selective,
+                    "proactive_release": proactive,
+                },
+                "provenance": {"flow_sha256": "same-flow"},
+                "validation": {
+                    "completed_flow_count": 72, "generated_flow_count": 72,
+                    "switch_drops": 0, "recovery_events": 0,
+                    "artifact_bytes": 1000,
+                },
+                "mechanism": {
+                    "registrations": 40 if selective else 72,
+                    "proactive_release_fraction": 1.0 if proactive else 0.0,
+                    "churn_release_lead_median_ns": 10000 if proactive else 0,
+                    "churn_active_set_area_ns": (
+                        60 if selective and proactive else
+                        70 if selective else
+                        80 if proactive else 100),
+                    "grants_sent": 600 if selective else 1000,
+                },
+                "performance": {"not_used_for_selection": combo},
+            }
+        selected = evaluate(ladder, "tier1", summaries)
+        self.assertEqual(selected["decision"], "selected")
+        self.assertIn("post_selection_performance", selected)
+
+        failed = copy.deepcopy(summaries)
+        failed["11"]["mechanism"]["churn_active_set_area_ns"] = 70
+        rejected = evaluate(ladder, "tier1", failed)
+        self.assertEqual(rejected["decision"], "advance_to_next_tier")
+        self.assertNotIn("post_selection_performance", rejected)
 
 
 if __name__ == "__main__":
