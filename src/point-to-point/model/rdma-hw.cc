@@ -163,6 +163,7 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     cnp_by_ecn = 0;
     cnp_by_ooo = 0;
     m_guardRateGrantsSent = 0;
+    m_guardRateGrantBytesSent = 0;
     m_guardRateGrantsReceived = 0;
     m_guardHpccFeedbackUpdates = 0;
     m_guardHpccValidFeedback = 0;
@@ -1567,6 +1568,7 @@ void RdmaHw::SendRateControlPacket(Ptr<RdmaRxQueuePair> rx_qp, CustomHeader &ch,
 
     newp->AddHeader(head);
     AddHeader(newp, 0x800);  // Attach PPP header
+    m_guardRateGrantBytesSent += newp->GetSize();
 
     // send
     uint32_t nic_idx = GetNicIdxOfRxQp(rx_qp);

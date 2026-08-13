@@ -48,7 +48,7 @@ RUN_COLUMNS = (
     "reactive_binding_updates", "grant_binding_updates", "int_hops_before_strip",
     "tie_binding_updates", "reactive_binding_rate_changes", "grant_binding_rate_changes",
     "tie_binding_rate_changes",
-    "int_hops_after_strip", "int_records_stripped",
+    "int_hops_after_strip", "int_records_stripped", "grant_bytes_sent",
     "registrations", "selected_registrations", "proactive_releases",
     "completion_releases", "max_active_flows", "recovery_nacks_generated",
     "recovery_nacks_received",
@@ -89,6 +89,7 @@ GUARD_TOTAL_FIELDS = (
     "tie_binding_updates", "reactive_binding_rate_changes", "grant_binding_rate_changes",
     "tie_binding_rate_changes",
     "int_hops_before_strip", "int_hops_after_strip", "int_records_stripped",
+    "grant_bytes_sent",
 )
 PFC_PRIORITY_FIELDS = (
     "pause_count", "resume_count", "matched_intervals", "cumulative_pause_ns",
@@ -105,7 +106,7 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
     with path.open(encoding="utf-8", errors="replace") as stream:
         for line in stream:
             parts = line.split()
-            if parts and parts[0] == "total" and len(parts) in (5, 12, 16, 18, 24, 27, 30):
+            if parts and parts[0] == "total" and len(parts) in (5, 12, 16, 18, 24, 27, 30, 31):
                 values = tuple(map(int, parts[1:]))
                 if len(values) == 4:
                     total = dict(zip(

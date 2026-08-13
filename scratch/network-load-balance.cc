@@ -2305,8 +2305,10 @@ int main(int argc, char *argv[]) {
             "hpcc_actual_rate_changes reactive_binding_updates grant_binding_updates "
             "tie_binding_updates reactive_binding_rate_changes grant_binding_rate_changes "
             "tie_binding_rate_changes "
-            "int_hops_before_strip int_hops_after_strip int_records_stripped\n");
+            "int_hops_before_strip int_hops_after_strip int_records_stripped "
+            "grant_bytes_sent\n");
     uint64_t total_grants_sent = 0;
+    uint64_t total_grant_bytes_sent = 0;
     uint64_t total_grants_received = 0;
     uint64_t total_hpcc_feedback_updates = 0;
     uint64_t total_registrations = 0;
@@ -2341,7 +2343,7 @@ int main(int argc, char *argv[]) {
         Ptr<RdmaHw> hw = driver->m_rdma;
         fprintf(guard_stats_output,
                 "%u %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu "
-                "%lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu\n", i,
+                "%lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu\n", i,
                 hw->m_guardRateGrantsSent,
                 hw->m_guardRateGrantsReceived, hw->m_guardHpccFeedbackUpdates,
                 hw->m_guardRegistrations, hw->m_guardSelectedRegistrations,
@@ -2357,8 +2359,10 @@ int main(int argc, char *argv[]) {
                 hw->m_guardReactiveBindingRateChanges,
                 hw->m_guardGrantBindingRateChanges, hw->m_guardTieBindingRateChanges,
                 hw->m_guardIntHopsBeforeStrip,
-                hw->m_guardIntHopsAfterStrip, hw->m_guardIntRecordsStripped);
+                hw->m_guardIntHopsAfterStrip, hw->m_guardIntRecordsStripped,
+                hw->m_guardRateGrantBytesSent);
         total_grants_sent += hw->m_guardRateGrantsSent;
+        total_grant_bytes_sent += hw->m_guardRateGrantBytesSent;
         total_grants_received += hw->m_guardRateGrantsReceived;
         total_hpcc_feedback_updates += hw->m_guardHpccFeedbackUpdates;
         total_registrations += hw->m_guardRegistrations;
@@ -2390,7 +2394,7 @@ int main(int argc, char *argv[]) {
     }
     fprintf(guard_stats_output,
             "total %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu "
-            "%lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu\n",
+            "%lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu\n",
             total_grants_sent, total_grants_received, total_hpcc_feedback_updates,
             total_registrations, total_selected_registrations, total_proactive_releases,
             total_completion_releases, max_active_flows, total_recovery_nacks_generated,
@@ -2404,7 +2408,8 @@ int main(int argc, char *argv[]) {
             total_reactive_binding_rate_changes, total_grant_binding_rate_changes,
             total_tie_binding_rate_changes,
             total_int_hops_before_strip,
-            total_int_hops_after_strip, total_int_records_stripped);
+            total_int_hops_after_strip, total_int_records_stripped,
+            total_grant_bytes_sent);
     fprintf(guard_stats_output, "switch_drops ingress %u egress %u total %u\n",
             Settings::dropped_pkt_sw_ingress, Settings::dropped_pkt_sw_egress,
             Settings::dropped_pkt_sw_ingress + Settings::dropped_pkt_sw_egress);
