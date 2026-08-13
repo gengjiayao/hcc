@@ -5,6 +5,7 @@ import unittest
 
 from experiments.aggregate_recovery import aggregate
 from experiments.analyze_recovery import SummaryError, target_queue
+from experiments.gate_recovery_cohort import evaluate as evaluate_cohort
 from experiments.select_recovery_tier import evaluate
 
 
@@ -97,6 +98,31 @@ class RecoveryAnalysisTests(unittest.TestCase):
         self.assertEqual(
             result["paired_relative_irn_reduction_vs_pfc"]["queue_p95_bytes"]["status"],
             "undefined_nonpositive_baseline")
+
+    def test_irn_cohort_gate_requires_recovery_in_every_seed(self):
+        ladder = json.loads((
+            Path(__file__).resolve().parents[1] / "recovery_ladder.json"
+        ).read_text(encoding="utf-8"))
+
+        def summary(seed):
+            return {
+                "status": "validated_complete", "arm": "irn",
+                "provenance": {"flow_sha256": f"seed-{seed}"},
+                "configuration": {"error_rate_per_link": 0.0},
+                "validation": {"generated_flow_count": 32, "completed_flow_count": 32},
+                "mechanism": {
+                    "irn_nacks_generated": 1, "irn_nacks_received": 1,
+                    "irn_retransmit_packets": 1, "irn_retransmit_bytes": 1000,
+                    "timeout_recoveries": 0,
+                },
+            }
+
+        summaries = {seed: summary(seed) for seed in range(1, 6)}
+        passed = evaluate_cohort(ladder, "tier1", "irn", summaries)
+        self.assertEqual(passed["decision"], "run_pfc")
+        summaries[5]["mechanism"]["irn_retransmit_packets"] = 0
+        failed = evaluate_cohort(ladder, "tier1", "irn", summaries)
+        self.assertEqual(failed["decision"], "advance_to_next_tier")
 
 
 if __name__ == "__main__":
