@@ -169,6 +169,42 @@ class GenerateWorkloadTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "below the arrival interval"):
             generate_workload.generate(args)
 
+    def test_receiver_share_freezes_target_set_and_source_limited_background(self):
+        common = [
+            "--workload", "receiver-share", "--output", "unused",
+            "--receiver-share-flows", "2",
+            "--receiver-share-background-flows", "3",
+            "--receiver-share-jitter-us", "1",
+            "--priority-group", "4",
+        ]
+        first = generate_workload.generate(generate_workload.parse_args(
+            common + ["--seed", "1"]))
+        repeat = generate_workload.generate(generate_workload.parse_args(
+            common + ["--seed", "1"]))
+        second = generate_workload.generate(generate_workload.parse_args(
+            common + ["--seed", "2"]))
+        self.assertEqual(first, repeat)
+        self.assertNotEqual(first, second)
+        self.assertEqual(len(first), 5)
+        target = [flow for flow in first if flow.dst == 15]
+        background = [flow for flow in first if flow.dst != 15]
+        self.assertEqual({flow.src for flow in target}, {0, 1})
+        self.assertEqual({flow.src for flow in background}, {0})
+        self.assertEqual({flow.dst for flow in background}, {8, 9, 10})
+        self.assertEqual({flow.pg for flow in first}, {4})
+        self.assertLessEqual(
+            max(flow.start_s for flow in first) - min(flow.start_s for flow in first),
+            1e-6)
+
+    def test_receiver_share_rejects_background_outside_two_target_case(self):
+        args = generate_workload.parse_args([
+            "--workload", "receiver-share", "--output", "unused",
+            "--receiver-share-flows", "4",
+            "--receiver-share-background-flows", "3",
+        ])
+        with self.assertRaisesRegex(ValueError, "exactly two target flows"):
+            generate_workload.generate(args)
+
     def test_generation_rejects_short_or_excessive_workloads(self):
         short = generate_workload.parse_args([
             "--workload", "incast", "--output", "unused", "--duration-ms", "9",
