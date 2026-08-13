@@ -7,6 +7,7 @@
     "pfc": 1,
     "irn": 0,
     "monitor_profile": "bulk",
+    "analysis_warmup_s": 0.005,
     "simul_time": 0.02,
     "netload": 40,
     "seed": 1,
