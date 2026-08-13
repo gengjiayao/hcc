@@ -28,7 +28,11 @@
   "homogeneous": {
     "active_flow_counts": [2, 4, 8, 15],
     "flow_bytes": 8388608,
-    "expected_grant_bytes_per_packet": 94,
+    "simulated_serialized_grant_bytes_per_packet": 60,
+    "ethernet_equivalent_bytes_per_packet": 84,
+    "ethernet_equivalent_accounting": "simulated 60-byte frame plus 8-byte preamble/SFD, 4-byte FCS, and 12-byte inter-packet gap",
+    "superseded_pre_run_assumption_bytes": 94,
+    "superseded_assumption_reason": "A seed-1 raw audit showed that Create<Packet>(max(60-14-20-qbb,0)) pads the entire simulated PPP/IPv4/qbb frame to 60 bytes; adding a second 60-byte payload would double-count the padding intent.",
     "grant_target_absolute_error_bps_max": 1000000,
     "stable_max_active_window_ns_min": 100000
   },
