@@ -1,6 +1,11 @@
 {
   "schema_version": 1,
-  "selection_policy": "Run tiers in listed order with seed 1 and select the first tier satisfying every mechanism criterion. Do not inspect FCT or queue direction until selection is complete.",
+  "selection_policy": "Run tiers in listed order. A seed-1 pilot may start replication, but a tier is selected only after the cross-seed mechanism gate passes. Do not inspect FCT or queue direction until selection is complete.",
+  "cross_seed_replication_gate": {
+    "phase_1": "Run all five IRN seeds first. Every seed must complete all flows, produce IRN NACKs and retransmissions, and report zero timeout recoveries.",
+    "phase_2": "Only after phase 1 passes, run the same five flow hashes with PFC on and IRN off. Every seed must complete all flows and produce matched PFC intervals with no unmatched events.",
+    "failure_action": "Record the failed tier without performance, then advance to the next already-frozen tier. Never change a tier or choose by performance direction."
+  },
   "comparison_semantics": {
     "pfc": "PFC-on, IRN-off; PFC pause is congestion control, while ordinary go-back recovery may still repair packet errors.",
     "irn": "PFC-off, IRN-on; IRN NACK/SACK and retransmission repair congestion or injected packet loss.",
