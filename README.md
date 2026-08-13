@@ -265,6 +265,32 @@ python3 traffic_gen/traffic_gen.py \
 
 `run.py` 会按 `(load, cdf, n_host, time, bw, seed)` 自动构造文件名，已存在则跳过生成。
 
+审稿实验还提供四种确定性的有界流量：`incast`、带背景流的 `hybrid`、
+`ring-allreduce` 和 `all-to-all`。生成器默认使用 16 hosts、20 ms 时间窗，硬上限为
+25,000 flows；它会回读校验 flow 数、端点、起始时间和总字节数，并在流量文件旁写
+一份带 SHA-256 的 JSON manifest。例如：
+
+```bash
+python3 experiments/generate_workload.py \
+  --workload hybrid --seed 3 \
+  --output config/reviewer_hybrid_seed3.txt
+
+python3 run.py --cc guard --pfc 1 --irn 0 \
+  --topo leaf_spine_16_100G_OS4 --netload 40 \
+  --simul_time 0.02 --max_flows 25000 \
+  --flow_file config/reviewer_hybrid_seed3.txt
+```
+
+`--flow_file` 完全绕过 Poisson/CDF 随机生成。`run.py` 先检查首行声明的 flow 数，
+再将输入复制到本次 `mix/output/<ID>/`；配置和模拟器只使用这份只读快照，因此原文件
+随后变化也不会影响已启动的运行。`--simul_time` 应与 manifest 的
+`run_hint.simul_time_s` 一致。生成器拒绝短于 10 ms 或超过 25,000 flows 的输入；
+可用下列命令运行轻量自测：
+
+```bash
+python3 -m unittest tests/test_generate_workload.py
+```
+
 ---
 
 ## 7. 验证（leaf_spine_8_100G_OS1, simul_time=0.01s, netload=25%）
