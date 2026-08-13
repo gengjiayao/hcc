@@ -86,6 +86,40 @@ class GenerateWorkloadTest(unittest.TestCase):
         self.assertEqual(sorted(flow.src for flow in second_round), list(range(15)))
         self.assertTrue(all(flow.dst == 63 for flow in flows))
 
+    def test_oflm_churn_has_fixed_rate_bdp_mix_behind_active_elephants(self):
+        args = generate_workload.parse_args([
+            "--workload", "oflm-churn", "--output", "unused",
+        ])
+        flows = generate_workload.generate(args)
+        bdp = generate_workload.DEFAULT_OFLM_BDP_BYTES
+        elephants = [flow for flow in flows if flow.size_bytes == 16 * 1024 * 1024]
+        churn = [flow for flow in flows if flow.size_bytes != 16 * 1024 * 1024]
+
+        self.assertEqual(len(elephants), 8)
+        self.assertEqual(len({flow.start_s for flow in elephants}), 1)
+        self.assertEqual(len(churn), 64)
+        self.assertGreaterEqual(min(flow.start_s for flow in churn), 2.005)
+        self.assertEqual(
+            {flow.size_bytes for flow in churn},
+            {bdp - 1, bdp, bdp + 1, 2 * bdp})
+        intervals_us = [
+            round((right.start_s - left.start_s) * 1_000_000, 6)
+            for left, right in zip(churn, churn[1:])
+        ]
+        self.assertEqual(set(intervals_us), {25.0})
+        self.assertTrue(all(flow.src < 8 <= flow.dst for flow in flows))
+        self.assertEqual({flow.dst for flow in flows}, {15})
+        self.assertEqual(sum(flow.size_bytes > bdp for flow in flows), 40)
+        self.assertEqual(sum(flow.size_bytes <= bdp for flow in flows), 32)
+
+    def test_oflm_churn_rejects_arrivals_outside_duration(self):
+        args = generate_workload.parse_args([
+            "--workload", "oflm-churn", "--output", "unused",
+            "--oflm-churn-rounds", "100", "--oflm-churn-interval-us", "100",
+        ])
+        with self.assertRaisesRegex(ValueError, "exceed the duration"):
+            generate_workload.generate(args)
+
     def test_generation_rejects_short_or_excessive_workloads(self):
         short = generate_workload.parse_args([
             "--workload", "incast", "--output", "unused", "--duration-ms", "9",
