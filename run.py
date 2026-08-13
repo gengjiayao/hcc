@@ -73,7 +73,7 @@ RATE_HAI {hai}Mb/s
 MIN_RATE 100Mb/s
 DCTCP_RATE_AI {dctcp_ai}Mb/s
 
-ERROR_RATE_PER_LINK 0.0000
+ERROR_RATE_PER_LINK {error_rate_per_link}
 L2_CHUNK_SIZE 4000
 L2_ACK_INTERVAL 1
 L2_BACK_TO_ZERO 0
@@ -235,6 +235,8 @@ def main():
                         help="queue-length sampling interval in ns (default: 1000ns)")
     parser.add_argument('--monitor_profile', choices=('bulk', 'full'), default='bulk',
                         help="bulk keeps bounded summaries; full adds detailed time series (default: bulk)")
+    parser.add_argument('--error_rate_per_link', type=float, default=0.0,
+                        help="independent packet error probability per link in [0,1) (default: 0)")
     parser.add_argument('--guard_beta', type=float, default=0.125,
                         help="GUARD EWMA historical-sample weight in [0,1] (default: 0.125)")
     parser.add_argument('--guard_gamma', type=float, default=1.0,
@@ -318,6 +320,8 @@ def main():
         raise Exception("CONFIG ERROR: --seed must be in [1, 2147483647].")
     if qlen_monitoring_interval <= 0:
         raise Exception("CONFIG ERROR: --qlen_monitoring_interval must be positive.")
+    if not 0.0 <= args.error_rate_per_link < 1.0:
+        raise Exception("CONFIG ERROR: --error_rate_per_link must be in [0, 1).")
     if args.analysis_warmup < 0:
         raise Exception("CONFIG ERROR: --analysis_warmup must be non-negative.")
     if args.max_flows <= 0:
@@ -600,6 +604,7 @@ def main():
                                         cwh_extra_reply_deadline=cwh_extra_reply_deadline, cwh_default_voq_waiting_time=cwh_default_voq_waiting_time,
                                         cwh_path_pause_time=cwh_path_pause_time, cwh_extra_voq_flush_time=cwh_extra_voq_flush_time,
                                         enabled_pfc=enabled_pfc, enabled_irn=enabled_irn,
+                                        error_rate_per_link=args.error_rate_per_link,
                                         cc_mode=cc_mode,
                                         ai=ai, hai=hai, dctcp_ai=dctcp_ai,
                                         has_win=has_win, var_win=var_win,
