@@ -103,10 +103,22 @@ class SummaryTests(unittest.TestCase):
     def test_full_guard_mode_requires_both_loops(self):
         params = {"cc": "guard"}
         config = {"CC_MODE": "11"}
-        good = {"grants_sent": 1, "grants_received": 1, "hpcc_feedback_updates": 1}
+        good = {
+            "grants_sent": 1, "grants_received": 1, "hpcc_feedback_updates": 1,
+            "hpcc_valid_feedback": 1, "hpcc_rate_updates_applied": 1,
+        }
         bad = dict(good, hpcc_feedback_updates=0)
         self.assertEqual(validate_mode(params, config, good), [])
-        self.assertIn("nonzero grants and HPCC updates", validate_mode(params, config, bad)[0])
+        self.assertIn("valid-hop HPCC rate updates", validate_mode(params, config, bad)[0])
+
+    def test_full_guard_rejects_counter_calls_without_int_hops(self):
+        params = {"cc": "guard"}
+        config = {"CC_MODE": "11"}
+        stats = {
+            "grants_sent": 1, "grants_received": 1, "hpcc_feedback_updates": 10,
+            "hpcc_valid_feedback": 0, "hpcc_rate_updates_applied": 0,
+        }
+        self.assertIn("valid-hop HPCC rate updates", validate_mode(params, config, stats)[0])
 
     def test_component_switches_are_checked_against_config(self):
         params = {
@@ -117,7 +129,10 @@ class SummaryTests(unittest.TestCase):
             "CC_MODE": "11", "GUARD_SELECTIVE_REGISTRATION": "1",
             "GUARD_PROACTIVE_RELEASE": "1",
         }
-        stats = {"grants_sent": 1, "grants_received": 1, "hpcc_feedback_updates": 1}
+        stats = {
+            "grants_sent": 1, "grants_received": 1, "hpcc_feedback_updates": 1,
+            "hpcc_valid_feedback": 1, "hpcc_rate_updates_applied": 1,
+        }
         errors = validate_mode(params, config, stats)
         self.assertIn("GUARD_SELECTIVE_REGISTRATION is 1, expected 0", errors)
 

@@ -50,7 +50,8 @@ RUN_COLUMNS = (
     "irn_retransmit_bytes", "timeout_recoveries", "switch_drops_ingress",
     "switch_drops_egress", "switch_drops_total", "pfc_pause_events", "pfc_resume_events",
     "pfc_matched_intervals", "pfc_cumulative_pause_ns", "pfc_max_pause_ns",
-    "pfc_unmatched_pauses", "pfc_unmatched_resumes", "output_bytes",
+    "pfc_unmatched_pauses", "pfc_unmatched_resumes", "hpcc_valid_feedback",
+    "hpcc_rate_updates_applied", "output_bytes",
 )
 METRIC_COLUMNS = (
     "row_type", "comparison", "stage", *tuple(column for column in PARAM_COLUMNS if column != "seed"),
@@ -77,7 +78,7 @@ GUARD_TOTAL_FIELDS = (
     "selected_registrations", "proactive_releases", "completion_releases", "max_active_flows",
     "recovery_nacks_generated", "recovery_nacks_received", "irn_nacks_generated",
     "irn_nacks_received", "irn_retransmit_packets", "irn_retransmit_bytes",
-    "timeout_recoveries",
+    "timeout_recoveries", "hpcc_valid_feedback", "hpcc_rate_updates_applied",
 )
 PFC_PRIORITY_FIELDS = (
     "pause_count", "resume_count", "matched_intervals", "cumulative_pause_ns",
@@ -94,7 +95,7 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
     with path.open(encoding="utf-8", errors="replace") as stream:
         for line in stream:
             parts = line.split()
-            if parts and parts[0] == "total" and len(parts) in (5, 12, 16):
+            if parts and parts[0] == "total" and len(parts) in (5, 12, 16, 18):
                 values = tuple(map(int, parts[1:]))
                 if len(values) == 4:
                     total = dict(zip(
@@ -109,6 +110,8 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
                         "irn_retransmit_bytes", "timeout_recoveries",
                     )
                     total = dict(zip(legacy_fields, values))
+                elif len(values) == 15:
+                    total = dict(zip(GUARD_TOTAL_FIELDS, values))
                 else:
                     total = dict(zip(GUARD_TOTAL_FIELDS, values))
             elif parts[:2] == ["switch_drops", "ingress"] and len(parts) == 7:
@@ -295,12 +298,14 @@ def validate_mode(params: Mapping[str, object], config: Mapping[str, str], stats
         errors.append(f"CC_MODE is {config.get('CC_MODE')}, expected {expected_mode}")
     grants = int(stats["grants_sent"]) + int(stats["grants_received"])
     updates = int(stats["hpcc_feedback_updates"])
-    if cc == "guard" and (grants == 0 or updates == 0):
-        errors.append("full GUARD must have nonzero grants and HPCC updates")
-    elif cc == "guard-active-only" and (grants == 0 or updates != 0):
-        errors.append("receiver-only must have grants and zero HPCC updates")
-    elif cc == "hpcc" and (grants != 0 or updates == 0):
-        errors.append("HPCC-only must have zero grants and nonzero HPCC updates")
+    valid_feedback = int(stats["hpcc_valid_feedback"])
+    applied_updates = int(stats["hpcc_rate_updates_applied"])
+    if cc == "guard" and (grants == 0 or updates == 0 or valid_feedback == 0 or applied_updates == 0):
+        errors.append("full GUARD must have grants and nonzero valid-hop HPCC rate updates")
+    elif cc == "guard-active-only" and (grants == 0 or updates != 0 or valid_feedback != 0 or applied_updates != 0):
+        errors.append("receiver-only must have grants and zero HPCC feedback activity")
+    elif cc == "hpcc" and (grants != 0 or updates == 0 or valid_feedback == 0 or applied_updates == 0):
+        errors.append("HPCC-only must have zero grants and nonzero valid-hop HPCC rate updates")
     expected = {
         "RANDOM_SEED": params.get("seed"),
         "ENABLE_PFC": params.get("pfc"),

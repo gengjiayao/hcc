@@ -161,6 +161,8 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardRateGrantsSent = 0;
     m_guardRateGrantsReceived = 0;
     m_guardHpccFeedbackUpdates = 0;
+    m_guardHpccValidFeedback = 0;
+    m_guardHpccRateUpdatesApplied = 0;
     m_guardRegistrations = 0;
     m_guardSelectedRegistrations = 0;
     m_guardProactiveReleases = 0;
@@ -2054,6 +2056,7 @@ void RdmaHw::HandleAckHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch)
 void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch, bool fast_react) {
     if (m_cc_mode == 3 || m_cc_mode == 11) {
         m_guardHpccFeedbackUpdates++;
+        if (ch.ack.ih.nhop > 0) m_guardHpccValidFeedback++;
     }
     uint32_t next_seq = qp->snd_nxt;
     bool print = !fast_react || true;
@@ -2194,6 +2197,7 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
             }
 
             if (updated_any) {
+                m_guardHpccRateUpdatesApplied++;
                 if (!fast_react) {
                     qp->hp.m_curRate = new_rate;
                     qp->hp.m_incStage = new_incStage;

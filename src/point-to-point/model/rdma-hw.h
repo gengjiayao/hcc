@@ -166,8 +166,12 @@ class RdmaHw : public Object {
     bool m_guardKeepLastHopInt;
     uint64_t m_guardRateGrantsSent;
     uint64_t m_guardRateGrantsReceived;
-    // HPCC feedback updates in either HPCC-only or full-GUARD mode.
+    // Calls into HPCC feedback processing in either HPCC-only or full-GUARD mode.
     uint64_t m_guardHpccFeedbackUpdates;
+    // Feedback records that contain at least one INT hop, and updates that
+    // consequently apply an HPCC-derived rate to the sender.
+    uint64_t m_guardHpccValidFeedback;
+    uint64_t m_guardHpccRateUpdatesApplied;
     uint64_t m_guardRegistrations;
     uint64_t m_guardSelectedRegistrations;
     uint64_t m_guardProactiveReleases;
