@@ -70,6 +70,22 @@ class GenerateWorkloadTest(unittest.TestCase):
             sorted((flow.src, flow.dst, flow.size_bytes) for flow in first_flows),
             sorted((flow.src, flow.dst, flow.size_bytes) for flow in second_flows))
 
+    def test_incast_fanin_and_rounds_repeat_fixed_sender_set(self):
+        args = generate_workload.parse_args([
+            "--workload", "incast", "--output", "unused", "--hosts", "64",
+            "--duration-ms", "10",
+            "--incast-destination", "63", "--incast-fanin", "15",
+            "--incast-rounds", "2", "--incast-round-gap-us", "20",
+            "--incast-jitter-us", "0.5", "--seed", "7",
+        ])
+        flows = generate_workload.generate(args)
+        self.assertEqual(len(flows), 30)
+        first_round = [flow for flow in flows if flow.start_s < 2.00351]
+        second_round = [flow for flow in flows if flow.start_s > 2.00351]
+        self.assertEqual(sorted(flow.src for flow in first_round), list(range(15)))
+        self.assertEqual(sorted(flow.src for flow in second_round), list(range(15)))
+        self.assertTrue(all(flow.dst == 63 for flow in flows))
+
     def test_generation_rejects_short_or_excessive_workloads(self):
         short = generate_workload.parse_args([
             "--workload", "incast", "--output", "unused", "--duration-ms", "9",

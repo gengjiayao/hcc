@@ -25,18 +25,22 @@ def positive_int(value):
 
 
 def make_incast(hosts, destination, flow_bytes, pg, start_s, duration_s,
-                seed=None, jitter_us=0.0):
+                seed=None, jitter_us=0.0, fanin=None, rounds=1,
+                round_gap_us=0.0):
     trigger_s = start_s + duration_s * 0.35
     senders = [host for host in range(hosts) if host != destination]
-    if jitter_us > 0:
-        rng = random.Random(seed)
-        offsets = [rng.uniform(0, jitter_us * 1e-6) for _ in senders]
-    else:
-        offsets = [index * 1e-9 for index in range(len(senders))]
-    return [
-        Flow(src, destination, pg, flow_bytes, trigger_s + offsets[index])
-        for index, src in enumerate(senders)
-    ]
+    if fanin is not None:
+        senders = senders[:fanin]
+    rng = random.Random(seed)
+    flows = []
+    for round_index in range(rounds):
+        round_start_s = trigger_s + round_index * round_gap_us * 1e-6
+        for index, src in enumerate(senders):
+            offset_s = (rng.uniform(0, jitter_us * 1e-6)
+                        if jitter_us > 0 else index * 1e-9)
+            flows.append(Flow(
+                src, destination, pg, flow_bytes, round_start_s + offset_s))
+    return flows
 
 
 def make_background(hosts, count, flow_bytes, pg, start_s, duration_s, seed):
@@ -96,10 +100,16 @@ def generate(args):
         raise ValueError("--priority-group must be in [0, 7]")
     if not 0 <= args.incast_destination < args.hosts:
         raise ValueError("--incast-destination must name an existing host")
+    if args.incast_fanin is not None and not 1 <= args.incast_fanin < args.hosts:
+        raise ValueError("--incast-fanin must be in [1, hosts - 1]")
     if not math.isfinite(args.incast_jitter_us) or args.incast_jitter_us < 0:
         raise ValueError("--incast-jitter-us must be finite and non-negative")
-    if args.incast_jitter_us * 1e-6 >= duration_s:
-        raise ValueError("--incast-jitter-us must be shorter than the workload duration")
+    if not math.isfinite(args.incast_round_gap_us) or args.incast_round_gap_us < 0:
+        raise ValueError("--incast-round-gap-us must be finite and non-negative")
+    incast_span_s = ((args.incast_rounds - 1) * args.incast_round_gap_us +
+                     args.incast_jitter_us) * 1e-6
+    if incast_span_s > duration_s * 0.65:
+        raise ValueError("incast rounds and jitter exceed the workload duration")
     if not 1 <= args.max_flows <= HARD_MAX_FLOWS:
         raise ValueError("--max-flows must be in [1, {}]".format(HARD_MAX_FLOWS))
 
@@ -107,12 +117,14 @@ def generate(args):
         flows = make_incast(
             args.hosts, args.incast_destination, args.flow_bytes,
             args.priority_group, args.base_time, duration_s,
-            args.seed, args.incast_jitter_us)
+            args.seed, args.incast_jitter_us, args.incast_fanin,
+            args.incast_rounds, args.incast_round_gap_us)
     elif args.workload == "hybrid":
         flows = make_incast(
             args.hosts, args.incast_destination, args.flow_bytes,
             args.priority_group, args.base_time, duration_s,
-            args.seed, args.incast_jitter_us)
+            args.seed, args.incast_jitter_us, args.incast_fanin,
+            args.incast_rounds, args.incast_round_gap_us)
         flows += make_background(
             args.hosts, args.background_flows, args.background_flow_bytes,
             args.priority_group, args.base_time, duration_s, args.seed)
@@ -214,8 +226,13 @@ def parse_args(argv=None):
     parser.add_argument("--max-flows", type=positive_int, default=HARD_MAX_FLOWS)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--incast-destination", type=int, default=0)
+    parser.add_argument(
+        "--incast-fanin", type=positive_int,
+        help="limit incast to the lowest-numbered eligible senders")
     parser.add_argument("--incast-jitter-us", type=float, default=0.0,
                         help="seeded uniform incast start jitter (default: 0us)")
+    parser.add_argument("--incast-rounds", type=positive_int, default=1)
+    parser.add_argument("--incast-round-gap-us", type=float, default=0.0)
     parser.add_argument("--flow-bytes", type=positive_int, default=512 * 1024)
     parser.add_argument("--background-flows", type=positive_int, default=512)
     parser.add_argument("--background-flow-bytes", type=positive_int, default=64 * 1024)
@@ -261,7 +278,10 @@ def main(argv=None):
             "max_flows": args.max_flows,
             "seed": args.seed,
             "incast_destination": args.incast_destination,
+            "incast_fanin": args.incast_fanin,
             "incast_jitter_us": args.incast_jitter_us,
+            "incast_rounds": args.incast_rounds,
+            "incast_round_gap_us": args.incast_round_gap_us,
             "flow_bytes": args.flow_bytes,
             "background_flows": args.background_flows,
             "background_flow_bytes": args.background_flow_bytes,
