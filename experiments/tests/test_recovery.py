@@ -1,8 +1,10 @@
 import tempfile
+import json
 from pathlib import Path
 import unittest
 
 from experiments.analyze_recovery import SummaryError, target_queue
+from experiments.select_recovery_tier import evaluate
 
 
 class RecoveryAnalysisTests(unittest.TestCase):
@@ -21,6 +23,44 @@ class RecoveryAnalysisTests(unittest.TestCase):
             self.assertEqual(metrics["tx_bytes"], 2000)
             with self.assertRaisesRegex(SummaryError, "found 0"):
                 target_queue(path, 14)
+
+    def test_selector_withholds_performance_until_both_mechanisms_fire(self):
+        ladder = json.loads((
+            Path(__file__).resolve().parents[1] / "recovery_ladder.json"
+        ).read_text(encoding="utf-8"))
+
+        def summary(arm):
+            mechanism = {
+                "pfc_matched_intervals": 2 if arm == "pfc" else 0,
+                "pfc_cumulative_pause_ns": 100 if arm == "pfc" else 0,
+                "pfc_unmatched_events": 0,
+                "pfc_pause_count": 2 if arm == "pfc" else 0,
+                "pfc_resume_count": 2 if arm == "pfc" else 0,
+                "irn_nacks_generated": 2 if arm == "irn" else 0,
+                "irn_nacks_received": 2 if arm == "irn" else 0,
+                "irn_retransmit_packets": 2 if arm == "irn" else 0,
+                "irn_retransmit_bytes": 2000 if arm == "irn" else 0,
+            }
+            return {
+                "status": "validated_complete", "arm": arm,
+                "provenance": {"flow_sha256": "same"},
+                "configuration": {"error_rate_per_link": 0.0},
+                "validation": {"generated_flow_count": 32, "completed_flow_count": 32},
+                "mechanism": mechanism, "performance": {"hidden": arm},
+            }
+
+        summaries = {arm: summary(arm) for arm in ("pfc", "irn")}
+        selected = evaluate(ladder, "tier1", summaries)
+        self.assertEqual(selected["decision"], "selected")
+        self.assertIn("post_selection_performance", selected)
+
+        failed = {arm: dict(value) for arm, value in summaries.items()}
+        failed["irn"] = dict(failed["irn"])
+        failed["irn"]["mechanism"] = dict(failed["irn"]["mechanism"])
+        failed["irn"]["mechanism"]["irn_retransmit_packets"] = 0
+        rejected = evaluate(ladder, "tier1", failed)
+        self.assertEqual(rejected["decision"], "advance_to_next_tier")
+        self.assertNotIn("post_selection_performance", rejected)
 
 
 if __name__ == "__main__":
