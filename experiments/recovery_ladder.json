@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "selection_policy": "Run tiers in listed order with seed 1 and select the first tier satisfying every mechanism criterion. Do not inspect FCT or queue direction until selection is complete.",
+  "comparison_semantics": {
+    "pfc": "PFC-on, IRN-off; PFC pause is congestion control, while ordinary go-back recovery may still repair packet errors.",
+    "irn": "PFC-off, IRN-on; IRN NACK/SACK and retransmission repair congestion or injected packet loss.",
+    "error_rule": "Both arms of a tier use the identical ERROR_RATE_PER_LINK. PFC counters and IRN counters are reported separately; injected errors are never described as congestion."
+  },
+  "fixed_run": {
+    "topo": "leaf_spine_16_100G_OS4",
+    "cc": "guard",
+    "monitor_profile": "bulk",
+    "simul_time": 0.02,
+    "analysis_warmup": 0.005,
+    "netload": 40,
+    "buffer_mb": 1,
+    "flow_bytes": 65536,
+    "incast_destination": 15,
+    "incast_fanin": 8,
+    "incast_jitter_us": 2.0,
+    "priority_group": 3,
+    "flow_limit": 1000,
+    "artifact_limit_bytes": 104857600,
+    "wall_time_limit_seconds": 1800
+  },
+  "arms": {
+    "pfc": {"pfc": 1, "irn": 0},
+    "irn": {"pfc": 0, "irn": 1}
+  },
+  "tiers": [
+    {
+      "name": "tier1",
+      "incast_rounds": 4,
+      "incast_round_gap_us": 50.0,
+      "error_rate_per_link": 0.0,
+      "expected_flows": 32
+    },
+    {
+      "name": "tier2",
+      "incast_rounds": 8,
+      "incast_round_gap_us": 25.0,
+      "error_rate_per_link": 0.0,
+      "expected_flows": 64
+    },
+    {
+      "name": "tier3",
+      "incast_rounds": 8,
+      "incast_round_gap_us": 25.0,
+      "error_rate_per_link": 0.0001,
+      "expected_flows": 64
+    },
+    {
+      "name": "tier4",
+      "incast_rounds": 8,
+      "incast_round_gap_us": 25.0,
+      "error_rate_per_link": 0.0005,
+      "expected_flows": 64
+    }
+  ],
+  "mechanism_acceptance": {
+    "completed_fraction_min": 1.0,
+    "pfc_matched_intervals_min": 1,
+    "pfc_cumulative_pause_ns_min": 1,
+    "pfc_unmatched_events_max": 0,
+    "irn_nacks_generated_min": 1,
+    "irn_nacks_received_min": 1,
+    "irn_retransmit_packets_min": 1,
+    "irn_retransmit_bytes_min": 1,
+    "pfc_events_in_irn_arm_max": 0,
+    "irn_events_in_pfc_arm_max": 0
+  },
+  "post_selection_only": [
+    "fct_duration_ns",
+    "fct_slowdown",
+    "queue",
+    "relative_performance"
+  ]
+}
