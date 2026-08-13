@@ -31,7 +31,7 @@ except ModuleNotFoundError:
 
 def fct_metrics(output_dir: Path) -> Dict[str, float]:
     rows = parse_fct(one_artifact(output_dir, "_out_fct.txt"))
-    durations = [float(row["absolute_us"]) for row in rows]
+    durations = [float(row["fct_us"]) for row in rows]
     slowdowns = [float(row["slowdown"]) for row in rows]
     return {
         "flows": len(rows),
