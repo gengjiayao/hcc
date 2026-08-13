@@ -166,6 +166,10 @@ class RdmaHw : public Object {
     uint64_t m_guardRateGrantsSent;
     uint64_t m_guardRateGrantsReceived;
     uint64_t m_guardHpccFeedbackUpdates;
+    uint64_t m_guardRegistrations;
+    uint64_t m_guardSelectedRegistrations;
+    uint64_t m_guardProactiveReleases;
+    uint64_t m_guardCompletionReleases;
     uint64_t m_guardMaxActiveFlows;
     uint64_t m_recoveryNacksGenerated;
     uint64_t m_recoveryNacksReceived;
@@ -177,7 +181,7 @@ class RdmaHw : public Object {
     std::unordered_set<RdmaRxQueuePair*> m_rate_flow_ctl_set;
     void SyncHwRate(Ptr<RdmaQueuePair> qp, DataRate target_cc_rate);
     void HandleRccRequest(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch);
-    void HandleRccRemove(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch);
+    bool HandleRccRemove(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch);
     void SendRateControlPacket(Ptr<RdmaRxQueuePair> qp, CustomHeader &ch, uint32_t rate);
 
     /***********************

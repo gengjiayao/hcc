@@ -156,6 +156,10 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardRateGrantsSent = 0;
     m_guardRateGrantsReceived = 0;
     m_guardHpccFeedbackUpdates = 0;
+    m_guardRegistrations = 0;
+    m_guardSelectedRegistrations = 0;
+    m_guardProactiveReleases = 0;
+    m_guardCompletionReleases = 0;
     m_guardMaxActiveFlows = 0;
     m_recoveryNacksGenerated = 0;
     m_recoveryNacksReceived = 0;
@@ -551,7 +555,9 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
         // seeing FLOW_END: the nominal last packet may arrive out of order.
         // This is also the sole release path when OFLM is disabled.
         if (v_remain == 0) {
-            HandleRccRemove(rxQp, p, ch);
+            if (HandleRccRemove(rxQp, p, ch)) {
+                m_guardCompletionReleases++;
+            }
         } else if (m_guardOflm) {
             Time now = Simulator::Now();
             if (rxQp->m_last_pkt_time.IsZero()) {
@@ -571,7 +577,9 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
             uint64_t v_th = (uint64_t)v_th_double;
 
             if (v_remain < v_th && !rxQp->m_proactive_released) {
-                HandleRccRemove(rxQp, p, ch);
+                if (HandleRccRemove(rxQp, p, ch)) {
+                    m_guardProactiveReleases++;
+                }
                 rxQp->m_proactive_released = true;
             }
         }
@@ -1343,6 +1351,8 @@ void RdmaHw::HandleRccRequest(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomH
         return;
     }
     m_rate_flow_ctl_set.emplace(PeekPointer(rx_qp));
+    m_guardRegistrations++;
+    if (m_guardOflm) m_guardSelectedRegistrations++;
     m_guardMaxActiveFlows = std::max<uint64_t>(m_guardMaxActiveFlows,
                                                m_rate_flow_ctl_set.size());
 
@@ -1356,16 +1366,16 @@ void RdmaHw::HandleRccRequest(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomH
     }
 }
 
-void RdmaHw::HandleRccRemove(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomHeader &ch) {
+bool RdmaHw::HandleRccRemove(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomHeader &ch) {
     if (m_rate_flow_ctl_set.find(PeekPointer(rx_qp)) == m_rate_flow_ctl_set.end()) {
-        return;
+        return false;
     }
     m_rate_flow_ctl_set.erase(PeekPointer(rx_qp));
 
     // No grant needs to be sent after the last controlled flow leaves.  In
     // particular, do not compute C / N for N == 0.
     if (m_rate_flow_ctl_set.empty()) {
-        return;
+        return true;
     }
 
     // TODO: this is send rate, not receive rate
@@ -1376,6 +1386,7 @@ void RdmaHw::HandleRccRemove(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomHe
     for (auto &it : m_rate_flow_ctl_set) {
         SendRateControlPacket(it, ch, rate_data);
     }
+    return true;
 }
 
 void RdmaHw::SendRateControlPacket(Ptr<RdmaRxQueuePair> rx_qp, CustomHeader &ch, uint32_t rate_data) {
