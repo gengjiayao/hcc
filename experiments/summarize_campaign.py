@@ -43,6 +43,9 @@ RUN_COLUMNS = (
     "run_key", "stage", "status", "valid", "rejection_reason", "output_id", "git_sha",
     *PARAM_COLUMNS, "flow_sha256", "flow_count", "completed_flow_count", "analyzed_flow_count",
     "config_sha256", "grants_sent", "grants_received", "hpcc_feedback_updates",
+    "hpcc_valid_feedback", "hpcc_rate_updates_applied", "hpcc_actual_rate_changes",
+    "reactive_binding_updates", "grant_binding_updates", "int_hops_before_strip",
+    "int_hops_after_strip", "int_records_stripped",
     "registrations", "selected_registrations", "proactive_releases",
     "completion_releases", "max_active_flows", "recovery_nacks_generated",
     "recovery_nacks_received",
@@ -50,8 +53,7 @@ RUN_COLUMNS = (
     "irn_retransmit_bytes", "timeout_recoveries", "switch_drops_ingress",
     "switch_drops_egress", "switch_drops_total", "pfc_pause_events", "pfc_resume_events",
     "pfc_matched_intervals", "pfc_cumulative_pause_ns", "pfc_max_pause_ns",
-    "pfc_unmatched_pauses", "pfc_unmatched_resumes", "hpcc_valid_feedback",
-    "hpcc_rate_updates_applied", "output_bytes",
+    "pfc_unmatched_pauses", "pfc_unmatched_resumes", "output_bytes",
 )
 METRIC_COLUMNS = (
     "row_type", "comparison", "stage", *tuple(column for column in PARAM_COLUMNS if column != "seed"),
