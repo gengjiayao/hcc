@@ -9,6 +9,7 @@ import csv
 import json
 import os
 from pathlib import Path
+import re
 import statistics
 import sys
 from typing import Dict, List, Mapping, Sequence
@@ -38,6 +39,13 @@ LIFECYCLE_FIELDS = (
     "active_after_release",
 )
 INTEGER_FIELDS = tuple(field for field in LIFECYCLE_FIELDS if field != "release_reason")
+CONTROLLER_FIELDS = (
+    "time_ns", "flow_id", "sip", "dip", "event_type", "hpcc_rate_bps",
+    "grant_rate_bps", "final_rate_bps", "binding", "rate_changed", "fast_react",
+    "nhop", "next_seq", "congestion_metric", "effective_target", "threshold_ratio",
+)
+CONTROLLER_FOOTER = re.compile(
+    r"^# attempted (\d+) written (\d+) truncated (\d+)$")
 
 
 def parse_lifecycle(path: Path) -> List[Dict[str, object]]:
@@ -167,6 +175,35 @@ def target_queue_metrics(path: Path, receiver_node: int) -> Dict[str, object]:
     }
 
 
+def controller_trace_metrics(path: Path, max_lines: int) -> Dict[str, object]:
+    """Validate a bounded controller audit without treating it as a time series."""
+    lines = path.read_text(encoding="utf-8", errors="strict").splitlines()
+    if len(lines) < 3 or tuple(lines[0].split(",")) != CONTROLLER_FIELDS:
+        raise SummaryError("controller trace does not match the bounded schema")
+    footer = CONTROLLER_FOOTER.fullmatch(lines[-1])
+    if footer is None:
+        raise SummaryError("controller trace lacks its attempted/written/truncated footer")
+    attempted, written, truncated = map(int, footer.groups())
+    data_lines = lines[1:-1]
+    if written != len(data_lines) or attempted != written + truncated:
+        raise SummaryError("controller trace footer counts do not match its rows")
+    if written > max_lines:
+        raise SummaryError("controller trace exceeds configured line bound")
+    rows = list(csv.DictReader([lines[0], *data_lines]))
+    hpcc_rows = [row for row in rows if row["event_type"] == "hpcc"]
+    if not hpcc_rows or max(int(row["nhop"]) for row in hpcc_rows) <= 0:
+        raise SummaryError("bounded controller audit contains no valid HPCC hop sample")
+    return {
+        "attempted_rows": attempted,
+        "written_rows": written,
+        "truncated_rows": truncated,
+        "hpcc_rows_written": len(hpcc_rows),
+        "max_nhop_written": max(int(row["nhop"]) for row in hpcc_rows),
+        "rate_changed_rows_written": sum(int(row["rate_changed"]) for row in rows),
+        "time_weighted_analysis_valid": truncated == 0,
+    }
+
+
 def analyze(output_dir: Path, manifest_path: Path, lifecycle_path: Path,
             artifact_limit_bytes: int) -> Dict[str, object]:
     output_dir = output_dir.resolve()
@@ -193,6 +230,7 @@ def analyze(output_dir: Path, manifest_path: Path, lifecycle_path: Path,
     try:
         selective = int(config["GUARD_SELECTIVE_REGISTRATION"])
         proactive = int(config["GUARD_PROACTIVE_RELEASE"])
+        controller_max_lines = int(config["GUARD_CONTROLLER_TRACE_MAX_LINES"])
     except (KeyError, ValueError) as exc:
         raise SummaryError("config lacks valid independent OFLM switches") from exc
     if selective not in (0, 1) or proactive not in (0, 1):
@@ -246,6 +284,26 @@ def analyze(output_dir: Path, manifest_path: Path, lifecycle_path: Path,
         "grants_sent": int(stats["grants_sent"]),
         "grants_per_registration": int(stats["grants_sent"]) / registrations,
     })
+    controller_counters = {
+        name: int(stats[name]) for name in (
+            "hpcc_valid_feedback", "hpcc_rate_updates_applied",
+            "hpcc_full_computations", "hpcc_fast_computations",
+            "hpcc_actual_rate_changes", "reactive_binding_updates",
+            "grant_binding_updates", "tie_binding_updates", "int_hops_before_strip",
+            "int_hops_after_strip", "int_records_stripped",
+        )
+    }
+    required_positive = (
+        "hpcc_valid_feedback", "hpcc_rate_updates_applied", "hpcc_full_computations",
+        "hpcc_actual_rate_changes", "int_hops_before_strip", "int_hops_after_strip",
+        "int_records_stripped",
+    )
+    if any(controller_counters[name] <= 0 for name in required_positive):
+        raise SummaryError("full GUARD controller diagnostics lack active HPCC evidence")
+    if controller_counters["hpcc_fast_computations"] != 0:
+        raise SummaryError("FAST_REACT=0 run unexpectedly reports fast HPCC computations")
+    controller_trace = controller_trace_metrics(
+        one_artifact(output_dir, "_out_guard_controller.csv"), controller_max_lines)
     return {
         "schema_version": 1,
         "status": "validated_complete",
@@ -270,6 +328,10 @@ def analyze(output_dir: Path, manifest_path: Path, lifecycle_path: Path,
             "artifact_bytes": artifact_bytes,
         },
         "mechanism": mechanism,
+        "controller_diagnostics": {
+            **controller_counters,
+            **controller_trace,
+        },
         "performance": {
             "fct_mean_slowdown": metric_value(base, "slowdown_mean"),
             "fct_p99_slowdown": metric_value(base, "slowdown_p99"),
