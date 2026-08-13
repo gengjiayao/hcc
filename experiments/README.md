@@ -105,14 +105,46 @@ two-sided 95% Student-t confidence interval over those seed-level values.
 Paired algorithm differences require matching seed and an identical traffic
 SHA-256; a mismatch is a hard rejection.
 
+## Bounded custom workloads
+
+`generate_workload.py` creates deterministic incast, hybrid incast/background,
+ring-allreduce trace, and all-to-all inputs together with a JSON manifest.  A
+custom `run.py --flow_file` invocation takes a private snapshot of that input in
+its output directory.  After the run, validate and summarize both artifacts:
+
+```bash
+python3 experiments/summarize_workload.py mix/output/RUN_ID \
+  --manifest experiments/results/WORKLOAD.manifest.json
+```
+
+The summarizer refuses incomplete or mismatched results.  It verifies the
+manifest hash and flow count, the snapshot endpoints, priority, size and start
+time, the configured preflight limit, and a one-to-one match between generated
+flows and FCT completions.  Inputs remain capped at 25,000 flows, the snapshot
+at 8 MiB, and each raw run artifact at 100 MiB.  Validation produces
+`workload_summary.json` and `workload_summary.csv` atomically.
+
+The outputs include trace completion time, per-flow FCT and slowdown mean/P95/
+P99, aggregate goodput, per-destination aggregate incast goodput, each
+destination's per-flow goodput Jain index/min/max, across-destination goodput
+fairness, bounded queue statistics, and grant, PFC, switch-drop, NACK,
+retransmission and timeout counters.  P99.9 is present only when at least 1,000
+flows complete.
+
+The generated ring-allreduce workload is an `open_loop_trace`: its configured
+step start times do not enforce collective dependencies, so its trace span is
+not a real collective or job completion time.  The all-to-all trace has no such
+step dependency and its span may be reported specifically as communication-
+phase CCT.
+
 ## Scope
 
 This campaign deliberately excludes GoogleRPC because its small mean message
 size exceeds the 25,000-flow safety cap at the selected scale.  It also does not
 claim to supply missing RDMA hardware measurements, NDP/ExpressPass/pHost
-implementations, a validated standard Homa baseline, or absent collective
-traffic generators.  Those require separate artifacts before they can support
-paper claims.
+implementations, a validated standard Homa baseline, or a dependency-aware
+collective simulator.  Those require separate artifacts before they can
+support paper claims.
 
 Run the unit tests with:
 
