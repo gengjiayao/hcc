@@ -1,0 +1,116 @@
+{
+  "name": "reviewer-minimal",
+  "metadata": {
+    "bdp_bytes": 104000,
+    "purpose": "Corrected multi-seed reviewer validation with bounded flow and storage volume"
+  },
+  "defaults": {
+    "lb": "fecmp",
+    "pfc": 1,
+    "irn": 0,
+    "bw": 100,
+    "topo": "leaf_spine_16_100G_OS4",
+    "guard_lambda": 1.0,
+    "guard_beta": 0.125,
+    "guard_gamma": 1.0,
+    "guard_keep_last_hop_int": 0
+  },
+  "stages": [
+    {
+      "name": "components_ali",
+      "fixed": {"cdf": "AliStorage2019", "simul_time": 0.02},
+      "matrix": {
+        "cc": ["guard", "hpcc", "guard-active-only"],
+        "netload": [40, 80],
+        "seed": [1, 2, 3, 4, 5]
+      }
+    },
+    {
+      "name": "components_websearch",
+      "fixed": {"cdf": "WebSearch", "simul_time": 0.05},
+      "matrix": {
+        "cc": ["guard", "hpcc", "guard-active-only"],
+        "netload": [40, 80],
+        "seed": [1, 2, 3, 4, 5]
+      }
+    },
+    {
+      "name": "lambda_ali",
+      "fixed": {"cc": "guard", "cdf": "AliStorage2019", "simul_time": 0.02},
+      "matrix": {
+        "guard_lambda": [1.2, 1.4, 1.6],
+        "netload": [40, 80],
+        "seed": [1, 2, 3, 4, 5]
+      }
+    },
+    {
+      "name": "lambda_websearch",
+      "fixed": {"cc": "guard", "cdf": "WebSearch", "simul_time": 0.05},
+      "matrix": {
+        "guard_lambda": [1.2, 1.4, 1.6],
+        "netload": [40, 80],
+        "seed": [1, 2, 3, 4, 5]
+      }
+    },
+    {
+      "name": "last_hop_int",
+      "fixed": {
+        "cc": "guard",
+        "cdf": "AliStorage2019",
+        "simul_time": 0.02,
+        "guard_keep_last_hop_int": 1
+      },
+      "matrix": {"netload": [40, 80], "seed": [1, 2, 3, 4, 5]}
+    },
+    {
+      "name": "beta_sensitivity",
+      "fixed": {
+        "cc": "guard",
+        "cdf": "AliStorage2019",
+        "simul_time": 0.02,
+        "netload": 80
+      },
+      "matrix": {"guard_beta": [0.0625, 0.25], "seed": [1, 2, 3, 4, 5]}
+    },
+    {
+      "name": "gamma_sensitivity",
+      "fixed": {
+        "cc": "guard",
+        "cdf": "AliStorage2019",
+        "simul_time": 0.02,
+        "netload": 80
+      },
+      "matrix": {"guard_gamma": [0.5, 2.0], "seed": [1, 2, 3, 4, 5]}
+    },
+    {
+      "name": "irn_matched",
+      "fixed": {
+        "cdf": "AliStorage2019",
+        "simul_time": 0.02,
+        "netload": 80,
+        "pfc": 0,
+        "irn": 1
+      },
+      "matrix": {
+        "cc": ["guard", "hpcc", "guard-active-only"],
+        "seed": [1, 2, 3, 4, 5]
+      }
+    }
+  ],
+  "comparisons": [
+    {
+      "name": "guard_vs_hpcc",
+      "stages": ["components_ali", "components_websearch", "irn_matched"],
+      "vary": "cc",
+      "a": "guard",
+      "b": "hpcc"
+    },
+    {
+      "name": "guard_vs_receiver_only",
+      "stages": ["components_ali", "components_websearch", "irn_matched"],
+      "vary": "cc",
+      "a": "guard",
+      "b": "guard-active-only"
+    }
+  ]
+}
