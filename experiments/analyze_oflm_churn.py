@@ -15,10 +15,14 @@ from typing import Dict, List, Mapping, Sequence
 
 try:
     from experiments.summarize_campaign import SummaryError, parse_config, parse_guard_stats, percentile
-    from experiments.summarize_workload import parse_snapshot, read_json, resolve_snapshot, summarize
+    from experiments.summarize_workload import (
+        one_artifact, parse_fct, parse_snapshot, read_json, resolve_snapshot, summarize,
+    )
 except ModuleNotFoundError:  # Direct execution from experiments/.
     from summarize_campaign import SummaryError, parse_config, parse_guard_stats, percentile
-    from summarize_workload import parse_snapshot, read_json, resolve_snapshot, summarize
+    from summarize_workload import (
+        one_artifact, parse_fct, parse_snapshot, read_json, resolve_snapshot, summarize,
+    )
 
 
 LIFECYCLE_FIELDS = (
@@ -104,6 +108,32 @@ def metric_value(summary: Mapping[str, object], name: str) -> float:
     if len(matches) != 1:
         raise SummaryError(f"expected one all-scope metric {name}, found {len(matches)}")
     return matches[0]
+
+
+def grouped_fct_metrics(output_dir: Path, bdp_bytes: int,
+                        elephant_bytes: int) -> Dict[str, object]:
+    completions = parse_fct(one_artifact(output_dir, "_out_fct.txt"))
+    groups = {
+        "all": completions,
+        "elephant": [row for row in completions if int(row["size"]) == elephant_bytes],
+        "churn": [row for row in completions if int(row["size"]) != elephant_bytes],
+        "le_bdp_churn": [row for row in completions if int(row["size"]) <= bdp_bytes],
+        "gt_bdp_churn": [
+            row for row in completions
+            if bdp_bytes < int(row["size"]) != elephant_bytes
+        ],
+    }
+    result: Dict[str, object] = {}
+    for name, rows in groups.items():
+        if not rows:
+            raise SummaryError(f"FCT group {name} is empty")
+        slowdowns = [float(row["slowdown"]) for row in rows]
+        result[name] = {
+            "flows": len(rows),
+            "mean_slowdown": statistics.fmean(slowdowns),
+            "p99_slowdown": percentile(slowdowns, 99),
+        }
+    return result
 
 
 def analyze(output_dir: Path, manifest_path: Path, lifecycle_path: Path,
@@ -211,6 +241,7 @@ def analyze(output_dir: Path, manifest_path: Path, lifecycle_path: Path,
             "queue_mean_bytes": metric_value(base, "queue_bytes_mean"),
             "queue_p99_bytes": metric_value(base, "queue_bytes_p99"),
             "queue_max_bytes": metric_value(base, "queue_bytes_max"),
+            "fct_groups": grouped_fct_metrics(output_dir, bdp_bytes, elephant_bytes),
         },
     }
 
