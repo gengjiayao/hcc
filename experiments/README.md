@@ -254,6 +254,43 @@ computations from feedback calls and actual pacer changes.  The supplied
 runner uses `FAST_REACT=0`, so an audited formal run must report zero fast
 computations.
 
+## DCQCN-like qualification
+
+Mode 1 is a **repository DCQCN-like (Mellanox-style) baseline**, not a claim of
+standards conformance or modern NIC fidelity.  The switch probabilistically
+marks ECN from `KMIN_MAP`, `KMAX_MAP`, and `PMAX_MAP`.  The receiver piggybacks
+one feedback bit on an ACK/NACK when it observes ECN or out-of-order recovery;
+the sender runs the repository alpha, periodic-decrease, fast-recovery,
+additive-increase, and hyper-increase state machine.  This differs from a
+standalone rate-limited CNP path.  The defaults are also repository-specific,
+including an EWMA gain of 1/256, and have not been validated against hardware.
+
+Qualification therefore requires explicit cumulative evidence before any
+matched performance campaign: ECN-generated feedback, sender receipt, and
+actual rate decreases must all be nonzero; every frozen flow must complete;
+and switch drops, recovery/IRN counters, retransmissions, and timeouts must all
+be zero.  The same seed-1, all-PG4 hybrid trace is used across a preregistered
+three-level ECN ladder, and the first passing level is selected without looking
+at performance.  If no level passes, the baseline is invalid for that workload
+and no FCT comparison may be reported.
+
+Create a small JSON run index that points to the frozen ladder, the three output
+directories, and their shared manifest, then audit it with:
+
+```bash
+python3 experiments/summarize_dcqcn_qualification.py RUN_INDEX.json \
+  --analysis-dir RESULTS/analysis
+```
+
+The tool strictly checks mode 1, PFC on, IRN off, seed 1, bulk monitoring, the
+10-ms 16-host topology, 655/655 exact completions, all-PG4 traffic, shared flow
+and manifest hashes, 100-Gb/s ECN values, cumulative/node/bucket counter
+agreement, PFC trace/summary agreement, and the 100-MiB per-run bound.  It emits
+only `qualification_runs.csv` and `admission.json`; neither contains latency,
+slowdown, throughput, goodput, or fairness metrics.  `PMAX_MAP` is audited at
+the active 100-Gb/s rate because the current formatter truncates its first two
+lower-rate entries to integers.
+
 ## Scope
 
 This campaign deliberately excludes GoogleRPC because its small mean message
