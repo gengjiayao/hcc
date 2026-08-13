@@ -8,7 +8,10 @@
 
 #include <unordered_map>
 #include <unordered_set>
+#include <cstdio>
+#include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "qbb-net-device.h"
@@ -22,6 +25,19 @@ struct RdmaInterfaceMgr {
 
     RdmaInterfaceMgr() : dev(NULL), qpGrp(NULL) {}
     RdmaInterfaceMgr(Ptr<QbbNetDevice> _dev) { dev = _dev; }
+};
+
+// One sink is shared by every receiver NIC in a simulation.  Admission and
+// output are both capped by max_lines, which bounds the file and the aggregate
+// amount of lifecycle state retained while flows are active.
+struct GuardLifecycleTraceSink {
+    FILE *file;
+    uint64_t max_lines;
+    uint64_t admitted;
+    uint64_t written;
+
+    GuardLifecycleTraceSink()
+        : file(NULL), max_lines(0), admitted(0), written(0) {}
 };
 
 class RdmaHw : public Object {
@@ -190,11 +206,49 @@ class RdmaHw : public Object {
     uint64_t m_irnRetransmitPackets;
     uint64_t m_irnRetransmitBytes;
     uint64_t m_timeoutRecoveries;
+
+    enum GuardReleaseReason {
+        GUARD_RELEASE_PROACTIVE,
+        GUARD_RELEASE_COMPLETION,
+    };
+
+    struct GuardLifecycleState {
+        int32_t flow_id;
+        uint64_t size_bytes;
+        uint32_t receiver_node;
+        int64_t first_rx_ns;
+        int64_t register_ns;
+        int64_t release_ns;
+        int64_t complete_ns;
+        std::string release_reason;
+        uint64_t remaining_bytes_at_release;
+        int64_t active_before_register;
+        int64_t active_after_register;
+        int64_t active_before_release;
+        int64_t active_after_release;
+    };
+
+    GuardLifecycleTraceSink *m_guardLifecycleTraceSink;
+    std::unordered_map<RdmaRxQueuePair*, GuardLifecycleState> m_guardLifecycleStates;
     std::unordered_set<RdmaRxQueuePair*> m_rate_flow_ctl_set;
+    void ConfigureGuardLifecycleTrace(GuardLifecycleTraceSink *sink);
+    void FlushGuardLifecycleTrace();
     void SyncHwRate(Ptr<RdmaQueuePair> qp, DataRate target_cc_rate);
     void HandleRccRequest(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch);
-    bool HandleRccRemove(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch);
+    bool HandleRccRemove(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch,
+                         GuardReleaseReason reason, uint64_t remaining_bytes);
     void SendRateControlPacket(Ptr<RdmaRxQueuePair> qp, CustomHeader &ch, uint32_t rate);
+
+   private:
+    void TraceGuardRegistration(Ptr<RdmaRxQueuePair> qp, uint64_t flow_size,
+                                uint64_t active_before, uint64_t active_after);
+    void TraceGuardRelease(Ptr<RdmaRxQueuePair> qp, GuardReleaseReason reason,
+                           uint64_t remaining_bytes, uint64_t active_before,
+                           uint64_t active_after);
+    void TraceGuardCompletion(Ptr<RdmaRxQueuePair> qp);
+    void WriteGuardLifecycle(GuardLifecycleState const &state);
+
+   public:
 
     /***********************
      * Homa Simple CC

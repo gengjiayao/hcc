@@ -135,6 +135,7 @@ std::string flow_input_file = "flow.txt";
 std::string fct_output_file = "fct.txt";
 std::string pfc_output_file = "pfc.txt";
 std::string guard_stats_output_file = "guard_stats.txt";
+std::string guard_lifecycle_trace_output_file = "guard_lifecycle.csv";
 std::string queue_stats_output_file = "queue_stats.txt";
 std::string cnp_output_file = "cnp.txt";
 std::string qlen_mon_file = "qlen.txt";
@@ -168,6 +169,9 @@ double guard_release_gamma = 1.0;
 bool guard_selective_registration = true;
 bool guard_proactive_release = true;
 bool guard_keep_last_hop_int = false;
+bool guard_lifecycle_trace = false;
+uint64_t guard_lifecycle_trace_max_lines = 1024;
+const uint64_t guard_lifecycle_trace_hard_max_lines = 10000;
 uint32_t int_multi = 1;
 bool rate_bound = true;
 unordered_map<uint64_t, uint32_t> rate2kmax, rate2kmin;
@@ -1214,6 +1218,13 @@ int main(int argc, char *argv[]) {
             } else if (key.compare("GUARD_KEEP_LAST_HOP_INT") == 0) {
                 conf >> guard_keep_last_hop_int;
                 std::cerr << "GUARD_KEEP_LAST_HOP_INT\t" << guard_keep_last_hop_int << '\n';
+            } else if (key.compare("GUARD_LIFECYCLE_TRACE") == 0) {
+                conf >> guard_lifecycle_trace;
+                std::cerr << "GUARD_LIFECYCLE_TRACE\t" << guard_lifecycle_trace << '\n';
+            } else if (key.compare("GUARD_LIFECYCLE_TRACE_MAX_LINES") == 0) {
+                conf >> guard_lifecycle_trace_max_lines;
+                std::cerr << "GUARD_LIFECYCLE_TRACE_MAX_LINES\t"
+                          << guard_lifecycle_trace_max_lines << '\n';
             } else if (key.compare("INT_MULTI") == 0) {
                 conf >> int_multi;
                 std::cerr << "INT_MULTI\t\t\t\t" << int_multi << '\n';
@@ -1231,6 +1242,10 @@ int main(int argc, char *argv[]) {
             } else if (key.compare("GUARD_STATS_OUTPUT_FILE") == 0) {
                 conf >> guard_stats_output_file;
                 std::cerr << "GUARD_STATS_OUTPUT_FILE\t\t" << guard_stats_output_file << '\n';
+            } else if (key.compare("GUARD_LIFECYCLE_TRACE_OUTPUT_FILE") == 0) {
+                conf >> guard_lifecycle_trace_output_file;
+                std::cerr << "GUARD_LIFECYCLE_TRACE_OUTPUT_FILE\t"
+                          << guard_lifecycle_trace_output_file << '\n';
             } else if (key.compare("QUEUE_STATS_OUTPUT_FILE") == 0) {
                 conf >> queue_stats_output_file;
                 std::cerr << "QUEUE_STATS_OUTPUT_FILE\t\t" << queue_stats_output_file << '\n';
@@ -1343,6 +1358,34 @@ int main(int argc, char *argv[]) {
     if (guard_lambda < 1.0) {
         std::cerr << "GUARD_LAMBDA must be at least 1.0\n";
         return 1;
+    }
+    if (guard_lifecycle_trace && cc_mode != 11 && cc_mode != 13) {
+        std::cerr << "GUARD_LIFECYCLE_TRACE requires CC_MODE 11 or 13\n";
+        return 1;
+    }
+    if (guard_lifecycle_trace &&
+        (guard_lifecycle_trace_max_lines == 0 ||
+         guard_lifecycle_trace_max_lines > guard_lifecycle_trace_hard_max_lines)) {
+        std::cerr << "GUARD_LIFECYCLE_TRACE_MAX_LINES must be in [1, "
+                  << guard_lifecycle_trace_hard_max_lines << "]\n";
+        return 1;
+    }
+
+    GuardLifecycleTraceSink guard_lifecycle_trace_sink;
+    if (guard_lifecycle_trace) {
+        guard_lifecycle_trace_sink.file =
+            fopen(guard_lifecycle_trace_output_file.c_str(), "w");
+        if (guard_lifecycle_trace_sink.file == NULL) {
+            std::cerr << "Cannot open GUARD lifecycle trace: "
+                      << guard_lifecycle_trace_output_file << '\n';
+            return 1;
+        }
+        guard_lifecycle_trace_sink.max_lines = guard_lifecycle_trace_max_lines;
+        fprintf(guard_lifecycle_trace_sink.file,
+                "flow_id,size_bytes,receiver_node,first_rx_ns,register_ns,release_ns,"
+                "complete_ns,release_reason,remaining_bytes_at_release,"
+                "active_before_register,active_after_register,active_before_release,"
+                "active_after_release\n");
     }
     // HPCC's congestion metric is normalized load plus a normalized queue
     // term, not physical link utilization alone.  Therefore lambda * 0.95
@@ -1695,6 +1738,9 @@ int main(int argc, char *argv[]) {
             rdmaHw->SetAttribute("GuardProactiveRelease",
                                  BooleanValue(guard_proactive_release));
             rdmaHw->SetAttribute("GuardKeepLastHopInt", BooleanValue(guard_keep_last_hop_int));
+            if (guard_lifecycle_trace) {
+                rdmaHw->ConfigureGuardLifecycleTrace(&guard_lifecycle_trace_sink);
+            }
             rdmaHw->SetAttribute("RateBound", BooleanValue(rate_bound));
             rdmaHw->SetAttribute("DctcpRateAI", DataRateValue(DataRate(dctcp_rate_ai)));
             rdmaHw->SetAttribute("IrnEnable", BooleanValue(enable_irn));
@@ -2101,6 +2147,16 @@ int main(int argc, char *argv[]) {
                         &stop_simulation_middle);  // check every 100us
     Simulator::Stop(Seconds(flowgen_stop_time + 10.0));
     Simulator::Run();
+
+    if (guard_lifecycle_trace) {
+        for (uint32_t i = 0; i < node_num; i++) {
+            if (n.Get(i)->GetNodeType() != 0) continue;
+            Ptr<RdmaDriver> driver = n.Get(i)->GetObject<RdmaDriver>();
+            driver->m_rdma->FlushGuardLifecycleTrace();
+        }
+        fclose(guard_lifecycle_trace_sink.file);
+        guard_lifecycle_trace_sink.file = NULL;
+    }
 
     FILE *queue_stats_output = fopen(queue_stats_output_file.c_str(), "w");
     double queue_average_bytes = queue_sample_count == 0

@@ -190,6 +190,8 @@ RdmaRxQueuePair::RdmaRxQueuePair() {
     m_milestone_rx = 0;
     m_lastNACK = 0;
     m_last_pkt_time = Time(0);
+    m_first_pkt_time = Time(0);
+    m_seen_first_pkt = false;
     m_est_rate = 0;
     m_base_rtt_sec = 0;
     m_proactive_released = false;

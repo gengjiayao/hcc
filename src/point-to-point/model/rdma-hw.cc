@@ -174,6 +174,7 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardProactiveReleases = 0;
     m_guardCompletionReleases = 0;
     m_guardMaxActiveFlows = 0;
+    m_guardLifecycleTraceSink = NULL;
     m_recoveryNacksGenerated = 0;
     m_recoveryNacksReceived = 0;
     m_irnNacksGenerated = 0;
@@ -455,6 +456,10 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
         }
         flow_size = fit.GetFlowSize();
     }
+    if (!rxQp->m_seen_first_pkt) {
+        rxQp->m_first_pkt_time = Simulator::Now();
+        rxQp->m_seen_first_pkt = true;
+    }
 
     bool cnp_check = false;
     int x = ReceiverCheckSeq(ch.udp.seq, rxQp, payload_size, cnp_check);
@@ -573,9 +578,10 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
         // seeing FLOW_END: the nominal last packet may arrive out of order.
         // This is also the sole release path when OFLM is disabled.
         if (v_remain == 0) {
-            if (HandleRccRemove(rxQp, p, ch)) {
+            if (HandleRccRemove(rxQp, p, ch, GUARD_RELEASE_COMPLETION, 0)) {
                 m_guardCompletionReleases++;
             }
+            TraceGuardCompletion(rxQp);
         } else if (m_guardProactiveRelease &&
                    m_rate_flow_ctl_set.find(PeekPointer(rxQp)) != m_rate_flow_ctl_set.end()) {
             Time now = Simulator::Now();
@@ -596,7 +602,7 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
             uint64_t v_th = (uint64_t)v_th_double;
 
             if (v_remain < v_th && !rxQp->m_proactive_released) {
-                if (HandleRccRemove(rxQp, p, ch)) {
+                if (HandleRccRemove(rxQp, p, ch, GUARD_RELEASE_PROACTIVE, v_remain)) {
                     m_guardProactiveReleases++;
                 }
                 rxQp->m_proactive_released = true;
@@ -1369,11 +1375,16 @@ void RdmaHw::HandleRccRequest(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomH
         // exit(1);
         return;
     }
+    uint64_t active_before = m_rate_flow_ctl_set.size();
     m_rate_flow_ctl_set.emplace(PeekPointer(rx_qp));
     m_guardRegistrations++;
     if (m_guardSelectiveRegistration) m_guardSelectedRegistrations++;
     m_guardMaxActiveFlows = std::max<uint64_t>(m_guardMaxActiveFlows,
                                                m_rate_flow_ctl_set.size());
+
+    FlowIDNUMTag fit;
+    uint64_t flow_size = p->PeekPacketTag(fit) ? fit.GetFlowSize() : 0;
+    TraceGuardRegistration(rx_qp, flow_size, active_before, m_rate_flow_ctl_set.size());
 
     // TODO: this is send rate, not receive rate
     uint32_t nic_idx = GetNicIdxOfRxQp(rx_qp);
@@ -1385,11 +1396,15 @@ void RdmaHw::HandleRccRequest(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomH
     }
 }
 
-bool RdmaHw::HandleRccRemove(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomHeader &ch) {
+bool RdmaHw::HandleRccRemove(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomHeader &ch,
+                             GuardReleaseReason reason, uint64_t remaining_bytes) {
     if (m_rate_flow_ctl_set.find(PeekPointer(rx_qp)) == m_rate_flow_ctl_set.end()) {
         return false;
     }
+    uint64_t active_before = m_rate_flow_ctl_set.size();
     m_rate_flow_ctl_set.erase(PeekPointer(rx_qp));
+    TraceGuardRelease(rx_qp, reason, remaining_bytes, active_before,
+                      m_rate_flow_ctl_set.size());
 
     // No grant needs to be sent after the last controlled flow leaves.  In
     // particular, do not compute C / N for N == 0.
@@ -1406,6 +1421,84 @@ bool RdmaHw::HandleRccRemove(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomHe
         SendRateControlPacket(it, ch, rate_data);
     }
     return true;
+}
+
+void RdmaHw::ConfigureGuardLifecycleTrace(GuardLifecycleTraceSink *sink) {
+    m_guardLifecycleTraceSink = sink;
+}
+
+void RdmaHw::TraceGuardRegistration(Ptr<RdmaRxQueuePair> rx_qp, uint64_t flow_size,
+                                     uint64_t active_before, uint64_t active_after) {
+    GuardLifecycleTraceSink *sink = m_guardLifecycleTraceSink;
+    if (sink == NULL || sink->file == NULL || sink->admitted >= sink->max_lines) return;
+
+    GuardLifecycleState state;
+    state.flow_id = rx_qp->m_flow_id;
+    state.size_bytes = flow_size;
+    state.receiver_node = m_node->GetId();
+    state.first_rx_ns = rx_qp->m_first_pkt_time.GetNanoSeconds();
+    state.register_ns = Simulator::Now().GetNanoSeconds();
+    state.release_ns = -1;
+    state.complete_ns = -1;
+    state.release_reason = "not_released";
+    state.remaining_bytes_at_release = 0;
+    state.active_before_register = active_before;
+    state.active_after_register = active_after;
+    state.active_before_release = -1;
+    state.active_after_release = -1;
+    m_guardLifecycleStates.emplace(PeekPointer(rx_qp), state);
+    sink->admitted++;
+}
+
+void RdmaHw::TraceGuardRelease(Ptr<RdmaRxQueuePair> rx_qp, GuardReleaseReason reason,
+                                uint64_t remaining_bytes, uint64_t active_before,
+                                uint64_t active_after) {
+    auto it = m_guardLifecycleStates.find(PeekPointer(rx_qp));
+    if (it == m_guardLifecycleStates.end()) return;
+
+    GuardLifecycleState &state = it->second;
+    state.release_ns = Simulator::Now().GetNanoSeconds();
+    state.release_reason = reason == GUARD_RELEASE_PROACTIVE ? "proactive" : "completion";
+    state.remaining_bytes_at_release = remaining_bytes;
+    state.active_before_release = active_before;
+    state.active_after_release = active_after;
+}
+
+void RdmaHw::TraceGuardCompletion(Ptr<RdmaRxQueuePair> rx_qp) {
+    auto it = m_guardLifecycleStates.find(PeekPointer(rx_qp));
+    if (it == m_guardLifecycleStates.end()) return;
+
+    it->second.complete_ns = Simulator::Now().GetNanoSeconds();
+    WriteGuardLifecycle(it->second);
+    m_guardLifecycleStates.erase(it);
+}
+
+void RdmaHw::WriteGuardLifecycle(GuardLifecycleState const &state) {
+    GuardLifecycleTraceSink *sink = m_guardLifecycleTraceSink;
+    if (sink == NULL || sink->file == NULL || sink->written >= sink->max_lines) return;
+    fprintf(sink->file,
+            "%d,%lu,%u,%ld,%ld,%ld,%ld,%s,%lu,%ld,%ld,%ld,%ld\n",
+            state.flow_id, state.size_bytes, state.receiver_node, state.first_rx_ns,
+            state.register_ns, state.release_ns, state.complete_ns,
+            state.release_reason.c_str(), state.remaining_bytes_at_release,
+            state.active_before_register, state.active_after_register,
+            state.active_before_release, state.active_after_release);
+    sink->written++;
+}
+
+void RdmaHw::FlushGuardLifecycleTrace() {
+    for (auto const &entry : m_guardLifecycleStates) {
+        GuardLifecycleState state = entry.second;
+        if (state.release_ns < 0) {
+            RdmaRxQueuePair const *rx_qp = entry.first;
+            state.remaining_bytes_at_release =
+                state.size_bytes > rx_qp->ReceiverNextExpectedSeq
+                    ? state.size_bytes - rx_qp->ReceiverNextExpectedSeq
+                    : 0;
+        }
+        WriteGuardLifecycle(state);
+    }
+    m_guardLifecycleStates.clear();
 }
 
 void RdmaHw::SendRateControlPacket(Ptr<RdmaRxQueuePair> rx_qp, CustomHeader &ch, uint32_t rate_data) {

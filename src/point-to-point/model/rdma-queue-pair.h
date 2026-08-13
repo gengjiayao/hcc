@@ -238,6 +238,8 @@ class RdmaRxQueuePair : public Object {  // Rx side queue pair
     int32_t m_flow_id;
 
     Time m_last_pkt_time;
+    Time m_first_pkt_time;
+    bool m_seen_first_pkt;
     double m_est_rate;
     double m_base_rtt_sec;
     bool m_proactive_released;
