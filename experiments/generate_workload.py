@@ -14,6 +14,9 @@ from collections import namedtuple
 BASE_TIME_S = 2.0
 MIN_DURATION_S = 0.010
 HARD_MAX_FLOWS = 25000
+DEFAULT_OFLM_BDP_BYTES = 104000
+DEFAULT_OFLM_CHURN_ROUNDS = 8
+DEFAULT_OFLM_CHURN_INTERVAL_US = 25.0
 Flow = namedtuple("Flow", "src dst pg size_bytes start_s")
 
 
@@ -21,6 +24,13 @@ def positive_int(value):
     parsed = int(value)
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be positive")
+    return parsed
+
+
+def positive_float(value):
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError("must be finite and positive")
     return parsed
 
 
@@ -88,6 +98,51 @@ def make_all_to_all(hosts, flow_bytes, pg, start_s, duration_s):
     return flows
 
 
+def make_oflm_churn(hosts, bdp_bytes, elephant_count, elephant_bytes,
+                    rounds, arrival_interval_us, pg, start_s, duration_s):
+    """Keep receiver elephants active while fixed-rate BDP-edge flows arrive."""
+    if hosts < 16 or hosts % 2:
+        raise ValueError("oflm-churn requires an even --hosts value of at least 16")
+    hosts_per_tor = hosts // 2
+    if elephant_count > hosts_per_tor:
+        raise ValueError(
+            "--oflm-elephant-flows cannot exceed the hosts on the source ToR ({})".format(
+                hosts_per_tor))
+    if bdp_bytes < 2:
+        raise ValueError("--oflm-bdp-bytes must be at least 2")
+    if elephant_bytes <= 2 * bdp_bytes:
+        raise ValueError("--oflm-elephant-bytes must exceed twice --oflm-bdp-bytes")
+
+    receiver = hosts - 1
+    elephant_start = start_s + duration_s * 0.05
+    flows = [
+        Flow(src, receiver, pg, elephant_bytes, elephant_start)
+        for src in range(elephant_count)
+    ]
+
+    # Each eight-arrival cycle contains four flows rejected by the strict
+    # size>BDP policy and four admitted flows.  The order is seed-independent.
+    sizes = (
+        bdp_bytes - 1, bdp_bytes - 1,
+        bdp_bytes, bdp_bytes,
+        bdp_bytes + 1, bdp_bytes + 1,
+        2 * bdp_bytes, 2 * bdp_bytes,
+    )
+    # Keep the default 5 ms analysis warm-up free of measured churn while the
+    # elephants establish the receiver's persistent active set.
+    churn_start = start_s + duration_s * 0.30
+    interval_s = arrival_interval_us / 1_000_000.0
+    for index in range(rounds * len(sizes)):
+        src = index % hosts_per_tor
+        flows.append(Flow(
+            src, receiver, pg, sizes[index % len(sizes)],
+            churn_start + index * interval_s))
+    if flows[-1].start_s > start_s + duration_s:
+        raise ValueError(
+            "oflm-churn arrivals exceed the duration; reduce rounds/interval or increase duration")
+    return flows
+
+
 def generate(args):
     duration_s = args.duration_ms / 1000.0
     if args.hosts < 2:
@@ -135,6 +190,12 @@ def generate(args):
     elif args.workload == "all-to-all":
         flows = make_all_to_all(
             args.hosts, args.flow_bytes, args.priority_group,
+            args.base_time, duration_s)
+    elif args.workload == "oflm-churn":
+        flows = make_oflm_churn(
+            args.hosts, args.oflm_bdp_bytes, args.oflm_elephant_flows,
+            args.oflm_elephant_bytes, args.oflm_churn_rounds,
+            args.oflm_churn_interval_us, args.priority_group,
             args.base_time, duration_s)
     else:
         raise ValueError("unknown workload: {}".format(args.workload))
@@ -215,7 +276,7 @@ def parse_args(argv=None):
         description="Generate deterministic bounded ns-3 reviewer workloads")
     parser.add_argument(
         "--workload", required=True,
-        choices=("incast", "hybrid", "ring-allreduce", "all-to-all"))
+        choices=("incast", "hybrid", "ring-allreduce", "all-to-all", "oflm-churn"))
     parser.add_argument("--output", required=True, help="flow file to write")
     parser.add_argument("--manifest", help="manifest path (default: OUTPUT.manifest.json)")
     parser.add_argument("--force", action="store_true", help="replace existing outputs")
@@ -237,6 +298,15 @@ def parse_args(argv=None):
     parser.add_argument("--background-flows", type=positive_int, default=512)
     parser.add_argument("--background-flow-bytes", type=positive_int, default=64 * 1024)
     parser.add_argument("--tensor-bytes", type=positive_int, default=4 * 1024 * 1024)
+    parser.add_argument("--oflm-bdp-bytes", type=positive_int,
+                        default=DEFAULT_OFLM_BDP_BYTES)
+    parser.add_argument("--oflm-elephant-flows", type=positive_int, default=8)
+    parser.add_argument("--oflm-elephant-bytes", type=positive_int,
+                        default=16 * 1024 * 1024)
+    parser.add_argument("--oflm-churn-rounds", type=positive_int,
+                        default=DEFAULT_OFLM_CHURN_ROUNDS)
+    parser.add_argument("--oflm-churn-interval-us", type=positive_float,
+                        default=DEFAULT_OFLM_CHURN_INTERVAL_US)
     return parser.parse_args(argv)
 
 
@@ -286,6 +356,11 @@ def main(argv=None):
             "background_flows": args.background_flows,
             "background_flow_bytes": args.background_flow_bytes,
             "tensor_bytes": args.tensor_bytes,
+            "oflm_bdp_bytes": args.oflm_bdp_bytes,
+            "oflm_elephant_flows": args.oflm_elephant_flows,
+            "oflm_elephant_bytes": args.oflm_elephant_bytes,
+            "oflm_churn_rounds": args.oflm_churn_rounds,
+            "oflm_churn_interval_us": args.oflm_churn_interval_us,
         },
         "validation": validation,
         "run_hint": {
