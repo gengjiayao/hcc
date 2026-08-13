@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "selection_policy": "Run the homogeneous N ladder exactly as listed. For heterogeneous competition, select the first intensity satisfying every mechanism criterion; do not inspect FCT when advancing tiers.",
+  "fixed_run": {
+    "topo": "leaf_spine_16_100G_OS4",
+    "controllers": ["guard", "guard-active-only"],
+    "pfc": 1,
+    "irn": 0,
+    "monitor_profile": "bulk",
+    "simul_time_s": 0.02,
+    "analysis_warmup_s": 0.0,
+    "receiver": 15,
+    "priority_group": 4,
+    "line_rate_bps": 100000000000,
+    "seeds": [1, 2, 3, 4, 5],
+    "arrival_jitter_us": 1.0,
+    "selective_registration": 1,
+    "proactive_release": 0,
+    "size_priority": 0,
+    "controller_trace": 0,
+    "lifecycle_trace_max_lines": 32,
+    "grant_trace_max_lines": 1000,
+    "flow_limit": 1000,
+    "artifact_limit_bytes": 104857600,
+    "wall_time_limit_seconds": 1800,
+    "rss_limit_kib": 8388608
+  },
+  "homogeneous": {
+    "active_flow_counts": [2, 4, 8, 15],
+    "flow_bytes": 8388608,
+    "expected_grant_bytes_per_packet": 94,
+    "grant_target_absolute_error_bps_max": 1000000,
+    "stable_max_active_window_ns_min": 100000
+  },
+  "heterogeneous": {
+    "target_flow_sources": [0, 1],
+    "restricted_source": 0,
+    "unrestricted_source": 1,
+    "target_flow_bytes": 16777216,
+    "background_source": 0,
+    "background_destinations": [8, 9, 10, 11, 12, 13, 14],
+    "background_flow_bytes": 16777216,
+    "competition_tiers": [3, 7, 15],
+    "acceptance": {
+      "target_max_active_flows": 2,
+      "target_grant_rate_bps": 50000000000,
+      "restricted_rate_fraction_of_share_max": 0.8,
+      "unrestricted_rate_fraction_of_share_max": 1.1,
+      "aggregate_rate_fraction_of_line_max": 0.9,
+      "stable_window_ns_min": 100000
+    }
+  },
+  "common_acceptance": {
+    "completed_fraction_min": 1.0,
+    "switch_drops_max": 0,
+    "recovery_events_max": 0,
+    "grant_trace_truncated_rows_max": 0,
+    "raw_grant_bytes_must_be_constant": true,
+    "grant_stats_must_equal_raw_trace": true
+  }
+}
