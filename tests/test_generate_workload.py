@@ -190,7 +190,7 @@ class GenerateWorkloadTest(unittest.TestCase):
         background = [flow for flow in first if flow.dst != 15]
         self.assertEqual({flow.src for flow in target}, {0, 1})
         self.assertEqual({flow.src for flow in background}, {0})
-        self.assertEqual({flow.dst for flow in background}, {8, 9, 10})
+        self.assertEqual({flow.dst for flow in background}, {2, 3, 4})
         self.assertEqual({flow.pg for flow in first}, {4})
         self.assertLessEqual(
             max(flow.start_s for flow in first) - min(flow.start_s for flow in first),

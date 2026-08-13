@@ -47,7 +47,8 @@
     "unrestricted_source": 1,
     "target_flow_bytes": 16777216,
     "background_source": 0,
-    "background_destinations": [8, 9, 10, 11, 12, 13, 14],
+    "background_destinations": [2, 3, 4, 5, 6, 7],
+    "background_path_constraint": "same leaf as source 0, so background contends at source 0 NIC but not at the target fabric uplink shared by source 1",
     "background_flow_bytes": 16777216,
     "competition_tiers": [3, 7, 15],
     "acceptance": {

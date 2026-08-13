@@ -180,9 +180,13 @@ def make_receiver_share(hosts, destination, target_flows, flow_bytes,
     ]
     if background_flows:
         restricted_source = selected[0]
+        # Keep these flows on the restricted source's local leaf.  Sending
+        # them across the fabric would also throttle the nominally
+        # unrestricted target sender through their shared leaf uplink, which
+        # would not isolate unused C/N share at the source NIC.
         background_destinations = [
-            host for host in range(hosts // 2, hosts)
-            if host not in (restricted_source, destination)
+            host for host in range(0, hosts // 2)
+            if host not in selected and host != destination
         ]
         if not background_destinations:
             raise ValueError("heterogeneous receiver-share has no background destination")
