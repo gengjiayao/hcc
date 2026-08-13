@@ -141,6 +141,27 @@ not a real collective or job completion time.  The all-to-all trace has no such
 step dependency and its span may be reported specifically as communication-
 phase CCT.
 
+For a matched three-arm custom-workload component study, generate every input
+at PG4 before running full GUARD, HPCC-only, and receiver-rate-only.  GUARD
+maps flows larger than one BDP to PG4 internally; using PG4 in the source trace
+keeps the HPCC arm on the same actual data priority.  Preserve the generator
+manifest and use an identical flow snapshot hash across all three arms of each
+seed.  With result names following
+`formal-component-{full,hpcc,receiver}-s{seed}`, aggregate five seeds with:
+
+```bash
+python3 experiments/summarize_component_workload.py RESULTS \
+  --simulator-sha SIMULATOR_COMMIT
+```
+
+The component summarizer rejects incomplete or hash/PG/config-mismatched runs,
+checks each arm's mechanism counters, audits bounded full-GUARD controller
+traces, and reports both overall and 15-flow incast metrics.  It extracts the
+target downlink, both leaf uplinks, and both spine downlinks; computes grant
+overhead and time-weighted binding; and emits five-seed Student-t intervals and
+matched pair differences.  PFC counts are retained as outcomes rather than
+used to select or retune an arm.
+
 For a directed controller audit, `run.py --guard_controller_trace 1` writes a
 bounded CSV containing HPCC, grant, and completion events with computed,
 granted, and final rates.  Its final comment records attempted, written, and
