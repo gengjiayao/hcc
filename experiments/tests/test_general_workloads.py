@@ -82,6 +82,7 @@ class GeneralWorkloadRunnerTests(unittest.TestCase):
             for arm in ("full", "hpcc", "receiver")
         }
         for command in commands.values():
+            self.assertEqual(command[:2], ["env", "PYENV_VERSION=2.7.18"])
             self.assertEqual(command[command.index("--flow_file") + 1], trace["path"])
             self.assertIn("bulk", command)
             self.assertIn("10000", command)

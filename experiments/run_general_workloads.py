@@ -307,8 +307,11 @@ def run_command(
     profile_name = str(workload["selected_profile"])
     profile = dict(workload["attempts"][profile_name]["profile"])
     arm = dict(spec["arms"][arm_name])
+    # run.py itself is Python 3, while this ns-3 tree's waf launcher is pinned
+    # to Python 2.7.  Export the pin through the driver so its child ./waf sees
+    # the same interpreter used for the optimized build.
     command = [
-        sys.executable, str(repo / "run.py"),
+        "env", "PYENV_VERSION=2.7.18", sys.executable, str(repo / "run.py"),
         "--cc", str(arm["cc"]),
         "--lb", str(defaults["lb"]),
         "--pfc", str(defaults["pfc"]),
