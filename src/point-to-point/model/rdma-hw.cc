@@ -2046,7 +2046,7 @@ void RdmaHw::HandleAckHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch)
 }
 
 void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch, bool fast_react) {
-    if (m_cc_mode == 11) {
+    if (m_cc_mode == 3 || m_cc_mode == 11) {
         m_guardHpccFeedbackUpdates++;
     }
     uint32_t next_seq = qp->snd_nxt;
