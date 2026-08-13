@@ -165,6 +165,9 @@ python3 run.py --cc <hpcc|guard|homa|...> \
 有界的队列摘要，但不写队列、节点带宽、逐流带宽、上行链路和连接数时序。只有在小规模、
 有界诊断中才应使用 `--monitor_profile full`。队列采样间隔可用
 `--qlen_monitoring_interval <ns>` 设置，采样严格限制在配置的队列监控时间窗内。
+正式运行至少需要 10ms，默认排除前 5ms warm-up；5ms 诊断必须显式加 `--smoke`，
+且不产生可误用的正式 FCT 摘要。`--max_flows` 默认在 150000 flows 时中止，
+该检查在创建结果目录和启动 ns-3 之前完成。
 
 reviewer 实验的示例：
 
@@ -195,7 +198,9 @@ python3 run.py --cc guard-active-only --seed 3 ...
 | `--cc`           | 拥塞控制算法（见上表），决定 `cc_mode`      |
 | `--lb`           | 负载均衡：`fecmp/drill/conga/letflow/conweave` |
 | `--pfc / --irn`  | 丢包恢复机制（恰好二选一）                  |
-| `--simul_time`   | 仿真时长（秒），≥ 0.005                      |
+| `--simul_time`   | 正式仿真至少 0.01s；`--smoke` 诊断可为 0.005s |
+| `--analysis_warmup` | 正式 FCT 统计排除的 warm-up，默认 0.005s |
+| `--max_flows`    | 启动 ns-3 前允许的最大 flow 数，默认 150000 |
 | `--netload`      | 网卡负载百分比（25 表示 25%）                |
 | `--topo`         | 拓扑名（见 `config/leaf_spine_*` 等）         |
 | `--bw`           | 网卡带宽（Gbps，默认 100）                   |

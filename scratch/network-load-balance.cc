@@ -88,6 +88,8 @@ double qlen_mon_start;               // seconds
 double qlen_mon_end;                 // seconds
 uint32_t switch_mon_interval = 10000;  // ns
 bool detailed_monitoring = true;       // backward-compatible for legacy configs
+double analysis_warmup_time = 0.005;   // manifest value; analysis runs in run.py
+uint32_t preflight_max_flows = 150000;
 uint64_t cnp_mon_start;                // ns
 uint64_t cnp_monitor_bucket = 100000;  // ns
 uint64_t irn_mon_start;                // ns
@@ -918,6 +920,12 @@ int main(int argc, char *argv[]) {
                     return 1;
                 }
                 std::cerr << "MONITOR_PROFILE\t\t\t" << v << "\n";
+            } else if (key.compare("ANALYSIS_WARMUP_TIME") == 0) {
+                conf >> analysis_warmup_time;
+                std::cerr << "ANALYSIS_WARMUP_TIME\t\t" << analysis_warmup_time << "\n";
+            } else if (key.compare("PREFLIGHT_MAX_FLOWS") == 0) {
+                conf >> preflight_max_flows;
+                std::cerr << "PREFLIGHT_MAX_FLOWS\t\t" << preflight_max_flows << "\n";
             } else if (key.compare("CONWEAVE_TX_EXPIRY_TIME") == 0) {
                 uint32_t v;
                 conf >> v;

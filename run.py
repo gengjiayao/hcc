@@ -38,6 +38,8 @@ CONN_MON_FILE mix/output/{id}/{id}_out_conn.txt
 EST_ERROR_MON_FILE mix/output/{id}/{id}_out_est_error.txt
 
 MONITOR_PROFILE {monitor_profile}
+ANALYSIS_WARMUP_TIME {analysis_warmup_time}
+PREFLIGHT_MAX_FLOWS {max_flows}
 QLEN_MON_START {qlen_mon_start}
 QLEN_MON_END {qlen_mon_end}
 QLEN_MON_INTERVAL {qlen_monitoring_interval}
@@ -137,6 +139,9 @@ topo2bdp = {
 }
 
 FLOWGEN_DEFAULT_TIME = 2.0  # see /traffic_gen/traffic_gen.py::base_t
+DEFAULT_ANALYSIS_WARMUP = 0.005
+MIN_SMOKE_TIME = 0.005
+MIN_FORMAL_TIME = 0.010
 
 
 def main():
@@ -158,6 +163,12 @@ def main():
                         type=int, default=0, help="enable IRN (default: 0)")
     parser.add_argument('--simul_time', dest='simul_time', action='store',
                         default='0.1', help="traffic time to simulate (up to 3 seconds) (default: 0.1)")
+    parser.add_argument('--smoke', action='store_true',
+                        help="allow a 5ms diagnostic run and suppress formal FCT summaries")
+    parser.add_argument('--analysis_warmup', type=float, default=DEFAULT_ANALYSIS_WARMUP,
+                        help="warm-up excluded from formal FCT analysis in seconds (default: 0.005)")
+    parser.add_argument('--max_flows', type=int, default=150000,
+                        help="abort before ns-3 when traffic exceeds this flow count (default: 150000)")
     parser.add_argument('--buffer', dest="buffer", action='store',
                         default='9', help="the switch buffer size (MB) (default: 9)")
     parser.add_argument('--netload', dest='netload', action='store', type=int,
@@ -220,8 +231,8 @@ def main():
     enforce_win = args.enforce_win
     cdf = args.cdf
     flowgen_start_time = FLOWGEN_DEFAULT_TIME  # default: 2.0
-    flowgen_stop_time = flowgen_start_time + \
-        float(args.simul_time)  # default: 2.0
+    simul_time = float(args.simul_time)
+    flowgen_stop_time = flowgen_start_time + simul_time
     sw_monitoring_interval = int(args.sw_monitoring_interval)
     qlen_monitoring_interval = int(args.qlen_monitoring_interval)
 
@@ -235,6 +246,16 @@ def main():
         raise Exception("CONFIG ERROR: --seed must be in [1, 2147483647].")
     if qlen_monitoring_interval <= 0:
         raise Exception("CONFIG ERROR: --qlen_monitoring_interval must be positive.")
+    if args.analysis_warmup < 0:
+        raise Exception("CONFIG ERROR: --analysis_warmup must be non-negative.")
+    if args.max_flows <= 0:
+        raise Exception("CONFIG ERROR: --max_flows must be positive.")
+    if simul_time < MIN_SMOKE_TIME:
+        raise Exception("CONFIG ERROR: Runtime must be at least 5ms.")
+    if not args.smoke and simul_time < MIN_FORMAL_TIME:
+        raise Exception("CONFIG ERROR: Formal runs must be at least 10ms; use --smoke for diagnostics.")
+    if not args.smoke and args.analysis_warmup >= simul_time:
+        raise Exception("CONFIG ERROR: --analysis_warmup must be shorter than a formal run.")
 
     # get over-subscription ratio from topoogy name
 
@@ -258,9 +279,6 @@ def main():
     if enabled_irn == 0 and enabled_pfc == 0:
         raise Exception(
             "CONFIG ERROR : Either IRN or PFC should be true (at least one).")
-    if float(args.simul_time) < 0.005:
-        raise Exception("CONFIG ERROR : Runtime must be larger than 5ms (= warmup interval).")
-
     # sniff number of servers
     with open("config/{topo}.txt".format(topo=args.topo), 'r') as f_topo:
         line = f_topo.readline().split(" ")
@@ -294,6 +312,19 @@ def main():
             time=args.simul_time,
             seed=args.seed,
             output=os.getcwd() + "/config/" + flow + ".txt"))
+
+    flow_path = os.getcwd() + "/config/" + flow + ".txt"
+    try:
+        with open(flow_path, "r") as traffic_file:
+            flow_count = int(traffic_file.readline().strip())
+    except (OSError, ValueError) as error:
+        raise Exception("CONFIG ERROR: cannot read flow count from {}: {}".format(
+            flow_path, error))
+    if flow_count > args.max_flows:
+        raise Exception(
+            "CONFIG ERROR: traffic has {} flows, exceeding --max_flows {}; ns-3 was not started.".format(
+                flow_count, args.max_flows))
+    print("Preflight flow count: {}/{}".format(flow_count, args.max_flows))
 
     # sanity check - bandwidth
     with open("config/{topo}.txt".format(topo=args.topo), 'r') as f_topo:
@@ -419,6 +450,8 @@ def main():
                                         flowgen_stop_time=flowgen_stop_time, sw_monitoring_interval=sw_monitoring_interval,
                                         qlen_monitoring_interval=qlen_monitoring_interval,
                                         monitor_profile=args.monitor_profile,
+                                        analysis_warmup_time=args.analysis_warmup,
+                                        max_flows=args.max_flows,
                                         load=netload, buffer_size=buffer, lb_mode=lb_mode, cwh_tx_expiry_time=cwh_tx_expiry_time,
                                         cwh_extra_reply_deadline=cwh_extra_reply_deadline, cwh_default_voq_waiting_time=cwh_default_voq_waiting_time,
                                         cwh_path_pause_time=cwh_path_pause_time, cwh_extra_voq_flush_time=cwh_extra_voq_flush_time,
@@ -460,15 +493,23 @@ def main():
     ####################################################
     # NOTE: collect data except warm-up and cold-finish period
     fct_analysis_time_limit_begin = int(
-        flowgen_start_time * 1e9) + int(0.005 * 1e9)  # warmup
+        flowgen_start_time * 1e9) + int(args.analysis_warmup * 1e9)
     fct_analysistime_limit_end = int(
         flowgen_stop_time * 1e9) + int(0.05 * 1e9)  # extra term
 
-    print("Analyzing output FCT...")
-    print("python3 fctAnalysis.py -id {config_ID} -dir {dir} -bdp {bdp} -sT {fct_analysis_time_limit_begin} -fT {fct_analysistime_limit_end} > /dev/null 2>&1".format(
-        config_ID=config_ID, dir=os.getcwd(), bdp=bdp, fct_analysis_time_limit_begin=fct_analysis_time_limit_begin, fct_analysistime_limit_end=fct_analysistime_limit_end))
-    os.system("python3 fctAnalysis.py -id {config_ID} -dir {dir} -bdp {bdp} -sT {fct_analysis_time_limit_begin} -fT {fct_analysistime_limit_end} > /dev/null 2>&1".format(
-        config_ID=config_ID, dir=os.getcwd(), bdp=bdp, fct_analysis_time_limit_begin=fct_analysis_time_limit_begin, fct_analysistime_limit_end=fct_analysistime_limit_end))
+    if args.smoke:
+        print("Skipping formal FCT summary for --smoke run.")
+        smoke_summary = os.path.join(
+            os.getcwd(), "mix", "output", config_ID,
+            "{}_out_fct_summary.txt".format(config_ID))
+        with open(smoke_summary, "w") as summary_file:
+            summary_file.write("SMOKE_ONLY no formal FCT statistics\n")
+    else:
+        print("Analyzing output FCT...")
+        print("python3 fctAnalysis.py -id {config_ID} -dir {dir} -bdp {bdp} -sT {fct_analysis_time_limit_begin} -fT {fct_analysistime_limit_end} > /dev/null 2>&1".format(
+            config_ID=config_ID, dir=os.getcwd(), bdp=bdp, fct_analysis_time_limit_begin=fct_analysis_time_limit_begin, fct_analysistime_limit_end=fct_analysistime_limit_end))
+        os.system("python3 fctAnalysis.py -id {config_ID} -dir {dir} -bdp {bdp} -sT {fct_analysis_time_limit_begin} -fT {fct_analysistime_limit_end} > /dev/null 2>&1".format(
+            config_ID=config_ID, dir=os.getcwd(), bdp=bdp, fct_analysis_time_limit_begin=fct_analysis_time_limit_begin, fct_analysistime_limit_end=fct_analysistime_limit_end))
 
     if lb_mode == 9: # ConWeave Logging
         ################################################################
@@ -476,7 +517,7 @@ def main():
         ################################################################
         # NOTE: collect data except warm-up and cold-finish period
         queue_analysis_time_limit_begin = int(
-            flowgen_start_time * 1e9) + int(0.005 * 1e9)  # warmup
+            flowgen_start_time * 1e9) + int(args.analysis_warmup * 1e9)
         queue_analysistime_limit_end = int(flowgen_stop_time * 1e9)
         print("Analyzing output Queue...")
         print("python3 queueAnalysis.py -id {config_ID} -dir {dir} -sT {queue_analysis_time_limit_begin} -fT {queue_analysistime_limit_end} > /dev/null 2>&1".format(
