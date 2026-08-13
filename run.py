@@ -29,6 +29,7 @@ CNP_OUTPUT_FILE mix/output/{id}/{id}_out_cnp.txt
 FCT_OUTPUT_FILE mix/output/{id}/{id}_out_fct.txt
 PFC_OUTPUT_FILE mix/output/{id}/{id}_out_pfc.txt
 GUARD_STATS_OUTPUT_FILE mix/output/{id}/{id}_out_guard_stats.txt
+QUEUE_STATS_OUTPUT_FILE mix/output/{id}/{id}_out_queue_stats.txt
 QLEN_MON_FILE mix/output/{id}/{id}_out_qlen.txt
 VOQ_MON_FILE mix/output/{id}/{id}_out_voq.txt
 VOQ_MON_DETAIL_FILE mix/output/{id}/{id}_out_voq_per_dst.txt
@@ -36,6 +37,7 @@ UPLINK_MON_FILE mix/output/{id}/{id}_out_uplink.txt
 CONN_MON_FILE mix/output/{id}/{id}_out_conn.txt
 EST_ERROR_MON_FILE mix/output/{id}/{id}_out_est_error.txt
 
+MONITOR_PROFILE {monitor_profile}
 QLEN_MON_START {qlen_mon_start}
 QLEN_MON_END {qlen_mon_end}
 QLEN_MON_INTERVAL {qlen_monitoring_interval}
@@ -169,9 +171,11 @@ def main():
     parser.add_argument('--enforce_win', dest='enforce_win', action='store',
                         type=int, default=0, help="enforce to use window scheme (default: 0)")
     parser.add_argument('--sw_monitoring_interval', dest='sw_monitoring_interval', action='store',
-                        type=int, default=10000, help="interval of sampling statistics for queue status (default: 10000ns)")
+                        type=int, default=10000, help="uplink/connection sampling interval in full mode (default: 10000ns)")
     parser.add_argument('--qlen_monitoring_interval', type=int, default=1000,
                         help="queue-length sampling interval in ns (default: 1000ns)")
+    parser.add_argument('--monitor_profile', choices=('bulk', 'full'), default='bulk',
+                        help="bulk keeps bounded summaries; full adds detailed time series (default: bulk)")
     parser.add_argument('--guard_beta', type=float, default=0.125,
                         help="GUARD EWMA historical-sample weight in [0,1] (default: 0.125)")
     parser.add_argument('--guard_gamma', type=float, default=1.0,
@@ -414,6 +418,7 @@ def main():
                                         qlen_mon_start=qlen_mon_start, qlen_mon_end=qlen_mon_end, flowgen_start_time=flowgen_start_time,
                                         flowgen_stop_time=flowgen_stop_time, sw_monitoring_interval=sw_monitoring_interval,
                                         qlen_monitoring_interval=qlen_monitoring_interval,
+                                        monitor_profile=args.monitor_profile,
                                         load=netload, buffer_size=buffer, lb_mode=lb_mode, cwh_tx_expiry_time=cwh_tx_expiry_time,
                                         cwh_extra_reply_deadline=cwh_extra_reply_deadline, cwh_default_voq_waiting_time=cwh_default_voq_waiting_time,
                                         cwh_path_pause_time=cwh_path_pause_time, cwh_extra_voq_flush_time=cwh_extra_voq_flush_time,

@@ -161,6 +161,11 @@ python3 run.py --cc <hpcc|guard|homa|...> \
                --topo leaf_spine_8_100G_OS1
 ```
 
+`run.py` 默认使用 `--monitor_profile bulk`：保留 FCT、PFC、GUARD 统计、配置文件以及
+有界的队列摘要，但不写队列、节点带宽、逐流带宽、上行链路和连接数时序。只有在小规模、
+有界诊断中才应使用 `--monitor_profile full`。队列采样间隔可用
+`--qlen_monitoring_interval <ns>` 设置，采样严格限制在配置的队列监控时间窗内。
+
 reviewer 实验的示例：
 
 ```bash
@@ -196,6 +201,8 @@ python3 run.py --cc guard-active-only --seed 3 ...
 | `--bw`           | 网卡带宽（Gbps，默认 100）                   |
 | `--cdf`          | 流大小 CDF：默认 `AliStorage2019`，可选 `WebSearch` 等 |
 | `--seed`         | 同时设置流量发生器和 ns-3 RNG；也进入流量文件名，默认 1 |
+| `--monitor_profile` | `bulk` 只保留核心输出和队列摘要；`full` 额外输出详细时序 |
+| `--qlen_monitoring_interval` | `full` 时队列时序及所有模式队列摘要的采样间隔（ns） |
 | `--guard_beta`   | OFLM EWMA 的历史样本权重，范围 [0,1]，默认 0.125 |
 | `--guard_gamma`  | OFLM 主动释放阈值倍数，非负，默认 1.0 |
 | `--guard_lambda` | 完整 GUARD 的 HPCC target 倍数，至少 1，默认 1.0 |
@@ -205,7 +212,8 @@ python3 run.py --cc guard-active-only --seed 3 ...
 
 - `<id>_in.txt`：原始流输入
 - `<id>_out_fct.txt` / `<id>_out_fct_summary.txt`：FCT 结果（slowdown 和绝对值的 P50/P95/P99/P99.9）
-- `<id>_out_qlen.txt`：交换机出端口队列长度采样（每 1µs，guard 默认开）
+- `<id>_out_qlen.txt`：交换机出端口队列长度时序（仅 `full` 模式）
+- `<id>_out_queue_stats.txt`：有界时间窗内所有交换机出端口队列的样本数、平均值、P95、P99 和最大值
 - `<id>_out_bw.txt`：节点级吞吐采样（每 100µs）
 - `<id>_flow_bw.txt`：每条流的吞吐采样
 - `<id>_out_pfc.txt`：PFC 触发记录

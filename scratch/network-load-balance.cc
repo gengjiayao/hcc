@@ -87,6 +87,7 @@ uint32_t qlen_mon_interval = 1000;  // ns
 double qlen_mon_start;               // seconds
 double qlen_mon_end;                 // seconds
 uint32_t switch_mon_interval = 10000;  // ns
+bool detailed_monitoring = true;       // backward-compatible for legacy configs
 uint64_t cnp_mon_start;                // ns
 uint64_t cnp_monitor_bucket = 100000;  // ns
 uint64_t irn_mon_start;                // ns
@@ -110,6 +111,7 @@ std::string flow_input_file = "flow.txt";
 std::string fct_output_file = "fct.txt";
 std::string pfc_output_file = "pfc.txt";
 std::string guard_stats_output_file = "guard_stats.txt";
+std::string queue_stats_output_file = "queue_stats.txt";
 std::string cnp_output_file = "cnp.txt";
 std::string qlen_mon_file = "qlen.txt";
 std::string voq_mon_file = "voq.txt";
@@ -614,6 +616,22 @@ struct QlenDistribution {
 
 static std::map<std::pair<uint32_t, uint32_t>, uint32_t> topology_cache;
 map<uint32_t, map<uint32_t, QlenDistribution>> queue_result;
+uint64_t queue_sample_count = 0;
+uint64_t queue_sample_sum_bytes = 0;
+uint32_t queue_sample_max_bytes = 0;
+std::map<uint32_t, uint64_t> queue_depth_histogram;
+
+uint32_t queue_depth_percentile(uint32_t percentile) {
+    if (queue_sample_count == 0) return 0;
+    uint64_t rank = (queue_sample_count * percentile + 99) / 100;
+    uint64_t cumulative = 0;
+    for (const auto &entry : queue_depth_histogram) {
+        cumulative += entry.second;
+        if (cumulative >= rank) return entry.first;
+    }
+    return queue_sample_max_bytes;
+}
+
 void monitor_buffer(FILE *qlen_output, NodeContainer *n) {
     uint64_t now = Simulator::Now().GetTimeStep();
 
@@ -629,7 +647,12 @@ void monitor_buffer(FILE *qlen_output, NodeContainer *n) {
             for (uint32_t j = 1; j < sw->GetNDevices(); j++) {
                 uint32_t size = sw->m_mmu->m_usedEgressPortBytes[j];
 
-                if (size > 0) {
+                queue_sample_count++;
+                queue_sample_sum_bytes += size;
+                queue_sample_max_bytes = std::max(queue_sample_max_bytes, size);
+                queue_depth_histogram[size]++;
+
+                if (detailed_monitoring && size > 0) {
                     uint32_t neighborId = 999999; // 默认未知 ID
                     std::pair<uint32_t, uint32_t> key = {i, j};
 
@@ -883,6 +906,18 @@ int main(int argc, char *argv[]) {
                 conf >> v;
                 switch_mon_interval = v;
                 std::cerr << "SW_MONITORING_INTERVAL\t\t\t" << switch_mon_interval << "\n";
+            } else if (key.compare("MONITOR_PROFILE") == 0) {
+                std::string v;
+                conf >> v;
+                if (v == "bulk") {
+                    detailed_monitoring = false;
+                } else if (v == "full") {
+                    detailed_monitoring = true;
+                } else {
+                    std::cerr << "Invalid MONITOR_PROFILE: " << v << "\n";
+                    return 1;
+                }
+                std::cerr << "MONITOR_PROFILE\t\t\t" << v << "\n";
             } else if (key.compare("CONWEAVE_TX_EXPIRY_TIME") == 0) {
                 uint32_t v;
                 conf >> v;
@@ -1125,6 +1160,9 @@ int main(int argc, char *argv[]) {
             } else if (key.compare("GUARD_STATS_OUTPUT_FILE") == 0) {
                 conf >> guard_stats_output_file;
                 std::cerr << "GUARD_STATS_OUTPUT_FILE\t\t" << guard_stats_output_file << '\n';
+            } else if (key.compare("QUEUE_STATS_OUTPUT_FILE") == 0) {
+                conf >> queue_stats_output_file;
+                std::cerr << "QUEUE_STATS_OUTPUT_FILE\t\t" << queue_stats_output_file << '\n';
             } else if (key.compare("LINK_DOWN") == 0) {
                 conf >> link_down_time >> link_down_A >> link_down_B;
                 std::cerr << "LINK_DOWN\t\t\t\t" << link_down_time << ' ' << link_down_A << ' '
@@ -1597,10 +1635,12 @@ int main(int argc, char *argv[]) {
             Ptr<RdmaDriver> rdma = CreateObject<RdmaDriver>();
             Ptr<Node> node = n.Get(i);
 
-            for (uint32_t j = 0; j < node->GetNDevices(); ++j) {
-                Ptr<NetDevice> dev = node->GetDevice(j);
-                dev->TraceConnectWithoutContext ("PhyTxEnd",MakeBoundCallback (&NodeTx, dev));
-                dev->TraceConnectWithoutContext ("PhyRxEnd",MakeBoundCallback (&NodeRx, dev));
+            if (detailed_monitoring) {
+                for (uint32_t j = 0; j < node->GetNDevices(); ++j) {
+                    Ptr<NetDevice> dev = node->GetDevice(j);
+                    dev->TraceConnectWithoutContext("PhyTxEnd", MakeBoundCallback(&NodeTx, dev));
+                    dev->TraceConnectWithoutContext("PhyRxEnd", MakeBoundCallback(&NodeRx, dev));
+                }
             }
 
             rdma->SetNode(node);
@@ -1916,14 +1956,16 @@ int main(int argc, char *argv[]) {
 
     topof.close();
 
-    qlen_output = fopen(qlen_mon_file.c_str(), "w");
+    if (detailed_monitoring) qlen_output = fopen(qlen_mon_file.c_str(), "w");
     Simulator::Schedule(Seconds(qlen_mon_start), &monitor_buffer, qlen_output, &n);
 
-    bw_output = fopen(bw_output_file.c_str(), "w");
-    Simulator::Schedule(Seconds(flowgen_start_time), &PrintBw, bw_output);
+    if (detailed_monitoring) {
+        bw_output = fopen(bw_output_file.c_str(), "w");
+        Simulator::Schedule(Seconds(flowgen_start_time), &PrintBw, bw_output);
 
-    flow_bw_output = fopen(flow_bw_output_file.c_str(), "w");
-    Simulator::Schedule(Seconds(flowgen_start_time), &PrintFlowBw, flow_bw_output);
+        flow_bw_output = fopen(flow_bw_output_file.c_str(), "w");
+        Simulator::Schedule(Seconds(flowgen_start_time), &PrintFlowBw, flow_bw_output);
+    }
 
     // schedule link down
     if (link_down_time > 0) {
@@ -1931,13 +1973,15 @@ int main(int argc, char *argv[]) {
                             &TakeDownLink, n, n.Get(link_down_A), n.Get(link_down_B));
     }
 
-    if (lb_mode == 9) {
+    if (detailed_monitoring && lb_mode == 9) {
         voq_output = fopen(voq_mon_file.c_str(), "w");                // specific to ConWeave
         voq_detail_output = fopen(voq_mon_detail_file.c_str(), "w");  // specific to ConWeave
     }
 
-    uplink_output = fopen(uplink_mon_file.c_str(), "w");  // common
-    conn_output = fopen(conn_mon_file.c_str(), "w");      // common
+    if (detailed_monitoring) {
+        uplink_output = fopen(uplink_mon_file.c_str(), "w");  // common
+        conn_output = fopen(conn_mon_file.c_str(), "w");      // common
+    }
 
     // update torId2UplinkIf, torId2DownlinkIf
     for (size_t ToRId = 0; ToRId < Settings::node_num; ToRId++) {
@@ -1964,8 +2008,10 @@ int main(int argc, char *argv[]) {
             }
         }
     }
-    Simulator::Schedule(Seconds(flowgen_start_time), &periodic_monitoring, voq_output,
-                        voq_detail_output, uplink_output, conn_output, &lb_mode);
+    if (detailed_monitoring) {
+        Simulator::Schedule(Seconds(flowgen_start_time), &periodic_monitoring, voq_output,
+                            voq_detail_output, uplink_output, conn_output, &lb_mode);
+    }
 
     //
     // Now, do the actual simulation.
@@ -1978,6 +2024,18 @@ int main(int argc, char *argv[]) {
                         &stop_simulation_middle);  // check every 100us
     Simulator::Stop(Seconds(flowgen_stop_time + 10.0));
     Simulator::Run();
+
+    FILE *queue_stats_output = fopen(queue_stats_output_file.c_str(), "w");
+    double queue_average_bytes = queue_sample_count == 0
+                                     ? 0.0
+                                     : static_cast<double>(queue_sample_sum_bytes) /
+                                           static_cast<double>(queue_sample_count);
+    fprintf(queue_stats_output, "samples %lu\n", queue_sample_count);
+    fprintf(queue_stats_output, "average_bytes %.3f\n", queue_average_bytes);
+    fprintf(queue_stats_output, "p95_bytes %u\n", queue_depth_percentile(95));
+    fprintf(queue_stats_output, "p99_bytes %u\n", queue_depth_percentile(99));
+    fprintf(queue_stats_output, "max_bytes %u\n", queue_sample_max_bytes);
+    fclose(queue_stats_output);
 
     FILE *guard_stats_output = fopen(guard_stats_output_file.c_str(), "w");
     fprintf(guard_stats_output,
