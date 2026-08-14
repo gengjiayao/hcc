@@ -185,6 +185,7 @@ bool guard_remaining_aware = true;
 double guard_min_share_fraction = 0.0;
 double guard_remaining_exponent = 1.0;
 uint32_t guard_receiver_concurrency = 0;
+double guard_concurrency_min_bdps = 8.0;
 double guard_grant_refresh_bdps = 1.0;
 uint32_t guard_srpt_quantum_packets = 64;
 bool guard_work_conserving = false;
@@ -1321,6 +1322,10 @@ int main(int argc, char *argv[]) {
                 conf >> guard_receiver_concurrency;
                 std::cerr << "GUARD_RECEIVER_CONCURRENCY\t"
                           << guard_receiver_concurrency << '\n';
+            } else if (key.compare("GUARD_CONCURRENCY_MIN_BDPS") == 0) {
+                conf >> guard_concurrency_min_bdps;
+                std::cerr << "GUARD_CONCURRENCY_MIN_BDPS\t"
+                          << guard_concurrency_min_bdps << '\n';
             } else if (key.compare("GUARD_GRANT_REFRESH_BDPS") == 0) {
                 conf >> guard_grant_refresh_bdps;
                 std::cerr << "GUARD_GRANT_REFRESH_BDPS\t"
@@ -1581,6 +1586,10 @@ int main(int argc, char *argv[]) {
     }
     if (guard_remaining_exponent < 0.0 || guard_remaining_exponent > 2.0) {
         std::cerr << "GUARD_REMAINING_EXPONENT must be in [0, 2]\n";
+        return 1;
+    }
+    if (guard_concurrency_min_bdps < 0.0 || guard_concurrency_min_bdps > 64.0) {
+        std::cerr << "GUARD_CONCURRENCY_MIN_BDPS must be in [0, 64]\n";
         return 1;
     }
     if (homa_overcommit < 1 || homa_overcommit > 6) {
@@ -2061,6 +2070,8 @@ int main(int argc, char *argv[]) {
                                  DoubleValue(guard_remaining_exponent));
             rdmaHw->SetAttribute("GuardReceiverConcurrency",
                                  UintegerValue(guard_receiver_concurrency));
+            rdmaHw->SetAttribute("GuardConcurrencyMinBdps",
+                                 DoubleValue(guard_concurrency_min_bdps));
             rdmaHw->SetAttribute("GuardGrantRefreshBdps",
                                  DoubleValue(guard_grant_refresh_bdps));
             rdmaHw->SetAttribute("GuardSrptQuantumPackets",
@@ -2799,11 +2810,13 @@ int main(int argc, char *argv[]) {
     fprintf(guard_stats_output,
             "guard_receiver_scheduler remaining_aware %u min_share_fraction %.6f "
             "remaining_exponent %.6f concurrency %u limited_allocations %lu "
-            "max_deferred %lu refresh_bdps %.6f refresh_events %lu\n",
+            "max_deferred %lu concurrency_min_bdps %.6f refresh_bdps %.6f "
+            "refresh_events %lu\n",
             guard_remaining_aware ? 1 : 0, guard_min_share_fraction,
             guard_remaining_exponent, guard_receiver_concurrency,
             total_guard_concurrency_limited_allocations,
-            max_guard_concurrency_deferred_flows, guard_grant_refresh_bdps,
+            max_guard_concurrency_deferred_flows, guard_concurrency_min_bdps,
+            guard_grant_refresh_bdps,
             total_guard_remaining_refresh_events);
     fprintf(guard_stats_output, "switch_drops ingress %u egress %u total %u\n",
             Settings::dropped_pkt_sw_ingress, Settings::dropped_pkt_sw_egress,

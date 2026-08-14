@@ -264,6 +264,18 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
                     "guard_grant_refresh_bdps": float(parts[14]),
                     "guard_remaining_refresh_events": int(parts[16]),
                 }
+            elif parts[:2] == ["guard_receiver_scheduler", "remaining_aware"] and len(parts) == 19:
+                guard_receiver = {
+                    "guard_remaining_aware": int(parts[2]),
+                    "guard_min_share_fraction": float(parts[4]),
+                    "guard_remaining_exponent": float(parts[6]),
+                    "guard_receiver_concurrency": int(parts[8]),
+                    "guard_concurrency_limited_allocations": int(parts[10]),
+                    "guard_concurrency_max_deferred_flows": int(parts[12]),
+                    "guard_concurrency_min_bdps": float(parts[14]),
+                    "guard_grant_refresh_bdps": float(parts[16]),
+                    "guard_remaining_refresh_events": int(parts[18]),
+                }
             elif parts and parts[0] == "homa_priority" and len(parts) == 4:
                 try:
                     priority = int(parts[1])

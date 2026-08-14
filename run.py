@@ -107,6 +107,7 @@ GUARD_REMAINING_AWARE {guard_remaining_aware}
 GUARD_MIN_SHARE_FRACTION {guard_min_share_fraction}
 GUARD_REMAINING_EXPONENT {guard_remaining_exponent}
 GUARD_RECEIVER_CONCURRENCY {guard_receiver_concurrency}
+GUARD_CONCURRENCY_MIN_BDPS {guard_concurrency_min_bdps}
 GUARD_GRANT_REFRESH_BDPS {guard_grant_refresh_bdps}
 GUARD_SRPT_QUANTUM_PACKETS {guard_srpt_quantum_packets}
 GUARD_WORK_CONSERVING {guard_work_conserving}
@@ -418,6 +419,8 @@ def main():
                         help="inverse-remaining-size exponent in [0,2] (default: 1)")
     parser.add_argument('--guard_receiver_concurrency', type=int, default=0,
                         help="registered flows served above MinRate; 0 serves all (default: 0)")
+    parser.add_argument('--guard_concurrency_min_bdps', type=float, default=8.0,
+                        help="apply receiver concurrency bound only above this many BDPs (default: 8)")
     parser.add_argument('--guard_grant_refresh_bdps', type=float, default=1.0,
                         help="receiver progress between grant refreshes in BDPs; 0 disables (default: 1)")
     parser.add_argument('--guard_srpt_quantum_packets', type=int, default=64,
@@ -532,6 +535,8 @@ def main():
         raise Exception("CONFIG ERROR: --guard_remaining_exponent must be in [0, 2].")
     if args.guard_receiver_concurrency < 0:
         raise Exception("CONFIG ERROR: --guard_receiver_concurrency must be non-negative.")
+    if not 0.0 <= args.guard_concurrency_min_bdps <= 64.0:
+        raise Exception("CONFIG ERROR: --guard_concurrency_min_bdps must be in [0, 64].")
     if not 0.0 <= args.guard_grant_refresh_bdps <= 16.0:
         raise Exception("CONFIG ERROR: --guard_grant_refresh_bdps must be in [0, 16].")
     if not 0.0 < args.guard_demand_threshold < 1.0:
@@ -908,6 +913,7 @@ def main():
                                         guard_min_share_fraction=args.guard_min_share_fraction,
                                         guard_remaining_exponent=args.guard_remaining_exponent,
                                         guard_receiver_concurrency=args.guard_receiver_concurrency,
+                                        guard_concurrency_min_bdps=args.guard_concurrency_min_bdps,
                                         guard_grant_refresh_bdps=args.guard_grant_refresh_bdps,
                                         guard_srpt_quantum_packets=args.guard_srpt_quantum_packets,
                                         guard_work_conserving=args.guard_work_conserving,
