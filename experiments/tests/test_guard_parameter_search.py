@@ -14,6 +14,7 @@ REPO = Path(__file__).resolve().parents[2]
 SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage1.json"
 QUANTUM_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage1b.json"
 TAIL_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage1c.json"
+LAMBDA_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage1d.json"
 
 
 class GuardParameterSearchTest(unittest.TestCase):
@@ -90,6 +91,18 @@ class GuardParameterSearchTest(unittest.TestCase):
         self.assertIn("--guard_tail_congestion_gate 1", joined)
         self.assertIn("--guard_tail_safe_ratio 0.9", joined)
         self.assertIn("--guard_tail_safe_samples 2", joined)
+
+    def test_high_load_lambda_grid_is_complete(self):
+        spec = read_spec(LAMBDA_SPEC_PATH)
+        self.assertEqual(spec["search_kind"], "lambda_high_load")
+        self.assertEqual(
+            {arm["guard_lambda"] for arm in spec["arms"].values()},
+            {1.8, 2.0, 2.2, 2.4},
+        )
+        command = run_command(
+            REPO, spec, {"name": "AliStorage50", "cdf": "AliStorage2019"},
+            {"seed": 46, "path": "/tmp/frozen-flow.txt"}, "lambda220")
+        self.assertIn("--guard_lambda 2.2", " ".join(command))
 
     def test_selection_applies_primary_and_constraint_gates(self):
         result = select_candidate(self.spec, self.rows())
