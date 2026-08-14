@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "campaign": "guard-parameter-search-stage3c-adaptive-target-scope",
+  "seed": 86,
+  "flow_count": 6199,
+  "flow_sha256": "06ec28bfe9246e3c0d2dff92960d6b39a04c2016dccc89dcd062df2b9a1225d8",
+  "preflight_sha256": "cdc7745f35f3395af3b632424b0566c1657bd306934a1312dedef2aff76f08d2",
+  "decision": "stop_without_performance",
+  "all_arms_passed": false,
+  "arms": [
+    {"arm": "adaptive_off", "output_id": "803875412", "passed": true, "adaptive_updates": 0},
+    {"arm": "scope4", "output_id": "162092399", "passed": false, "adaptive_updates": 0},
+    {"arm": "scope8", "output_id": "715123311", "passed": false, "adaptive_updates": 0},
+    {"arm": "scope12", "output_id": "267200270", "passed": true, "adaptive_updates": 7}
+  ]
+}
