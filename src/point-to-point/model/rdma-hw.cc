@@ -211,6 +211,8 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_homaGrantsReceived = 0;
     m_homaResendsSent = 0;
     m_homaResendsReceived = 0;
+    m_homaCompletionNoticesSent = 0;
+    m_homaCompletionNoticesReceived = 0;
     m_homaMessagesTracked = 0;
     m_homaMessagesCompleted = 0;
     m_homaMaxPendingMessages = 0;
@@ -493,6 +495,15 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
         rxQp->m_seen_first_pkt = true;
     }
 
+    // Homa owns receive ordering and loss detection. Do not feed its DATA
+    // through the repository's RC ACK/NACK path: doing so mixes Go-Back-N
+    // recovery into the Homa baseline and creates NACKs from benign packet
+    // reordering. A completion-only simulator notice closes the one-way QP.
+    if (m_cc_mode == 12) {
+        ReceiveHomaData(rxQp, p, ch);
+        return 0;
+    }
+
     bool cnp_check = false;
     int x = ReceiverCheckSeq(ch.udp.seq, rxQp, payload_size, cnp_check);
 
@@ -653,11 +664,6 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
         } else {
             ReceiveHomaSimpleData(rxQp, p, ch);
         }
-    }
-
-    // homa (cc_mode 12): PR1 just observes; ACK path is unchanged.
-    if (m_cc_mode == 12) {
-        ReceiveHomaData(rxQp, p, ch);
     }
 
     return 0;
@@ -1201,7 +1207,7 @@ void RdmaHw::PktSent(Ptr<RdmaQueuePair> qp, Ptr<Packet> pkt, Time interframeGap)
                   << "l3Prot:" << ch.l3Prot << ",at" << Simulator::Now() << std::endl;
 #endif
         RdmaHw::nAllPkts += 1;
-        if (ch.l3Prot == 0x11) {  // UDP
+        if (ch.l3Prot == 0x11 && m_cc_mode != 12) {  // UDP except Homa
             // Update Timer
             if (qp->m_retransmit.IsRunning()) qp->m_retransmit.Cancel();
             qp->m_retransmit = Simulator::Schedule(qp->GetRto(m_mtu), &RdmaHw::HandleTimeout, this,
@@ -2045,6 +2051,16 @@ int RdmaHw::ReceiveHomaControl(Ptr<Packet> /*p*/, CustomHeader &ch) {
             m_nic[nic_idx].dev->TriggerTransmit();
             return 0;
         }
+        case HomaHeader::ACK: {
+            // The traffic generator models one-way messages, whereas Homa's
+            // normal RPC response implicitly acknowledges the request. This
+            // completion-only control notice is simulator plumbing: it does
+            // not provide per-packet reliability or drive sender progress.
+            qp->Acknowledge(qp->m_size);
+            m_homaCompletionNoticesReceived++;
+            if (qp->IsFinished()) QpComplete(qp);
+            return 0;
+        }
         // PR5+ will add NEED_ACK / ACK / BUSY / UNKNOWN handling.
         default:
             return 0;
@@ -2157,6 +2173,7 @@ void RdmaHw::HomaScheduler::OnDataArrival(Ptr<RdmaRxQueuePair> rx_qp,
     }
 
     if (p_flow->fully_received()) {
+        SendCompletionNotice(p_flow);
         rdma_hw->m_homaMessagesCompleted++;
         active.erase(hkey);
         flow_hash.erase(hkey);
@@ -2298,6 +2315,40 @@ void RdmaHw::HomaScheduler::SendResend(HomaFlow* flow, uint64_t offset, uint64_t
     uint32_t nic_idx = rdma_hw->GetNicIdxOfRxQp(flow->rx_qp);
     rdma_hw->m_nic[nic_idx].dev->RdmaEnqueueHighPrioQ(newp);
     rdma_hw->m_homaResendsSent++;
+    rdma_hw->m_nic[nic_idx].dev->TriggerTransmit();
+}
+
+void RdmaHw::HomaScheduler::SendCompletionNotice(HomaFlow* flow) {
+    qbbHeader qbbh;
+    qbbh.SetSeq(flow->msg_total_length);
+    qbbh.SetPG(flow->pg);
+    qbbh.SetSport(flow->rx_qp->sport);
+    qbbh.SetDport(flow->rx_qp->dport);
+    qbbh.SetCnp();
+
+    HomaHeader hfh;
+    hfh.SetType(HomaHeader::ACK);
+    hfh.SetMessageId((uint64_t)flow->rx_qp->m_flow_id);
+
+    Ptr<Packet> newp = Create<Packet>(
+        std::max(60 - 14 - 20 - (int)qbbh.GetSerializedSize() -
+                     (int)HomaHeader::GetHeaderSize(), 0));
+    newp->AddHeader(hfh);
+    newp->AddHeader(qbbh);
+
+    Ipv4Header head;
+    head.SetDestination(Ipv4Address(flow->rx_qp->dip));
+    head.SetSource(Ipv4Address(flow->rx_qp->sip));
+    head.SetProtocol(0xFA);
+    head.SetTtl(64);
+    head.SetPayloadSize(newp->GetSize());
+    head.SetIdentification(flow->rx_qp->m_ipid++);
+    newp->AddHeader(head);
+    rdma_hw->AddHeader(newp, 0x800);
+
+    uint32_t nic_idx = rdma_hw->GetNicIdxOfRxQp(flow->rx_qp);
+    rdma_hw->m_nic[nic_idx].dev->RdmaEnqueueHighPrioQ(newp);
+    rdma_hw->m_homaCompletionNoticesSent++;
     rdma_hw->m_nic[nic_idx].dev->TriggerTransmit();
 }
 

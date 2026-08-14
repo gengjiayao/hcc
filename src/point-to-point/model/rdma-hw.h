@@ -253,6 +253,8 @@ class RdmaHw : public Object {
     uint64_t m_homaGrantsReceived;
     uint64_t m_homaResendsSent;
     uint64_t m_homaResendsReceived;
+    uint64_t m_homaCompletionNoticesSent;
+    uint64_t m_homaCompletionNoticesReceived;
     uint64_t m_homaMessagesTracked;
     uint64_t m_homaMessagesCompleted;
     uint64_t m_homaMaxPendingMessages;
@@ -560,6 +562,7 @@ class RdmaHw : public Object {
         void SendGrant(HomaFlow* flow, uint8_t grant_priority);
         void StallCheck();
         void SendResend(HomaFlow* flow, uint64_t offset, uint64_t length);
+        void SendCompletionNotice(HomaFlow* flow);
 
         RdmaHw* rdma_hw;
         bool is_scheduled;
