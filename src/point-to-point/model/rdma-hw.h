@@ -235,6 +235,8 @@ class RdmaHw : public Object {
     uint64_t m_guardReactiveBindingRateChanges;
     uint64_t m_guardGrantBindingRateChanges;
     uint64_t m_guardTieBindingRateChanges;
+    // Pacing-rate changes caused directly by a received receiver grant.
+    uint64_t m_guardGrantEventRateChanges;
     uint64_t m_guardIntHopsBeforeStrip;
     uint64_t m_guardIntHopsAfterStrip;
     uint64_t m_guardIntRecordsStripped;

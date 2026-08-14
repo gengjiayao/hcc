@@ -223,6 +223,7 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardReactiveBindingRateChanges = 0;
     m_guardGrantBindingRateChanges = 0;
     m_guardTieBindingRateChanges = 0;
+    m_guardGrantEventRateChanges = 0;
     m_guardIntHopsBeforeStrip = 0;
     m_guardIntHopsAfterStrip = 0;
     m_guardIntRecordsStripped = 0;
@@ -832,8 +833,10 @@ int RdmaHw::ReceiveRate(Ptr<Packet> p, CustomHeader &ch) {
     const char *binding = qp->hp.m_curRate < qp->hp.m_grantRate
                               ? "reactive"
                               : qp->hp.m_grantRate < qp->hp.m_curRate ? "grant" : "tie";
+    bool changed = qp->m_rate != old_rate;
+    if (changed) m_guardGrantEventRateChanges++;
     TraceGuardControllerEvent(qp, "grant", qp->hp.m_curRate, binding,
-                              qp->m_rate != old_rate, false, 0, qp->snd_nxt, -1.0, -1.0);
+                              changed, false, 0, qp->snd_nxt, -1.0, -1.0);
 
     return 0;
 }
