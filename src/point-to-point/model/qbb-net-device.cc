@@ -148,6 +148,63 @@ int RdmaEgressQueue::GetNextQindex(bool paused[]) {
         return best;
     }
 
+    // GUARD can use SRPT locally at the sender without changing either rate
+    // controller.  Eligibility is identical to the ordinary RDMA path: a
+    // flow must have bytes, window credit, an unpaused priority, and an
+    // expired pacing timer.  Ties retain round-robin order.
+    bool guard_srpt = false;
+    for (uint32_t index = 0; index < fcount; index++) {
+        if (!m_qpGrp->IsQpFinished(index) && m_qpGrp->Get(index)->m_guard_sender_srpt) {
+            guard_srpt = true;
+            break;
+        }
+    }
+    if (guard_srpt) {
+        int best = -1024;
+        int first_ready = -1024;
+        uint64_t best_remaining = std::numeric_limits<uint64_t>::max();
+        for (uint32_t step = 1; step <= fcount; step++) {
+            uint32_t index = (step + m_rrlast) % fcount;
+            if (m_qpGrp->IsQpFinished(index)) continue;
+            Ptr<RdmaQueuePair> qp = m_qpGrp->Get(index);
+            bool window_allowed =
+                !qp->IsWinBound() && (!qp->irn.m_enabled || qp->CanIrnTransmit(m_mtu));
+            bool has_bytes = qp->GetBytesLeft() > 0 && window_allowed;
+            if (!has_bytes) {
+                if (qp->IsFinishedConst()) m_qpGrp->SetQpFinished(index);
+                continue;
+            }
+            bool time_ok = qp->m_nextAvail <= Simulator::Now();
+            if (paused[qp->m_pg]) {
+                if (time_ok && !MAP_KEY_EXISTS(current_pause_time, qp->m_flow_id)) {
+                    current_pause_time[qp->m_flow_id] = Simulator::Now();
+                }
+                continue;
+            }
+            if (!time_ok) continue;
+            if (first_ready == -1024) first_ready = (int)index;
+            uint64_t remaining = qp->GetBytesLeft();
+            if (remaining < best_remaining) {
+                best_remaining = remaining;
+                best = (int)index;
+            }
+        }
+        if (best != -1024) {
+            Ptr<RdmaQueuePair> qp = m_qpGrp->Get((uint32_t)best);
+            if (MAP_KEY_EXISTS(current_pause_time, qp->m_flow_id)) {
+                Time duration = Simulator::Now() - current_pause_time[qp->m_flow_id];
+                if (!MAP_KEY_EXISTS(acc_pause_time, qp->m_flow_id)) {
+                    acc_pause_time[qp->m_flow_id] = Seconds(0);
+                }
+                acc_pause_time[qp->m_flow_id] += duration;
+                current_pause_time.erase(qp->m_flow_id);
+            }
+            Settings::guard_sender_srpt_selections++;
+            if (best != first_ready) Settings::guard_sender_srpt_non_rr_selections++;
+        }
+        return best;
+    }
+
     for (qIndex = 1; qIndex <= fcount; qIndex++) {
         if (m_qpGrp->IsQpFinished((qIndex + m_rrlast) % fcount)) continue;
         Ptr<RdmaQueuePair> qp = m_qpGrp->Get((qIndex + m_rrlast) % fcount);

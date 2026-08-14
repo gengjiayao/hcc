@@ -70,6 +70,7 @@ class RdmaQueuePair : public Object {
     uint64_t m_baseRtt;   // base RTT of this qp
     DataRate m_max_rate;  // max rate
     bool m_var_win;       // variable window size
+    bool m_guard_sender_srpt;  // GUARD sender selects the shortest ready flow
     Time m_nextAvail;     //< Soonest time of next send
     uint32_t wp;          // current window of packets
     uint32_t lastPktSize;

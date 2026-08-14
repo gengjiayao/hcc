@@ -128,6 +128,10 @@ TypeId RdmaHw::GetTypeId(void) {
                           "Remap GUARD flows to size-based priority groups",
                           BooleanValue(true), MakeBooleanAccessor(&RdmaHw::m_guardSizePriority),
                           MakeBooleanChecker())
+            .AddAttribute("GuardSenderSrpt",
+                          "Select the shortest remaining ready GUARD flow at each sender NIC",
+                          BooleanValue(true), MakeBooleanAccessor(&RdmaHw::m_guardSenderSrpt),
+                          MakeBooleanChecker())
             .AddAttribute("GuardWorkConserving",
                           "Reclaim persistently unused receiver grant shares",
                           BooleanValue(true), MakeBooleanAccessor(&RdmaHw::m_guardWorkConserving),
@@ -349,6 +353,7 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
     qp->SetVarWin(m_var_win);
     qp->SetFlowId(flow_id);
     qp->SetTimeout(m_waitAckTimeout);
+    qp->m_guard_sender_srpt = (m_cc_mode == CC_MODE_GUARD && m_guardSenderSrpt);
 
     if (m_irn) {
         qp->irn.m_enabled = m_irn;

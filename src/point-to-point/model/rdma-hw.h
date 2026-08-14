@@ -211,6 +211,7 @@ class RdmaHw : public Object {
     bool m_guardProactiveRelease;
     bool m_guardKeepLastHopInt;
     bool m_guardSizePriority;
+    bool m_guardSenderSrpt;
     bool m_guardWorkConserving;
     Time m_guardRebalanceInterval;
     double m_guardDemandThreshold;

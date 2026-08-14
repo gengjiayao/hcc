@@ -137,6 +137,8 @@ class Settings {
 
     static uint32_t dropped_pkt_sw_ingress;
     static uint32_t dropped_pkt_sw_egress;
+    static uint64_t guard_sender_srpt_selections;
+    static uint64_t guard_sender_srpt_non_rr_selections;
 };
 
 }  // namespace ns3

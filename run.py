@@ -94,6 +94,7 @@ GUARD_SELECTIVE_REGISTRATION {guard_selective_registration}
 GUARD_PROACTIVE_RELEASE {guard_proactive_release}
 GUARD_KEEP_LAST_HOP_INT {guard_keep_last_hop_int}
 GUARD_SIZE_PRIORITY {guard_size_priority}
+GUARD_SENDER_SRPT {guard_sender_srpt}
 GUARD_WORK_CONSERVING {guard_work_conserving}
 GUARD_REBALANCE_INTERVAL_US {guard_rebalance_interval_us}
 GUARD_DEMAND_THRESHOLD {guard_demand_threshold}
@@ -374,6 +375,8 @@ def main():
                         help="retain last-hop INT in GUARD for ablation (default: 0)")
     parser.add_argument('--guard_size_priority', type=int, choices=(0, 1), default=1,
                         help="remap GUARD flows to size-based priority groups (default: 1)")
+    parser.add_argument('--guard_sender_srpt', type=int, choices=(0, 1), default=1,
+                        help="select shortest remaining ready GUARD flow at sender (default: 1)")
     parser.add_argument('--guard_work_conserving', type=int, choices=(0, 1), default=1,
                         help="reclaim persistently unused receiver shares (default: 1)")
     parser.add_argument('--guard_rebalance_interval_us', type=int, default=200,
@@ -819,6 +822,7 @@ def main():
                                         guard_proactive_release=guard_proactive_release,
                                         guard_keep_last_hop_int=args.guard_keep_last_hop_int,
                                         guard_size_priority=args.guard_size_priority,
+                                        guard_sender_srpt=args.guard_sender_srpt,
                                         guard_work_conserving=args.guard_work_conserving,
                                         guard_rebalance_interval_us=args.guard_rebalance_interval_us,
                                         guard_demand_threshold=args.guard_demand_threshold,

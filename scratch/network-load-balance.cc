@@ -172,6 +172,7 @@ bool guard_selective_registration = true;
 bool guard_proactive_release = true;
 bool guard_keep_last_hop_int = false;
 bool guard_size_priority = true;
+bool guard_sender_srpt = true;
 bool guard_work_conserving = true;
 uint64_t guard_rebalance_interval_us = 200;
 double guard_demand_threshold = 0.75;
@@ -1259,6 +1260,9 @@ int main(int argc, char *argv[]) {
             } else if (key.compare("GUARD_SIZE_PRIORITY") == 0) {
                 conf >> guard_size_priority;
                 std::cerr << "GUARD_SIZE_PRIORITY\t" << guard_size_priority << '\n';
+            } else if (key.compare("GUARD_SENDER_SRPT") == 0) {
+                conf >> guard_sender_srpt;
+                std::cerr << "GUARD_SENDER_SRPT\t" << guard_sender_srpt << '\n';
             } else if (key.compare("GUARD_WORK_CONSERVING") == 0) {
                 conf >> guard_work_conserving;
                 std::cerr << "GUARD_WORK_CONSERVING\t" << guard_work_conserving << '\n';
@@ -1926,6 +1930,7 @@ int main(int argc, char *argv[]) {
                                  BooleanValue(guard_proactive_release));
             rdmaHw->SetAttribute("GuardKeepLastHopInt", BooleanValue(guard_keep_last_hop_int));
             rdmaHw->SetAttribute("GuardSizePriority", BooleanValue(guard_size_priority));
+            rdmaHw->SetAttribute("GuardSenderSrpt", BooleanValue(guard_sender_srpt));
             rdmaHw->SetAttribute("GuardWorkConserving", BooleanValue(guard_work_conserving));
             rdmaHw->SetAttribute("GuardRebalanceInterval",
                                  TimeValue(MicroSeconds(guard_rebalance_interval_us)));
@@ -2566,6 +2571,9 @@ int main(int argc, char *argv[]) {
             "receiver_util_threshold %.6f\n",
             guard_work_conserving ? 1 : 0, guard_rebalance_interval_us,
             guard_demand_threshold, guard_receiver_util_threshold);
+    fprintf(guard_stats_output, "guard_sender_scheduler enabled %u selections %lu non_rr %lu\n",
+            guard_sender_srpt ? 1 : 0, Settings::guard_sender_srpt_selections,
+            Settings::guard_sender_srpt_non_rr_selections);
     fprintf(guard_stats_output, "switch_drops ingress %u egress %u total %u\n",
             Settings::dropped_pkt_sw_ingress, Settings::dropped_pkt_sw_egress,
             Settings::dropped_pkt_sw_ingress + Settings::dropped_pkt_sw_egress);
