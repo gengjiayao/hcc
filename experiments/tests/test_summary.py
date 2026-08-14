@@ -224,6 +224,7 @@ class SummaryTests(unittest.TestCase):
                 "guard_receiver_scheduler remaining_aware 1 "
                 "min_share_fraction 0.000000 remaining_exponent 1.000000 "
                 "concurrency 1 limited_allocations 394 max_deferred 2 "
+                "concurrency_min_bdps 8.000000 "
                 "refresh_bdps 1.000000 refresh_events 2065\n",
                 encoding="utf-8",
             )
@@ -231,6 +232,7 @@ class SummaryTests(unittest.TestCase):
             self.assertEqual(stats["guard_receiver_concurrency"], 1)
             self.assertEqual(stats["guard_concurrency_limited_allocations"], 394)
             self.assertEqual(stats["guard_concurrency_max_deferred_flows"], 2)
+            self.assertEqual(stats["guard_concurrency_min_bdps"], 8.0)
             self.assertEqual(stats["guard_remaining_refresh_events"], 2065)
 
     def test_guard_short_flow_and_ack_stats_preserve_frozen_controls(self):
