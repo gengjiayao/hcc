@@ -1,0 +1,63 @@
+{
+  "baseline_arm": "adaptive_off",
+  "candidates": [
+    {
+      "arm": "scope12",
+      "eligible": false,
+      "gates": {
+        "gt_1MB_fct_us_mean_ci95_high_at_most_0.5": true,
+        "le_8KB_slowdown_p95_ci95_high_at_most_0.5": true,
+        "overall_fct_us_mean_ci95_high_at_most_0.5": true,
+        "overall_slowdown_p99_ci95_high_at_most_0.5": true,
+        "queue_bytes_mean_ci95_high_below_0.0": false
+      },
+      "paired_percent_vs_baseline": {
+        "gt_1MB_fct_us_mean": {
+          "ci95_half_width": 0.10572834004730337,
+          "ci95_high": 0.17385892614962611,
+          "ci95_low": -0.03759775394498065,
+          "mean": 0.06813058610232273,
+          "n": 5
+        },
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.004018864435601882,
+          "ci95_high": 0.002656343518429934,
+          "ci95_low": -0.00538138535277383,
+          "mean": -0.001362520917171948,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.03402514002231725,
+          "ci95_high": 0.0554273706228155,
+          "ci95_low": -0.012622909421819001,
+          "mean": 0.021402230600498246,
+          "n": 5
+        },
+        "overall_slowdown_p99": {
+          "ci95_half_width": 0.189460356095281,
+          "ci95_high": 0.16439195049195018,
+          "ci95_low": -0.21452876169861182,
+          "mean": -0.02506840560333081,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 0.953600686088528,
+          "ci95_high": 0.423452455229557,
+          "ci95_low": -1.483748916947499,
+          "mean": -0.530148230858971,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        -0.530148230858971,
+        0.021402230600498246,
+        0.06813058610232273
+      ]
+    }
+  ],
+  "requires_fresh_holdout_before_claim": true,
+  "schema_version": 1,
+  "selected_arm": "adaptive_off",
+  "selection_used_performance_direction": true,
+  "status": "no_candidate_beats_frozen_gates"
+}
