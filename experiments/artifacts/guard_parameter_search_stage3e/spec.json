@@ -1,0 +1,140 @@
+{
+  "admission": {
+    "require_adaptive_target_updates": true,
+    "require_complete": true,
+    "require_grants": true,
+    "require_remaining_refresh": true,
+    "require_shared_fabric_updates": true,
+    "require_zero_drop_recovery": true,
+    "seed": 96
+  },
+  "arms": {
+    "adaptive_off": {
+      "cc": "guard",
+      "guard_adaptive_fabric_target": 0,
+      "guard_adaptive_target_max_bdps": 0.0
+    },
+    "scope16": {
+      "cc": "guard",
+      "guard_adaptive_fabric_target": 1,
+      "guard_adaptive_target_max_bdps": 16.0
+    },
+    "scope24": {
+      "cc": "guard",
+      "guard_adaptive_fabric_target": 1,
+      "guard_adaptive_target_max_bdps": 24.0
+    },
+    "scope32": {
+      "cc": "guard",
+      "guard_adaptive_fabric_target": 1,
+      "guard_adaptive_target_max_bdps": 32.0
+    }
+  },
+  "defaults": {
+    "analysis_warmup": 0.005,
+    "buffer": 9,
+    "bw": 100,
+    "guard_ack_interval_packets": 8,
+    "guard_adaptive_fabric_target": 0,
+    "guard_adaptive_target_max_bdps": 0.0,
+    "guard_beta": 0.125,
+    "guard_cap_aware_reclaim": 0,
+    "guard_cap_headroom": 1.1,
+    "guard_cap_min_share_fraction": 0.25,
+    "guard_concurrency_min_bdps": 12.0,
+    "guard_demand_threshold": 0.75,
+    "guard_fixed_window": 1,
+    "guard_gamma": 1.0,
+    "guard_grant_refresh_bdps": 1.0,
+    "guard_keep_last_hop_int": 0,
+    "guard_lambda": 1.8,
+    "guard_min_share_fraction": 0.0,
+    "guard_one_rtt_bypass": 1,
+    "guard_proactive_release": 1,
+    "guard_queue_budget_bdps": 0.5,
+    "guard_rebalance_interval_us": 200,
+    "guard_receiver_concurrency": 1,
+    "guard_receiver_util_threshold": 0.75,
+    "guard_remaining_aware": 1,
+    "guard_remaining_exponent": 1.0,
+    "guard_selective_registration": 1,
+    "guard_sender_srpt": 1,
+    "guard_size_priority": 1,
+    "guard_srpt_quantum_packets": 64,
+    "guard_tail_bypass": 1,
+    "guard_tail_bypass_bdps": 8.0,
+    "guard_tail_congestion_gate": 0,
+    "guard_tail_safe_ratio": 0.9,
+    "guard_tail_safe_samples": 2,
+    "guard_target_floor": 0.95,
+    "guard_work_conserving": 0,
+    "hosts": 8,
+    "irn": 0,
+    "lb": "fecmp",
+    "monitor_profile": "bulk",
+    "netload": 50,
+    "oversubscription": 2,
+    "pfc": 1,
+    "priority_group": 3,
+    "simul_time": 0.01,
+    "topo": "leaf_spine_8_100G_OS2"
+  },
+  "flow_size_buckets": [
+    {
+      "max_bytes": 8192,
+      "name": "le_8KB"
+    },
+    {
+      "max_bytes": 104000,
+      "min_exclusive_bytes": 8192,
+      "name": "8KB_to_1BDP"
+    },
+    {
+      "max_bytes": 1048576,
+      "min_exclusive_bytes": 104000,
+      "name": "1BDP_to_1MB"
+    },
+    {
+      "min_exclusive_bytes": 1048576,
+      "name": "gt_1MB"
+    }
+  ],
+  "limits": {
+    "campaign_bytes": 5368709120,
+    "max_flows": 10000,
+    "run_bytes": 104857600,
+    "run_timeout_seconds": 1800
+  },
+  "name": "guard-parameter-search-stage3e-adaptive-scope-expansion",
+  "schema_version": 1,
+  "search_kind": "adaptive_scope_expansion",
+  "seeds": [
+    96,
+    97,
+    98,
+    99,
+    100
+  ],
+  "selection": {
+    "baseline_arm": "adaptive_off",
+    "constraints": {
+      "gt_1MB_fct_us_mean": 0.5,
+      "le_8KB_slowdown_p95": 0.5,
+      "overall_fct_us_mean": 0.5,
+      "overall_slowdown_p99": 0.5
+    },
+    "primary_metric": "queue_bytes_mean",
+    "require_primary_paired_percent_ci95_high_below": 0.0,
+    "tie_break_metrics": [
+      "queue_bytes_mean",
+      "overall_fct_us_mean",
+      "gt_1MB_fct_us_mean"
+    ]
+  },
+  "workloads": [
+    {
+      "cdf": "AliStorage2019",
+      "name": "AliStorage50"
+    }
+  ]
+}

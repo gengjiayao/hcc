@@ -1,0 +1,43 @@
+{
+  "all_arms_passed": true,
+  "arms": [
+    {
+      "arm": "adaptive_off",
+      "failures": [],
+      "flow_sha256": "8e07e34f4992a5173d41aded30017a9d337cb19a0a12bf98ac0d06d5f5e093c8",
+      "output_id": "944428884",
+      "passed": true,
+      "seed": 96
+    },
+    {
+      "arm": "scope16",
+      "failures": [],
+      "flow_sha256": "8e07e34f4992a5173d41aded30017a9d337cb19a0a12bf98ac0d06d5f5e093c8",
+      "output_id": "790818958",
+      "passed": true,
+      "seed": 96
+    },
+    {
+      "arm": "scope24",
+      "failures": [],
+      "flow_sha256": "8e07e34f4992a5173d41aded30017a9d337cb19a0a12bf98ac0d06d5f5e093c8",
+      "output_id": "322992744",
+      "passed": true,
+      "seed": 96
+    },
+    {
+      "arm": "scope32",
+      "failures": [],
+      "flow_sha256": "8e07e34f4992a5173d41aded30017a9d337cb19a0a12bf98ac0d06d5f5e093c8",
+      "output_id": "458742380",
+      "passed": true,
+      "seed": 96
+    }
+  ],
+  "decision": "extend_all_grid_points",
+  "flow_hash_matched": true,
+  "gate": "first seed mechanism and safety only; no performance metric inspected",
+  "preflight_sha256": "232cddf4c1d8440f81dc1c190981b7ef03b2a7aa7f250e19880c625c75c576cd",
+  "schema_version": 1,
+  "seed": 96
+}
