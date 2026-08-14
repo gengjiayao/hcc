@@ -219,6 +219,9 @@ class RdmaHw : public Object {
     bool m_guardTailCongestionGate;
     double m_guardTailSafeRatio;
     uint32_t m_guardTailSafeSamples;
+    bool m_guardAdaptiveFabricTarget;
+    double m_guardTargetFloor;
+    double m_guardQueueBudgetBdps;
     uint32_t m_guardAckIntervalPackets;
     bool m_guardFixedWindow;
     bool m_guardRemainingAware;
@@ -283,6 +286,9 @@ class RdmaHw : public Object {
     uint64_t m_guardTailBypassFeedbacks;
     uint64_t m_guardTailGateDeferrals;
     uint64_t m_guardTailGateQualifiedFlows;
+    uint64_t m_guardAdaptiveTargetUpdates;
+    double m_guardAdaptiveTargetMinObserved;
+    double m_guardAdaptiveTargetMaxQueueBdps;
     uint32_t m_guardUnderutilizedSamples;
     uint64_t m_recoveryNacksGenerated;
     uint64_t m_recoveryNacksReceived;
@@ -351,7 +357,7 @@ class RdmaHw : public Object {
                                    DataRate hpcc_rate, const char *binding,
                                    bool rate_changed, bool fast_react, uint32_t nhop,
                                    uint32_t next_seq, double congestion_metric,
-                                   double threshold_ratio);
+                                   double effective_target, double threshold_ratio);
     void FlushGuardLifecycleTrace();
     void SyncHwRate(Ptr<RdmaQueuePair> qp, DataRate target_cc_rate);
     void MaybeSendGuardCapReport(Ptr<RdmaQueuePair> qp);

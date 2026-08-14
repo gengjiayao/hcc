@@ -160,6 +160,22 @@ TypeId RdmaHw::GetTypeId(void) {
                           "Consecutive safe fabric samples required for tail bypass",
                           UintegerValue(2), MakeUintegerAccessor(&RdmaHw::m_guardTailSafeSamples),
                           MakeUintegerChecker<uint32_t>(1, 8))
+            .AddAttribute("GuardAdaptiveFabricTarget",
+                          "Reduce GUARD's aggressive fabric target as queued BDPs grow",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(&RdmaHw::m_guardAdaptiveFabricTarget),
+                          MakeBooleanChecker())
+            .AddAttribute("GuardTargetFloor",
+                          "Minimum utilization target used by adaptive GUARD fabric control",
+                          DoubleValue(0.95),
+                          MakeDoubleAccessor(&RdmaHw::m_guardTargetFloor),
+                          MakeDoubleChecker<double>(0.5, 1.0))
+            .AddAttribute("GuardQueueBudgetBdps",
+                          "Queued BDPs over which GUARD interpolates from its configured target "
+                          "to the adaptive target floor",
+                          DoubleValue(0.5),
+                          MakeDoubleAccessor(&RdmaHw::m_guardQueueBudgetBdps),
+                          MakeDoubleChecker<double>(0.01, 4.0))
             .AddAttribute("GuardAckIntervalPackets",
                           "Packets between useful cumulative ACKs for registered GUARD flows",
                           UintegerValue(8),
@@ -334,6 +350,9 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardTailBypassFeedbacks = 0;
     m_guardTailGateDeferrals = 0;
     m_guardTailGateQualifiedFlows = 0;
+    m_guardAdaptiveTargetUpdates = 0;
+    m_guardAdaptiveTargetMinObserved = std::numeric_limits<double>::max();
+    m_guardAdaptiveTargetMaxQueueBdps = 0.0;
     m_guardUnderutilizedSamples = 0;
     m_guardLastRebalanceTime = Time(0);
     m_guardLifecycleTraceSink = NULL;
@@ -995,7 +1014,8 @@ int RdmaHw::ReceiveRate(Ptr<Packet> p, CustomHeader &ch) {
     bool changed = qp->m_rate != old_rate;
     if (changed) m_guardGrantEventRateChanges++;
     TraceGuardControllerEvent(qp, "grant", qp->hp.m_curRate, binding,
-                              changed, false, 0, qp->snd_nxt, -1.0, -1.0);
+                              changed, false, 0, qp->snd_nxt, -1.0,
+                              m_targetUtil, -1.0);
 
     return 0;
 }
@@ -1378,7 +1398,7 @@ void RdmaHw::QpComplete(Ptr<RdmaQueuePair> qp) {
                                     ? "reactive"
                                     : qp->hp.m_grantRate < qp->hp.m_curRate ? "grant" : "tie";
     TraceGuardControllerEvent(qp, "complete", qp->hp.m_curRate, binding, false, false,
-                              0, qp->snd_nxt, -1.0, -1.0);
+                              0, qp->snd_nxt, -1.0, m_targetUtil, -1.0);
 
     // This callback will log info. It also calls deletetion the rxQp on the receiver
     m_qpCompleteCallback(qp);
@@ -2274,7 +2294,7 @@ void RdmaHw::TraceGuardControllerEvent(Ptr<RdmaQueuePair> qp, const char *event_
                                        DataRate hpcc_rate, const char *binding,
                                        bool rate_changed, bool fast_react, uint32_t nhop,
                                        uint32_t next_seq, double congestion_metric,
-                                       double threshold_ratio) {
+                                       double effective_target, double threshold_ratio) {
     GuardControllerTraceSink *sink = m_guardControllerTraceSink;
     if (sink == NULL || sink->file == NULL) return;
     sink->attempted++;
@@ -2284,7 +2304,7 @@ void RdmaHw::TraceGuardControllerEvent(Ptr<RdmaQueuePair> qp, const char *event_
             Simulator::Now().GetNanoSeconds(), qp->m_flow_id, qp->sip.Get(), qp->dip.Get(),
             event_type, hpcc_rate.GetBitRate(), qp->hp.m_grantRate.GetBitRate(),
             qp->m_rate.GetBitRate(), binding, rate_changed ? 1 : 0, fast_react ? 1 : 0,
-            nhop, next_seq, congestion_metric, m_targetUtil, threshold_ratio);
+            nhop, next_seq, congestion_metric, effective_target, threshold_ratio);
     sink->written++;
 }
 
@@ -3228,6 +3248,7 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
         IntHeader &ih = ch.ack.ih;
         if (ih.nhop <= IntHeader::maxHop) {
             double max_c = 0;
+            double max_queue_bdps = 0;
             bool inStable = false;
 #if PRINT_LOG
             if (print)
@@ -3255,9 +3276,11 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
                 ;
                 double duration = tau * 1e-9;
                 double txRate = (ih.hop[i].GetBytesDelta(qp->hp.hop[i])) * 8 / duration;
-                double u = txRate / ih.hop[i].GetLineRate() +
-                           (double)std::min(ih.hop[i].GetQlen(), qp->hp.hop[i].GetQlen()) *
-                               qp->m_max_rate.GetBitRate() / ih.hop[i].GetLineRate() / qp->m_win;
+                double queue_bdps =
+                    (double)std::min(ih.hop[i].GetQlen(), qp->hp.hop[i].GetQlen()) *
+                    qp->m_max_rate.GetBitRate() / ih.hop[i].GetLineRate() / qp->m_win;
+                max_queue_bdps = std::max(max_queue_bdps, queue_bdps);
+                double u = txRate / ih.hop[i].GetLineRate() + queue_bdps;
 #if PRINT_LOG
                 if (print) printf(" %.3lf %.3lf", txRate, u);
 #endif
@@ -3281,12 +3304,26 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
             int32_t new_incStage;
             DataRate new_rate_per_hop[IntHeader::maxHop];
             int32_t new_incStage_per_hop[IntHeader::maxHop];
+            double effective_target = m_targetUtil;
+            if (m_cc_mode == CC_MODE_GUARD && m_guardAdaptiveFabricTarget && updated_any) {
+                const double floor = std::min(m_guardTargetFloor, m_targetUtil);
+                const double queued_fraction =
+                    std::min(1.0, max_queue_bdps / m_guardQueueBudgetBdps);
+                effective_target =
+                    floor + (m_targetUtil - floor) * (1.0 - queued_fraction);
+                m_guardAdaptiveTargetMaxQueueBdps =
+                    std::max(m_guardAdaptiveTargetMaxQueueBdps, max_queue_bdps);
+                m_guardAdaptiveTargetMinObserved =
+                    std::min(m_guardAdaptiveTargetMinObserved, effective_target);
+                if (effective_target + 1e-12 < m_targetUtil)
+                    m_guardAdaptiveTargetUpdates++;
+            }
             if (!m_multipleRate) {
                 // for aggregate (single R)
                 if (updated_any) {
                     if (dt > qp->m_baseRtt) dt = qp->m_baseRtt;
                     qp->hp.u = (qp->hp.u * (qp->m_baseRtt - dt) + U * dt) / double(qp->m_baseRtt);
-                    max_c = qp->hp.u / m_targetUtil;
+                    max_c = qp->hp.u / effective_target;
 
                     if (max_c >= 1 || qp->hp.m_incStage >= m_miThresh) {
                         new_rate = qp->hp.m_curRate / max_c + m_rai;
@@ -3311,7 +3348,7 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
                 new_rate = qp->m_max_rate;
                 for (uint32_t i = 0; i < ih.nhop; i++) {
                     if (updated[i]) {
-                        double c = qp->hp.hopState[i].u / m_targetUtil;
+                        double c = qp->hp.hopState[i].u / effective_target;
                         max_c = std::max(max_c, c);
                         if (c >= 1 || qp->hp.hopState[i].incStage >= m_miThresh) {
                             new_rate_per_hop[i] = qp->hp.hopState[i].Rc / c + m_rai;
@@ -3396,7 +3433,8 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
                     double threshold_ratio = m_multipleRate ? -1.0 : max_c;
                     TraceGuardControllerEvent(qp, "hpcc", new_rate, binding, changed,
                                               fast_react, ih.nhop, next_seq,
-                                              observed_metric, threshold_ratio);
+                                              observed_metric, effective_target,
+                                              threshold_ratio);
                 } else {
                     DataRate old_rate = qp->m_rate;
                     ChangeRate(qp, new_rate);  // vanilla HPCC
