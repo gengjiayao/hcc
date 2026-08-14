@@ -387,7 +387,26 @@ python3 -m unittest tests/test_generate_workload.py
 
 ---
 
-## 7. 验证（leaf_spine_8_100G_OS1, simul_time=0.01s, netload=25%）
+## 7. 当前正式验证
+
+最终 GUARD 配置在 `guard_homa_final_holdout.json` 中冻结，并使用从未参与
+调参或消融的 seeds 16--20。三种 workload、三种协议共 45 个运行全部完成，
+且通过同 seed 流量哈希一致、零丢包/恢复和控制路径活性检查。相对 Homa，
+GUARD 在 AliStorage 与 FbHdp 上将总体平均 FCT 分别降低 2.15% 和 2.86%；
+WebSearch 点估计降低 1.41%，但置信区间跨零。三种 workload 的 P99 slowdown
+降低 12.36%--26.07%，平均队列降低 36.03%--56.83%。相对 HPCC，GUARD 的
+平均 FCT 降低 13.44%--14.82%，但平均队列更高。
+
+可移植结果位于：
+
+- `experiments/artifacts/guard_homa_final_holdout/`
+- `experiments/artifacts/guard_optimized_feature_ablation/`
+
+后一目录记录 fresh seeds 11--15 的逐组件消融。固定安全窗口关闭后有 6 个
+运行未通过活性或零恢复门槛，因此该臂不报告幸存流的延迟。闲置份额回收在
+所有合格配对中产生零事件和逐项相同的结果，故最终默认关闭。
+
+## 8. 历史验证（leaf_spine_8_100G_OS1, simul_time=0.01s, netload=25%）
 
 > **历史结果，禁止作为当前双环 GUARD 的论文数据。** 最早一批数字生成时，
 > `cc_mode=11` 的 ACK 路径没有调用 `HandleAckHp`；随后截至提交 `8336f6e` 的
@@ -421,7 +440,7 @@ python3 -m unittest tests/test_generate_workload.py
 
 ---
 
-## 8. 致谢与许可
+## 9. 致谢与许可
 
 本仓库基于：
 
