@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "name": "ali-load50-figures",
+  "purpose": "Reproduce the initial paper's 50-percent AliStorage slowdown panels with corrected full GUARD, HPCC, and receiver-only implementations.",
+  "selection_policy": "Freeze five traces before ns-3, admit all three seed-1 mechanisms without inspecting performance, and expand only after the gate passes.",
+  "seeds": [1, 2, 3, 4, 5],
+  "limits": {
+    "max_flows": 10000,
+    "run_bytes": 104857600,
+    "campaign_bytes": 1073741824,
+    "run_timeout_seconds": 1800
+  },
+  "defaults": {
+    "topo": "leaf_spine_8_100G_OS2",
+    "hosts": 8,
+    "oversubscription": 2,
+    "simul_time": 0.01,
+    "netload": 50,
+    "bw": 100,
+    "priority_group": 3,
+    "analysis_warmup": 0.005,
+    "buffer": 9,
+    "lb": "fecmp",
+    "pfc": 1,
+    "irn": 0,
+    "monitor_profile": "bulk",
+    "guard_lambda": 1.0,
+    "guard_beta": 0.125,
+    "guard_gamma": 1.0,
+    "guard_selective_registration": 1,
+    "guard_proactive_release": 1,
+    "guard_keep_last_hop_int": 0,
+    "guard_size_priority": 0
+  },
+  "admission": {
+    "seed": 1,
+    "full_controller_trace": true,
+    "full_controller_max_lines": 300000,
+    "require_complete": true,
+    "require_zero_drop_recovery": true,
+    "full": "grants_sent > 0, hpcc_valid_feedback > 0, hpcc_actual_rate_changes > 0, reactive_binding_updates > 0",
+    "hpcc": "grants_sent + grants_received == 0, hpcc_valid_feedback > 0, hpcc_actual_rate_changes > 0",
+    "receiver": "grants_sent > 0 and all HPCC counters == 0"
+  },
+  "arms": {
+    "full": {"cc": "guard", "guard_size_priority": 0},
+    "hpcc": {"cc": "hpcc"},
+    "receiver": {"cc": "guard-active-only", "guard_size_priority": 0}
+  },
+  "workloads": [
+    {"name": "AliStorage50", "cdf": "AliStorage2019"}
+  ],
+  "flow_size_buckets": [
+    {"name": "le_8KB", "max_bytes": 8192},
+    {"name": "8KB_to_1BDP", "min_exclusive_bytes": 8192, "max_bytes": 104000},
+    {"name": "1BDP_to_1MB", "min_exclusive_bytes": 104000, "max_bytes": 1048576},
+    {"name": "gt_1MB", "min_exclusive_bytes": 1048576}
+  ],
+  "comparisons": [
+    ["full", "hpcc"],
+    ["full", "receiver"],
+    ["receiver", "hpcc"]
+  ]
+}
