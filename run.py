@@ -102,6 +102,8 @@ GUARD_GRANT_TRACE {guard_grant_trace}
 GUARD_GRANT_TRACE_MAX_LINES {guard_grant_max_lines}
 HOMA_OVERCOMMIT {homa_overcommit}
 HOMA_RESEND_TIMEOUT_US {homa_resend_timeout_us}
+HOMA_UNSCHEDULED_LEVELS {homa_unscheduled_levels}
+HOMA_UNSCHEDULED_CUTOFFS 5 {homa_unscheduled_cutoffs}
 MULTI_RATE 0
 SAMPLE_FEEDBACK 0
 
@@ -162,6 +164,82 @@ DEFAULT_GUARD_CONTROLLER_MAX_LINES = 10000
 HARD_GUARD_CONTROLLER_MAX_LINES = 300000
 DEFAULT_GUARD_GRANT_MAX_LINES = 1000
 HARD_GUARD_GRANT_MAX_LINES = 10000
+HOMA_DATA_PRIORITY_LEVELS = 7
+HOMA_PRIORITY_PROFILE_SAMPLES = 10000
+
+
+def _homa_profile_from_sizes(sizes, bdp_bytes,
+                             data_levels=HOMA_DATA_PRIORITY_LEVELS):
+    """Allocate Homa DATA priorities by byte share, then equalize unscheduled bytes.
+
+    Queue 0 is reserved for control traffic in this ns-3 model, leaving queues
+    1..7 for DATA.  Homa allocates priorities in proportion to the workload's
+    unscheduled byte fraction and partitions the unscheduled priorities so each
+    carries approximately the same number of bytes.
+    """
+    if bdp_bytes <= 0:
+        raise ValueError("Homa BDP must be positive")
+    positive_sizes = sorted(int(size) for size in sizes if int(size) > 0)
+    if not positive_sizes:
+        raise ValueError("Homa priority profiling requires at least one positive flow")
+    total_bytes = float(sum(positive_sizes))
+    unscheduled_weights = [min(size, bdp_bytes) for size in positive_sizes]
+    total_unscheduled = float(sum(unscheduled_weights))
+    unscheduled_fraction = total_unscheduled / total_bytes
+    unscheduled_levels = int(round(data_levels * unscheduled_fraction))
+    unscheduled_levels = max(1, min(data_levels - 1, unscheduled_levels))
+
+    cutoffs = []
+    cumulative = 0.0
+    next_boundary = 1
+    for size, weight in zip(positive_sizes, unscheduled_weights):
+        cumulative += weight
+        while (next_boundary < unscheduled_levels and
+               cumulative >= total_unscheduled * next_boundary / unscheduled_levels):
+            cutoffs.append(size)
+            next_boundary += 1
+    while len(cutoffs) < unscheduled_levels - 1:
+        cutoffs.append(positive_sizes[-1])
+    return {
+        "unscheduled_levels": unscheduled_levels,
+        "scheduled_levels": data_levels - unscheduled_levels,
+        "cutoffs": cutoffs,
+        "unscheduled_fraction": unscheduled_fraction,
+    }
+
+
+def derive_homa_profile_from_flow_file(path, bdp_bytes):
+    with open(path, "r") as traffic_file:
+        declared = int(traffic_file.readline().strip())
+        sizes = []
+        for line in traffic_file:
+            fields = line.split()
+            if len(fields) >= 4:
+                sizes.append(int(fields[3]))
+    if declared != len(sizes):
+        raise ValueError("flow count {} does not match {} records".format(
+            declared, len(sizes)))
+    return _homa_profile_from_sizes(sizes, bdp_bytes)
+
+
+def derive_homa_profile_from_cdf(path, bdp_bytes,
+                                 samples=HOMA_PRIORITY_PROFILE_SAMPLES):
+    """Deterministically sample midpoint percentiles from traffic_gen's CDF."""
+    with open(path, "r") as cdf_file:
+        cdf = [tuple(map(float, line.split())) for line in cdf_file if line.strip()]
+    if len(cdf) < 2 or cdf[0][1] != 0 or cdf[-1][1] != 100:
+        raise ValueError("invalid Homa workload CDF: {}".format(path))
+    sizes = []
+    segment = 1
+    for index in range(samples):
+        percentile = (index + 0.5) * 100.0 / samples
+        while percentile > cdf[segment][1]:
+            segment += 1
+        x0, y0 = cdf[segment - 1]
+        x1, y1 = cdf[segment]
+        size = x0 + (x1 - x0) * (percentile - y0) / (y1 - y0)
+        sizes.append(max(1, int(round(size))))
+    return _homa_profile_from_sizes(sizes, bdp_bytes)
 
 
 def resolve_guard_components(guard_oflm, selective_registration, proactive_release):
@@ -313,8 +391,8 @@ def main():
     parser.add_argument('--guard_grant_max_lines', type=int,
                         default=DEFAULT_GUARD_GRANT_MAX_LINES,
                         help="maximum grant audit rows (default: 1000; hard maximum: 10000)")
-    parser.add_argument('--homa_overcommit', type=int, choices=range(1, 5), default=4,
-                        help="Homa scheduled messages per receiver in [1,4] (default: 4)")
+    parser.add_argument('--homa_overcommit', type=int, choices=range(1, 7), default=None,
+                        help="Homa scheduled messages per receiver; default uses every scheduled priority")
     parser.add_argument('--homa_resend_timeout_us', type=int, default=1000,
                         help="Homa receiver no-progress timeout in us (default: 1000)")
     parser.add_argument('--seed', type=int, default=1,
@@ -641,6 +719,37 @@ def main():
     bdp = int(topo2bdp[topo])
     print("1BDP = {}".format(bdp))
 
+    homa_profile = {
+        "unscheduled_levels": 3,
+        "scheduled_levels": 4,
+        "cutoffs": [bdp // 4, bdp // 2],
+        "unscheduled_fraction": 0.0,
+    }
+    if cc_mode == 12:
+        try:
+            if args.flow_file:
+                homa_profile = derive_homa_profile_from_flow_file(flow_path, bdp)
+                homa_profile_source = "flow-snapshot"
+            else:
+                cdf_path = os.path.join(os.getcwd(), "traffic_gen", args.cdf + ".txt")
+                homa_profile = derive_homa_profile_from_cdf(cdf_path, bdp)
+                homa_profile_source = "cdf"
+        except (OSError, ValueError) as error:
+            raise Exception("CONFIG ERROR: cannot derive Homa priority profile: {}.".format(error))
+        print("Homa priority profile: source={} unscheduled_fraction={:.6f} "
+              "unscheduled_levels={} scheduled_levels={} cutoffs={}".format(
+                  homa_profile_source, homa_profile["unscheduled_fraction"],
+                  homa_profile["unscheduled_levels"], homa_profile["scheduled_levels"],
+                  homa_profile["cutoffs"]))
+    homa_overcommit = (args.homa_overcommit if args.homa_overcommit is not None
+                       else homa_profile["scheduled_levels"])
+    if homa_overcommit > homa_profile["scheduled_levels"]:
+        raise Exception(
+            "CONFIG ERROR: --homa_overcommit {} exceeds {} scheduled priority levels.".format(
+                homa_overcommit, homa_profile["scheduled_levels"]))
+    homa_cutoffs = list(homa_profile["cutoffs"])
+    homa_cutoffs.extend([0] * (5 - len(homa_cutoffs)))
+
     # ECN thresholds apply uniformly to every configured link speed.  The
     # defaults preserve all historical runs; explicit overrides support a
     # preregistered safety ladder and are recorded in config.txt.
@@ -701,8 +810,10 @@ def main():
                                         guard_grant_trace=args.guard_grant_trace,
                                         guard_grant_output=guard_grant_output,
                                         guard_grant_max_lines=args.guard_grant_max_lines,
-                                        homa_overcommit=args.homa_overcommit,
+                                        homa_overcommit=homa_overcommit,
                                         homa_resend_timeout_us=args.homa_resend_timeout_us,
+                                        homa_unscheduled_levels=homa_profile["unscheduled_levels"],
+                                        homa_unscheduled_cutoffs=" ".join(str(value) for value in homa_cutoffs),
                                         seed=args.seed,
                                         kmax_map=kmax_map, kmin_map=kmin_map, pmax_map=pmax_map)
     # else:

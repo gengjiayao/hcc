@@ -260,6 +260,10 @@ class RdmaHw : public Object {
     uint64_t m_homaMaxPendingMessages;
     uint32_t m_homaOvercommitDegree;
     Time m_homaResendTimeout;
+    uint32_t m_homaUnscheduledLevels;
+    std::vector<uint64_t> m_homaUnscheduledCutoffs;
+    void ConfigureHomaPriorities(uint32_t unscheduled_levels,
+                                 const std::vector<uint64_t>& cutoffs);
 
     enum GuardReleaseReason {
         GUARD_RELEASE_PROACTIVE,

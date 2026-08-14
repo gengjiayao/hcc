@@ -132,7 +132,7 @@ TypeId RdmaHw::GetTypeId(void) {
                           "Maximum Homa messages granted concurrently at a receiver",
                           UintegerValue(4),
                           MakeUintegerAccessor(&RdmaHw::m_homaOvercommitDegree),
-                          MakeUintegerChecker<uint32_t>(1, 4))
+                          MakeUintegerChecker<uint32_t>(1, 6))
             .AddAttribute("HomaResendTimeout",
                           "Homa receiver timeout for a granted byte-range with no progress",
                           TimeValue(MilliSeconds(1)),
@@ -226,6 +226,23 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_homaMessagesTracked = 0;
     m_homaMessagesCompleted = 0;
     m_homaMaxPendingMessages = 0;
+    m_homaUnscheduledLevels = 3;
+    m_homaUnscheduledCutoffs.push_back(26000);
+    m_homaUnscheduledCutoffs.push_back(52000);
+}
+
+void RdmaHw::ConfigureHomaPriorities(uint32_t unscheduled_levels,
+                                     const std::vector<uint64_t>& cutoffs) {
+    NS_ASSERT_MSG(unscheduled_levels >= 1 && unscheduled_levels <= 6,
+                  "Homa requires one to six unscheduled DATA priorities");
+    NS_ASSERT_MSG(cutoffs.size() == unscheduled_levels - 1,
+                  "Homa cutoff count must equal unscheduled priority count minus one");
+    for (size_t index = 1; index < cutoffs.size(); index++) {
+        NS_ASSERT_MSG(cutoffs[index] >= cutoffs[index - 1],
+                      "Homa unscheduled cutoffs must be nondecreasing");
+    }
+    m_homaUnscheduledLevels = unscheduled_levels;
+    m_homaUnscheduledCutoffs = cutoffs;
 }
 
 void RdmaHw::SetNode(Ptr<Node> node) { m_node = node; }
@@ -372,16 +389,15 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
         qp->homa.m_unscheduled_bytes =
             size < bdp_bytes ? std::max(size, (uint64_t)m_mtu) : std::max(bdp_bytes, (uint64_t)m_mtu);
         qp->homa.m_granted_offset = qp->homa.m_unscheduled_bytes;
-        // PR3 unscheduled cutoffs: shorter messages → higher priority (lower pg).
-        // 4 buckets share switch queues 1..4; scheduled bytes will land on 4..7.
-        if (size < bdp_bytes / 4) {
-            qp->homa.m_unscheduled_priority = 1;
-        } else if (size < bdp_bytes / 2) {
-            qp->homa.m_unscheduled_priority = 2;
-        } else if (size < bdp_bytes) {
-            qp->homa.m_unscheduled_priority = 3;
-        } else {
-            qp->homa.m_unscheduled_priority = 4;
+        // The run-level workload profile divides unscheduled bytes evenly
+        // across queues 1..U.  All scheduled DATA uses U+1..7, so the two
+        // classes never overlap and unscheduled bytes always preempt grants.
+        qp->homa.m_unscheduled_priority = m_homaUnscheduledLevels;
+        for (size_t index = 0; index < m_homaUnscheduledCutoffs.size(); index++) {
+            if (size <= m_homaUnscheduledCutoffs[index]) {
+                qp->homa.m_unscheduled_priority = (uint8_t)(index + 1);
+                break;
+            }
         }
         // Default scheduled priority until the first GRANT arrives — pick the
         // bottom of the scheduled range so it gets out of the way of unscheduled
@@ -2211,10 +2227,11 @@ void RdmaHw::HomaScheduler::Schedule() {
             std::min(flow->granted_offset_sent + rdma_hw->m_mtu, flow->msg_total_length);
         if (new_offset > flow->granted_offset_sent) {
             flow->granted_offset_sent = new_offset;
-            // Slot 0 (top SRPT) → pg 4; slot 1 → 5; ...; capped at 7.
-            // Unscheduled cutoffs use pg 1..4, so scheduled bytes always
-            // cede priority to short / unscheduled traffic.
-            uint8_t slot_pri = (uint8_t)std::min<size_t>(4 + k, 7);
+            // With fewer than all scheduled slots active, assign the lowest
+            // available priorities. This leaves higher scheduled priorities
+            // vacant so a newly arriving shorter message can preempt without
+            // waiting for already-queued packets (Homa paper, Section 3.6).
+            uint8_t slot_pri = (uint8_t)(7 - (tick.size() - 1 - k));
             SendGrant(flow, slot_pri);
         }
         if (!flow->fully_granted()) {

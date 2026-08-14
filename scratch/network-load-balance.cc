@@ -174,6 +174,8 @@ bool guard_keep_last_hop_int = false;
 bool guard_size_priority = true;
 uint32_t homa_overcommit = 4;
 uint64_t homa_resend_timeout_us = 1000;
+uint32_t homa_unscheduled_levels = 3;
+uint64_t homa_unscheduled_cutoffs[5] = {26000, 52000, 0, 0, 0};
 bool guard_lifecycle_trace = false;
 uint64_t guard_lifecycle_trace_max_lines = 1024;
 const uint64_t guard_lifecycle_trace_hard_max_lines = 10000;
@@ -1280,6 +1282,22 @@ int main(int argc, char *argv[]) {
             } else if (key.compare("HOMA_RESEND_TIMEOUT_US") == 0) {
                 conf >> homa_resend_timeout_us;
                 std::cerr << "HOMA_RESEND_TIMEOUT_US\t" << homa_resend_timeout_us << '\n';
+            } else if (key.compare("HOMA_UNSCHEDULED_LEVELS") == 0) {
+                conf >> homa_unscheduled_levels;
+                std::cerr << "HOMA_UNSCHEDULED_LEVELS\t" << homa_unscheduled_levels << '\n';
+            } else if (key.compare("HOMA_UNSCHEDULED_CUTOFFS") == 0) {
+                uint32_t count;
+                conf >> count;
+                if (count != 5) {
+                    std::cerr << "HOMA_UNSCHEDULED_CUTOFFS requires exactly 5 values\n";
+                    return 1;
+                }
+                std::cerr << "HOMA_UNSCHEDULED_CUTOFFS\t";
+                for (uint32_t i = 0; i < count; i++) {
+                    conf >> homa_unscheduled_cutoffs[i];
+                    std::cerr << ' ' << homa_unscheduled_cutoffs[i];
+                }
+                std::cerr << '\n';
             } else if (key.compare("INT_MULTI") == 0) {
                 conf >> int_multi;
                 std::cerr << "INT_MULTI\t\t\t\t" << int_multi << '\n';
@@ -1422,13 +1440,27 @@ int main(int argc, char *argv[]) {
         std::cerr << "GUARD_LAMBDA must be at least 1.0\n";
         return 1;
     }
-    if (homa_overcommit < 1 || homa_overcommit > 4) {
-        std::cerr << "HOMA_OVERCOMMIT must be in [1, 4]\n";
+    if (homa_overcommit < 1 || homa_overcommit > 6) {
+        std::cerr << "HOMA_OVERCOMMIT must be in [1, 6]\n";
         return 1;
     }
     if (homa_resend_timeout_us == 0) {
         std::cerr << "HOMA_RESEND_TIMEOUT_US must be positive\n";
         return 1;
+    }
+    if (homa_unscheduled_levels < 1 || homa_unscheduled_levels > 6) {
+        std::cerr << "HOMA_UNSCHEDULED_LEVELS must be in [1, 6]\n";
+        return 1;
+    }
+    if (homa_overcommit > 7 - homa_unscheduled_levels) {
+        std::cerr << "HOMA_OVERCOMMIT exceeds the scheduled priority count\n";
+        return 1;
+    }
+    for (uint32_t i = 1; i + 1 < homa_unscheduled_levels; i++) {
+        if (homa_unscheduled_cutoffs[i] < homa_unscheduled_cutoffs[i - 1]) {
+            std::cerr << "HOMA_UNSCHEDULED_CUTOFFS must be nondecreasing\n";
+            return 1;
+        }
     }
     if (guard_lifecycle_trace && cc_mode != 11 && cc_mode != 13) {
         std::cerr << "GUARD_LIFECYCLE_TRACE requires CC_MODE 11 or 13\n";
@@ -1867,6 +1899,10 @@ int main(int argc, char *argv[]) {
             rdmaHw->SetAttribute("HomaOvercommitDegree", UintegerValue(homa_overcommit));
             rdmaHw->SetAttribute("HomaResendTimeout",
                                  TimeValue(MicroSeconds(homa_resend_timeout_us)));
+            rdmaHw->ConfigureHomaPriorities(
+                homa_unscheduled_levels,
+                std::vector<uint64_t>(homa_unscheduled_cutoffs,
+                                      homa_unscheduled_cutoffs + homa_unscheduled_levels - 1));
             if (guard_lifecycle_trace) {
                 rdmaHw->ConfigureGuardLifecycleTrace(&guard_lifecycle_trace_sink);
             }
@@ -2543,8 +2579,14 @@ int main(int argc, char *argv[]) {
             "completion_notices_received messages_tracked "
             "messages_completed max_pending_messages\n");
     fprintf(homa_stats_output,
-            "homa_config overcommit_degree %u resend_timeout_us %lu strict_priority %u\n",
-            homa_overcommit, homa_resend_timeout_us, cc_mode == 12 ? 1 : 0);
+            "homa_config overcommit_degree %u resend_timeout_us %lu strict_priority %u "
+            "unscheduled_levels %u scheduled_levels %u cutoffs",
+            homa_overcommit, homa_resend_timeout_us, cc_mode == 12 ? 1 : 0,
+            homa_unscheduled_levels, 7 - homa_unscheduled_levels);
+    for (uint32_t i = 0; i + 1 < homa_unscheduled_levels; i++) {
+        fprintf(homa_stats_output, " %lu", homa_unscheduled_cutoffs[i]);
+    }
+    fprintf(homa_stats_output, "\n");
     uint64_t homa_totals[12] = {0};
     uint64_t homa_max_active = 0;
     for (uint32_t i = 0; i < node_num; i++) {
