@@ -199,6 +199,23 @@ class SummaryTests(unittest.TestCase):
             self.assertEqual(stats["guard_grant_refresh_bdps"], 1.0)
             self.assertEqual(stats["guard_remaining_refresh_events"], 56)
 
+    def test_guard_tail_gate_stats_preserve_admission_counters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            path.write_text(
+                "total 0 0 0 0\n"
+                "guard_tail_bypass enabled 1 bdps 8.000000 congestion_gate 1 "
+                "safe_ratio 0.900000 safe_samples 2 flows 11 feedbacks_skipped 22 "
+                "deferrals 7 qualified_flows 9\n",
+                encoding="utf-8",
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["guard_tail_congestion_gate"], 1)
+            self.assertEqual(stats["guard_tail_safe_ratio"], 0.9)
+            self.assertEqual(stats["guard_tail_safe_samples"], 2)
+            self.assertEqual(stats["guard_tail_gate_deferrals"], 7)
+            self.assertEqual(stats["guard_tail_gate_qualified_flows"], 9)
+
     def test_guard_short_flow_and_ack_stats_preserve_frozen_controls(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "stats.txt"

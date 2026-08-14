@@ -131,6 +131,9 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
     guard_tail = {
         "guard_tail_bypass_enabled": 0, "guard_tail_bypass_bdps": 0.0,
         "guard_tail_bypass_flows": 0, "guard_tail_bypass_feedbacks": 0,
+        "guard_tail_congestion_gate": 0, "guard_tail_safe_ratio": 0.0,
+        "guard_tail_safe_samples": 0, "guard_tail_gate_deferrals": 0,
+        "guard_tail_gate_qualified_flows": 0,
     }
     guard_receiver = {
         "guard_remaining_aware": 0, "guard_min_share_fraction": 0.0,
@@ -229,6 +232,18 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
                     "guard_tail_bypass_bdps": float(parts[4]),
                     "guard_tail_bypass_flows": int(parts[6]),
                     "guard_tail_bypass_feedbacks": int(parts[8]),
+                }
+            elif parts[:2] == ["guard_tail_bypass", "enabled"] and len(parts) == 19:
+                guard_tail = {
+                    "guard_tail_bypass_enabled": int(parts[2]),
+                    "guard_tail_bypass_bdps": float(parts[4]),
+                    "guard_tail_congestion_gate": int(parts[6]),
+                    "guard_tail_safe_ratio": float(parts[8]),
+                    "guard_tail_safe_samples": int(parts[10]),
+                    "guard_tail_bypass_flows": int(parts[12]),
+                    "guard_tail_bypass_feedbacks": int(parts[14]),
+                    "guard_tail_gate_deferrals": int(parts[16]),
+                    "guard_tail_gate_qualified_flows": int(parts[18]),
                 }
             elif parts[:2] == ["guard_receiver_scheduler", "remaining_aware"] and len(parts) == 11:
                 guard_receiver = {

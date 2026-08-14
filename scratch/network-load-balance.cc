@@ -176,6 +176,9 @@ bool guard_sender_srpt = true;
 bool guard_one_rtt_bypass = true;
 bool guard_tail_bypass = true;
 double guard_tail_bypass_bdps = 8.0;
+bool guard_tail_congestion_gate = false;
+double guard_tail_safe_ratio = 0.9;
+uint32_t guard_tail_safe_samples = 2;
 uint32_t guard_ack_interval_packets = 8;
 bool guard_fixed_window = true;
 bool guard_remaining_aware = true;
@@ -1285,6 +1288,16 @@ int main(int argc, char *argv[]) {
             } else if (key.compare("GUARD_TAIL_BYPASS_BDPS") == 0) {
                 conf >> guard_tail_bypass_bdps;
                 std::cerr << "GUARD_TAIL_BYPASS_BDPS\t" << guard_tail_bypass_bdps << '\n';
+            } else if (key.compare("GUARD_TAIL_CONGESTION_GATE") == 0) {
+                conf >> guard_tail_congestion_gate;
+                std::cerr << "GUARD_TAIL_CONGESTION_GATE\t"
+                          << guard_tail_congestion_gate << '\n';
+            } else if (key.compare("GUARD_TAIL_SAFE_RATIO") == 0) {
+                conf >> guard_tail_safe_ratio;
+                std::cerr << "GUARD_TAIL_SAFE_RATIO\t" << guard_tail_safe_ratio << '\n';
+            } else if (key.compare("GUARD_TAIL_SAFE_SAMPLES") == 0) {
+                conf >> guard_tail_safe_samples;
+                std::cerr << "GUARD_TAIL_SAFE_SAMPLES\t" << guard_tail_safe_samples << '\n';
             } else if (key.compare("GUARD_ACK_INTERVAL_PACKETS") == 0) {
                 conf >> guard_ack_interval_packets;
                 std::cerr << "GUARD_ACK_INTERVAL_PACKETS\t"
@@ -1547,6 +1560,14 @@ int main(int argc, char *argv[]) {
     }
     if (guard_ack_interval_packets == 0) {
         std::cerr << "GUARD_ACK_INTERVAL_PACKETS must be positive\n";
+        return 1;
+    }
+    if (guard_tail_safe_ratio < 0.5 || guard_tail_safe_ratio > 1.0) {
+        std::cerr << "GUARD_TAIL_SAFE_RATIO must be in [0.5, 1]\n";
+        return 1;
+    }
+    if (guard_tail_safe_samples < 1 || guard_tail_safe_samples > 8) {
+        std::cerr << "GUARD_TAIL_SAFE_SAMPLES must be in [1, 8]\n";
         return 1;
     }
     if (guard_min_share_fraction < 0.0 || guard_min_share_fraction > 1.0) {
@@ -2020,6 +2041,11 @@ int main(int argc, char *argv[]) {
             rdmaHw->SetAttribute("GuardOneRttBypass", BooleanValue(guard_one_rtt_bypass));
             rdmaHw->SetAttribute("GuardTailBypass", BooleanValue(guard_tail_bypass));
             rdmaHw->SetAttribute("GuardTailBypassBdps", DoubleValue(guard_tail_bypass_bdps));
+            rdmaHw->SetAttribute("GuardTailCongestionGate",
+                                 BooleanValue(guard_tail_congestion_gate));
+            rdmaHw->SetAttribute("GuardTailSafeRatio", DoubleValue(guard_tail_safe_ratio));
+            rdmaHw->SetAttribute("GuardTailSafeSamples",
+                                 UintegerValue(guard_tail_safe_samples));
             rdmaHw->SetAttribute("GuardAckIntervalPackets",
                                  UintegerValue(guard_ack_interval_packets));
             rdmaHw->SetAttribute("GuardFixedWindow", BooleanValue(guard_fixed_window));
@@ -2720,6 +2746,8 @@ int main(int argc, char *argv[]) {
     uint64_t total_guard_long_acks_suppressed = 0;
     uint64_t total_guard_tail_bypass_flows = 0;
     uint64_t total_guard_tail_bypass_feedbacks = 0;
+    uint64_t total_guard_tail_gate_deferrals = 0;
+    uint64_t total_guard_tail_gate_qualified_flows = 0;
     uint64_t total_guard_remaining_refresh_events = 0;
     for (uint32_t i = 0; i < node_num; i++) {
         if (n.Get(i)->GetNodeType() != 0) continue;
@@ -2730,6 +2758,9 @@ int main(int argc, char *argv[]) {
         total_guard_long_acks_suppressed += driver->m_rdma->m_guardLongAcksSuppressed;
         total_guard_tail_bypass_flows += driver->m_rdma->m_guardTailBypassFlows;
         total_guard_tail_bypass_feedbacks += driver->m_rdma->m_guardTailBypassFeedbacks;
+        total_guard_tail_gate_deferrals += driver->m_rdma->m_guardTailGateDeferrals;
+        total_guard_tail_gate_qualified_flows +=
+            driver->m_rdma->m_guardTailGateQualifiedFlows;
         total_guard_remaining_refresh_events +=
             driver->m_rdma->m_guardRemainingRefreshEvents;
     }
@@ -2742,10 +2773,15 @@ int main(int argc, char *argv[]) {
             total_guard_long_acks_suppressed, guard_ack_interval_packets,
             guard_fixed_window ? 1 : 0);
     fprintf(guard_stats_output,
-            "guard_tail_bypass enabled %u bdps %.6f flows %lu feedbacks_skipped %lu\n",
+            "guard_tail_bypass enabled %u bdps %.6f congestion_gate %u safe_ratio %.6f "
+            "safe_samples %u flows %lu feedbacks_skipped %lu deferrals %lu "
+            "qualified_flows %lu\n",
             guard_tail_bypass ? 1 : 0, guard_tail_bypass_bdps,
+            guard_tail_congestion_gate ? 1 : 0, guard_tail_safe_ratio,
+            guard_tail_safe_samples,
             total_guard_tail_bypass_flows,
-            total_guard_tail_bypass_feedbacks);
+            total_guard_tail_bypass_feedbacks, total_guard_tail_gate_deferrals,
+            total_guard_tail_gate_qualified_flows);
     fprintf(guard_stats_output,
             "guard_receiver_scheduler remaining_aware %u min_share_fraction %.6f "
             "remaining_exponent %.6f refresh_bdps %.6f refresh_events %lu\n",

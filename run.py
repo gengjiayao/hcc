@@ -98,6 +98,9 @@ GUARD_SENDER_SRPT {guard_sender_srpt}
 GUARD_ONE_RTT_BYPASS {guard_one_rtt_bypass}
 GUARD_TAIL_BYPASS {guard_tail_bypass}
 GUARD_TAIL_BYPASS_BDPS {guard_tail_bypass_bdps}
+GUARD_TAIL_CONGESTION_GATE {guard_tail_congestion_gate}
+GUARD_TAIL_SAFE_RATIO {guard_tail_safe_ratio}
+GUARD_TAIL_SAFE_SAMPLES {guard_tail_safe_samples}
 GUARD_ACK_INTERVAL_PACKETS {guard_ack_interval_packets}
 GUARD_FIXED_WINDOW {guard_fixed_window}
 GUARD_REMAINING_AWARE {guard_remaining_aware}
@@ -396,6 +399,12 @@ def main():
                         help="pace the final acknowledged BDP only by the receiver cap (default: 1)")
     parser.add_argument('--guard_tail_bypass_bdps', type=float, default=8.0,
                         help="acknowledged BDPs remaining at tail bypass, in [1,16] (default: 8)")
+    parser.add_argument('--guard_tail_congestion_gate', type=int, choices=(0, 1), default=0,
+                        help="require safe fabric samples before tail bypass (default: 0)")
+    parser.add_argument('--guard_tail_safe_ratio', type=float, default=0.9,
+                        help="safe HPCC utilization/target ratio in [0.5,1] (default: 0.9)")
+    parser.add_argument('--guard_tail_safe_samples', type=int, default=2,
+                        help="consecutive safe samples before tail bypass in [1,8] (default: 2)")
     parser.add_argument('--guard_ack_interval_packets', type=int, default=8,
                         help="cumulative ACK interval for registered GUARD flows (default: 8)")
     parser.add_argument('--guard_fixed_window', type=int, choices=(0, 1), default=1,
@@ -510,6 +519,10 @@ def main():
         raise Exception("CONFIG ERROR: --guard_ack_interval_packets must be positive.")
     if not 1.0 <= args.guard_tail_bypass_bdps <= 16.0:
         raise Exception("CONFIG ERROR: --guard_tail_bypass_bdps must be in [1, 16].")
+    if not 0.5 <= args.guard_tail_safe_ratio <= 1.0:
+        raise Exception("CONFIG ERROR: --guard_tail_safe_ratio must be in [0.5, 1].")
+    if not 1 <= args.guard_tail_safe_samples <= 8:
+        raise Exception("CONFIG ERROR: --guard_tail_safe_samples must be in [1, 8].")
     if not 0.0 <= args.guard_min_share_fraction <= 1.0:
         raise Exception("CONFIG ERROR: --guard_min_share_fraction must be in [0, 1].")
     if not 0.0 <= args.guard_remaining_exponent <= 2.0:
@@ -881,6 +894,9 @@ def main():
                                         guard_one_rtt_bypass=args.guard_one_rtt_bypass,
                                         guard_tail_bypass=args.guard_tail_bypass,
                                         guard_tail_bypass_bdps=args.guard_tail_bypass_bdps,
+                                        guard_tail_congestion_gate=args.guard_tail_congestion_gate,
+                                        guard_tail_safe_ratio=args.guard_tail_safe_ratio,
+                                        guard_tail_safe_samples=args.guard_tail_safe_samples,
                                         guard_ack_interval_packets=args.guard_ack_interval_packets,
                                         guard_fixed_window=args.guard_fixed_window,
                                         guard_remaining_aware=args.guard_remaining_aware,
