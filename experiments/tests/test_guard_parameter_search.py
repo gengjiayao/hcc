@@ -21,6 +21,7 @@ THRESHOLD_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_sear
 TAIL_THRESHOLD_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage3a.json"
 ADAPTIVE_TARGET_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage3b.json"
 ADAPTIVE_SCOPE_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage3c.json"
+ADAPTIVE_REFINEMENT_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage3d.json"
 
 
 class GuardParameterSearchTest(unittest.TestCase):
@@ -204,6 +205,14 @@ class GuardParameterSearchTest(unittest.TestCase):
             REPO, spec, {"name": "AliStorage50", "cdf": "AliStorage2019"},
             {"seed": 86, "path": "/tmp/frozen-flow.txt"}, "scope8")
         self.assertIn("--guard_adaptive_target_max_bdps 8.0", " ".join(command))
+
+    def test_adaptive_scope_refinement_uses_only_active_scope(self):
+        spec = read_spec(ADAPTIVE_REFINEMENT_SPEC_PATH)
+        self.assertEqual(spec["search_kind"], "adaptive_scope_refinement")
+        self.assertEqual(spec["seeds"], [91, 92, 93, 94, 95])
+        self.assertEqual(set(spec["arms"]), {"adaptive_off", "scope12"})
+        self.assertEqual(
+            spec["arms"]["scope12"]["guard_adaptive_target_max_bdps"], 12.0)
 
     def test_selection_applies_primary_and_constraint_gates(self):
         result = select_candidate(self.spec, self.rows())
