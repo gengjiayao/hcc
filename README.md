@@ -11,7 +11,7 @@
 | `timely`      | 7         | TIMELY（基于 RTT）                                          |
 | `dctcp`       | 8         | DCTCP（原仓库自带）                                         |
 | **`guard`**     | **11**    | HPCC + 接收端等分配额上限 + EWMA 主动配额释放                |
-| **`homa`** | **12**    | Homa-inspired 实验基线：unscheduled/scheduled 发送、SRPT grant 与优先级队列原型 |
+| **`homa`** | **12**    | Homa ns-3 reimplementation：receiver grants、SRPT、动态优先级与原生 RESEND |
 | `guard-active-only` | 13 | GUARD receiver-rate-only 组件消融（无 INT/HPCC 环） |
 
 > "guard" 是本仓库提出的算法，目标是在保留 HPCC in-network 反馈的同时，在接收端再加一层基于活跃流数的等分配额上限 + 主动尾部释放，主要改善大流的尾延迟。
@@ -45,55 +45,46 @@
 6. **短流走高优先级队列（按 m_size 分桶）**：v1 所有数据包都用 traffic_gen 给的同一个 pg（=3），导致短流和长流挤在 switch 的同一个 priority queue 里。v2 在 `AddQueuePair` 里按 m_size 分四档：`< BDP/4 → pg 1`、`< BDP/2 → pg 2`、`< BDP → pg 3`、`≥ BDP → pg 4`，整条流统一用这个 pg。短流路由到更高优先级队列、不再被长流堵。HPCC 的 INT 反馈、PFC pause 检查、RCC grant 路由全部仍然一致（每条流自己的 pg 是稳定的，跟 homa 那种 per-packet 变化不一样）。
 7. **RCC 触发阈值从硬编码 BDP 改成 baseRtt-derived**：v1 在 `ReceiveUdp` 里写死 `bdp = 104000`（按 leaf_spine 100G + 8.32µs RTT 算出来的），换拓扑会误判。v2 用 `FlowStatTag::GetBaseRttSeconds()` × 接收 NIC 线速算每条流自己的 BDP，跨拓扑正确（在 leaf_spine_8 上数值不变，行为不变；在 fat_k8 / 不同 RTT 拓扑下避免错把中等流注册到 RCC 等分集合）。
 
-### 1.3 Homa-inspired 实验基线（`cc_mode=12`）
+### 1.3 Homa ns-3 基线（`cc_mode=12`）
 
 该模式参考 [SIGCOMM'18 Homa](https://dl.acm.org/doi/10.1145/3230543.3230564)
-的接收端调度和 PlatformLab packet format，实现了一个用于机制探索的
-**Homa-inspired 原型**。它不是论文协议或 PlatformLab 实现的 faithful port，
-也不能以“标准 Homa”名义作为正式论文基线。当前已实现的 happy-path 机制包括：
+的接收端调度与 packet format，实现了可审计的 **Homa ns-3 reimplementation**。
+它不是 PlatformLab 实现的源码移植；论文图中必须标为 `Homa (ns-3)`，并披露
+本节末尾的模拟边界。当前实现包括：
 
 1. **HomaHeader（每个数据包都携带）**：64 字节，含 `type`（DATA/GRANT/RESEND/BUSY/NEED_ACK/ACK/UNKNOWN）+ 该 type 用得到的字段联合（DATA 段：`msg_total_length / pkt_offset / pkt_length / unscheduled_bytes / priority`；GRANT 段：`granted_offset / grant_priority`；RESEND 段：`resend_offset / resend_length / restart_priority`）。
-2. **HomaScheduler（接收端，per-NIC）**：SRPT 二叉堆按 `bytes_remaining_to_grant` 排序；定时器每 `pacing_interval`（=MTU/线速）pop 出 top-N（`overcommit_degree`）流，给每个发一个 GRANT 推进 1 MTU。GRANT 包用 `0xFA` 协议号。
-3. **Per-packet priority 路由**：发送端 `udp.pg` 按下面规则填，交换机直接路由到对应 8 priority 队列里：
-   - **Unscheduled cutoffs（短消息优先）**：`m_size < BDP/4 → pg=1`；`< BDP/2 → pg=2`；`< BDP → pg=3`；`≥ BDP → pg=4`
-   - **Scheduled grant slots（让位给 unscheduled）**：top SRPT 流 → `pg=4`，往下到 `pg=7`
+2. **HomaScheduler（接收端，per-NIC）**：SRPT 二叉堆按 `bytes_remaining_to_grant` 排序；定时器每 `pacing_interval`（=MTU/线速）处理 top-N 流，给每个发 GRANT。每条选中消息的“已授权但尚未收到”字节限制在约 1 BDP，避免把阻塞消息一次性 grant 完；`--homa_overcommit` 默认等于 scheduled priority 数，也可显式设为 1--6。
+3. **Workload-derived per-packet priority**：PG 0 留给控制包，PG 1--7 给 DATA。`run.py` 从标准 CDF（自定义 trace 则从冻结 snapshot）计算 unscheduled-byte 占比，据此划分 unscheduled/scheduled priority 数，并让每个 unscheduled 桶承载近似相等的字节；两组 priority 不重叠。scheduled 消息不足时使用最低的可用 priority，给新到短消息保留抢占空间。交换机在 Homa mode 对 PG 1--7 执行严格优先级调度，发送 NIC 在 ready message 间执行 SRPT。
 4. **PFC-free 数据队列**：SwitchMmu 加了 `m_PFCenabledPg[qCnt]` per-PG 开关，`scratch/network-load-balance.cc` 在 cc_mode=12 时把 PG 1–7（数据队列）的 PFC 关掉，只保留 PG 0（控制包）的 PFC。
-5. **实验性 RESEND 路径**：HomaFlow 跟踪 `next_expected_offset`（连续接收的最高边界）；每 `stall_rto`（默认 15 µs）扫描仍在 `flow_hash` 中的 flow，发现“已授权但未到达且无进展”的洞后发送 `RESEND{offset, length}`。发送端把 RESEND range 加入 `qp->homa.m_retransmit_queue`，`GetNxtPacketHoma` 优先发送该范围。该路径不构成完整的 Homa loss recovery，具体限制见下文。
-6. **QP-key 一致性**：cc_mode=12 强制 `qp->m_pg=0`（sender QP key），`rxQp.pg=0`，控制包用 `qbbh.pg=0`，ACK 也用 `pg=0`——避免 per-packet 变化的 `udp.pg` 把一条流拆成多个 QP 条目。
+5. **Native RESEND 路径**：接收端用不相交 byte-range map 跟踪乱序 DATA，并保留状态直到消息完整；默认 1 ms 无进展后发送 `RESEND{offset,length}`。Homa DATA 不再进入仓库通用 RDMA ACK/NACK、Go-Back-N 或 sender RTO。发送端优先处理 RESEND range。
+6. **有界审计统计**：`out_guard_stats.txt` 记录 DATA/GRANT/RESEND/completion notice、message lifecycle、最大 pending messages 和 PG 0--7 的 DATA packet/byte 数；可同时核对通用 recovery、PFC 与 switch drop 是否为零。
 
 **用法**：
 
 ```bash
-# 推荐：PFC 在 NIC 层开（控制包用），数据 PG 由 MMU 关掉，RESEND 自己恢复
+# PFC 在 NIC 层开（控制包用），数据 PG 由 MMU 关掉，RESEND 自己恢复
 python3 run.py --cc homa --pfc 1 --irn 0 --simul_time 0.01 --netload 25 --topo leaf_spine_8_100G_OS1
-# 也可以叠加 IRN 作 belt-and-suspenders
-python3 run.py --cc homa --pfc 1 --irn 1 ...
+# 默认 priority profile 来自 CDF；custom flow 自动使用冻结 snapshot 的分布
+python3 run.py --cc homa --pfc 1 --irn 0 --flow_file experiments/inputs/homa_loss_incast.txt --simul_time 0.01 --topo leaf_spine_16_100G_OS4
 ```
 
-> **审计结论：仅限实验性 happy path，禁止作为正式论文 Homa 基线。** 当前
-> 实现与 Homa 仍有以下实质差异：
->
-> - `overcommit_degree` 固定为 1；Homa 将 overcommit 与可用 scheduled
->   priority levels 配合使用，以避免 receiver downlink 空闲。
-> - unscheduled cutoff 使用固定的 `BDP/4`、`BDP/2`、`BDP` 分桶，而不是
->   按 workload CDF 动态分配；scheduled 与 unscheduled 还共享 PG 4。
-> - 控制路径只处理 `GRANT` 和 `RESEND`，尚未实现 `BUSY`、`NEED_ACK`、
->   Homa `ACK` 和 `UNKNOWN` 语义。
-> - DATA 仍经过仓库原有的 RDMA ACK/NACK、sender RTO 和 `RecoverQueue`；
->   因此观测到的可靠性不能归因于 Homa 的 receiver-side RESEND。
-> - receiver 发完一条消息的所有 grant 后即删除对应 `flow_hash` 状态；如果
->   丢包在此后暴露，实验性 `StallCheck` 已无法为该消息生成 RESEND。
-> - out-of-order 字节范围没有完整跟踪，也没有 Homa 专用的 grant、RESEND、
->   drop 和 overcommit-idle 统计。
->
-> 在修复以上问题并通过 forced-drop、SRPT ordering、overcommit utilization
-> 等 sanity tests 之前，mode 12 的结果只能用于开发调试，不得进入论文的正式
-> Homa/NDP/ExpressPass 对比。增量实现计划见 `docs/homa-plan.md`。
+机制资格结果和固定输入见 [`docs/homa-qualification.md`](docs/homa-qualification.md)：
+无丢包 AliStorage 完成 6,056/6,056；forced-loss 五个 seed 均只用原生 RESEND
+完成；sender SRPT 与 receiver overcommit 定向测试也通过。
 
-一次受控 smoke（8 hosts、5 ms、AliStorage、25% load、seed 404）完成了
-3095/3095 条 flow，墙钟约 2 秒，单次输出约 512 KB、流文件约 72 KB。这只
-证明无注入丢包的 happy path 可以结束；5 ms 又恰好等于分析 warm-up，生成的
-FCT summary 没有有效样本，不能据此报告任何性能结果。
+> **仍需披露的模拟边界：**
+>
+> - 模拟器的 PG 0 专用于控制，因此只有 7 个 DATA priority，而论文环境有
+>   8 个可用于数据调度的 priority。
+> - workload profile 来自配置 CDF；custom trace 使用其冻结 size distribution。
+>   这属于已知 workload 配置，不应解释为在线自适应。
+> - 仓库流量模型是单向 message，不产生 RPC response；实现用 ACK-shaped
+>   completion notice 结束 sender QP，这只是模拟 plumbing，不是 Homa 的显式 ACK。
+> - `BUSY`、`NEED_ACK`、`UNKNOWN` 尚未实现；当前资格没有覆盖“所有初始 DATA
+>   全丢”或 completion notice 自身丢失。
+>
+> 因此它可以作为同一 ns-3 环境中的 `Homa (ns-3)` 基线，但不能声称与
+> PlatformLab Homa bit-for-bit 等价，也不能拿跨模拟器结果直接比较。
 
 ---
 

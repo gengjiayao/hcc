@@ -1,5 +1,10 @@
 # Homa 实现 Plan（cc_mode=12）
 
+> 历史实现计划。当前实现状态、资格结果和仍保留的语义边界以
+> [`../README.md`](../README.md) 与
+> [`homa-qualification.md`](homa-qualification.md) 为准；下文的 PR 编号和
+> “待实现”描述仅用于追溯设计过程。
+
 **目标**：在 guard 仓库（NS-3 19）main 分支上完整复刻一个标准版 Homa，对照
 [SIGCOMM'18 paper](https://dl.acm.org/doi/10.1145/3230543.3230564) +
 [PlatformLab/Homa](https://github.com/PlatformLab/Homa) 的 packet format。
