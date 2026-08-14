@@ -41,6 +41,7 @@ class CollectiveSummaryTest(unittest.TestCase):
             "grants_sent": 0, "grants_received": 0,
             "hpcc_actual_rate_changes": 0, "homa_data_packets": 0,
             "homa_grants_sent": 0, "homa_messages_completed": 0,
+            "homa_messages_tracked": 0, "homa_completed_message_ids": 0,
             "homa_completion_notices_sent": 0,
         }
 
@@ -56,7 +57,8 @@ class CollectiveSummaryTest(unittest.TestCase):
         homa = self.values()
         homa.update(
             homa_data_packets=10, homa_grants_sent=2,
-            homa_messages_completed=10, homa_completion_notices_sent=10,
+            homa_messages_tracked=10, homa_messages_completed=10,
+            homa_completed_message_ids=10, homa_completion_notices_sent=10,
         )
         self.assertEqual(validate_mechanism("homa", homa, 10, 2), [])
 

@@ -96,6 +96,7 @@ class SummaryTests(unittest.TestCase):
             path.write_text(
                 "total 0 0 0 0\n"
                 "homa_total 100 90000 3 40 40 2 2 7 7 8 7 4\n"
+                "homa_tombstone_total 7 5 5\n"
                 "homa_priority priority data_packets data_bytes\n"
                 "homa_priority 1 20 18000\n"
                 "homa_priority 7 80 72000\n",
@@ -104,6 +105,9 @@ class SummaryTests(unittest.TestCase):
             stats = parse_guard_stats(path)
             self.assertEqual(stats["homa_data_packets"], 100)
             self.assertEqual(stats["homa_messages_completed"], 7)
+            self.assertEqual(stats["homa_completed_message_ids"], 7)
+            self.assertEqual(stats["homa_duplicate_data_after_completion"], 5)
+            self.assertEqual(stats["homa_completion_notices_replayed"], 5)
             self.assertEqual(stats["homa_priority"][7]["data_bytes"], 72000)
 
     def test_adaptive_guard_stats_preserve_rebalance_counters(self):
