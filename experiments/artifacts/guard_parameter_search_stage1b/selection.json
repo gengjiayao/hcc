@@ -1,0 +1,145 @@
+{
+  "baseline_arm": "q64",
+  "candidates": [
+    {
+      "arm": "q16",
+      "eligible": false,
+      "gates": {
+        "gt_1MB_fct_us_mean_ci95_high_below_0.0": false,
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_1.0": true,
+        "queue_bytes_mean_ci95_high_at_most_10.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "gt_1MB_fct_us_mean": {
+          "ci95_half_width": 0.3197634410761181,
+          "ci95_high": 0.4429219723785162,
+          "ci95_low": -0.19660490977371997,
+          "mean": 0.12315853130239814,
+          "n": 5
+        },
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.10600888612964844,
+          "ci95_high": 0.10771411917718905,
+          "ci95_low": -0.10430365308210783,
+          "mean": 0.0017052330475406136,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.09620491606852319,
+          "ci95_high": 0.21825367454106748,
+          "ci95_low": 0.025843842404021114,
+          "mean": 0.1220487584725443,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 0.7073322473367709,
+          "ci95_high": 0.8581025642322732,
+          "ci95_low": -0.5565619304412687,
+          "mean": 0.15077031689550222,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        0.12315853130239814,
+        0.1220487584725443,
+        0.15077031689550222
+      ]
+    },
+    {
+      "arm": "q32",
+      "eligible": false,
+      "gates": {
+        "gt_1MB_fct_us_mean_ci95_high_below_0.0": false,
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_1.0": true,
+        "queue_bytes_mean_ci95_high_at_most_10.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "gt_1MB_fct_us_mean": {
+          "ci95_half_width": 0.1884722078411661,
+          "ci95_high": 0.2543231143837904,
+          "ci95_low": -0.12262130129854185,
+          "mean": 0.06585090654262427,
+          "n": 5
+        },
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.08327998018780641,
+          "ci95_high": 0.0728605224226957,
+          "ci95_low": -0.09369943795291713,
+          "mean": -0.010419457765110723,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.07879112461242085,
+          "ci95_high": 0.12542891853981927,
+          "ci95_low": -0.03215333068502244,
+          "mean": 0.04663779392739841,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 0.5558869649015583,
+          "ci95_high": 0.6975754448483755,
+          "ci95_low": -0.41419848495474104,
+          "mean": 0.14168847994681727,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        0.06585090654262427,
+        0.04663779392739841,
+        0.14168847994681727
+      ]
+    },
+    {
+      "arm": "q128",
+      "eligible": false,
+      "gates": {
+        "gt_1MB_fct_us_mean_ci95_high_below_0.0": false,
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_1.0": true,
+        "queue_bytes_mean_ci95_high_at_most_10.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "gt_1MB_fct_us_mean": {
+          "ci95_half_width": 0.1725966756032554,
+          "ci95_high": 0.13512295910536698,
+          "ci95_low": -0.2100703921011438,
+          "mean": -0.037473716497888415,
+          "n": 5
+        },
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.06928751860198784,
+          "ci95_high": 0.03731986226162236,
+          "ci95_low": -0.10125517494235332,
+          "mean": -0.03196765634036548,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.040618691022563214,
+          "ci95_high": 0.02178814104216991,
+          "ci95_low": -0.05944924100295652,
+          "mean": -0.018830549980393303,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 0.20103242033213248,
+          "ci95_high": 0.34022983058975104,
+          "ci95_low": -0.06183501007451392,
+          "mean": 0.13919741025761856,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        -0.037473716497888415,
+        -0.018830549980393303,
+        0.13919741025761856
+      ]
+    }
+  ],
+  "requires_fresh_holdout_before_claim": true,
+  "schema_version": 1,
+  "selected_arm": "q64",
+  "selection_used_performance_direction": true,
+  "status": "no_candidate_beats_frozen_gates"
+}
