@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "name": "guard-feature-ablation",
+  "purpose": "Separate GUARD's scope-aligned rate composition from size priority, bounded sender SRPT, and adaptive unused-share reclamation on the frozen general-workload traces.",
+  "selection_policy": "Freeze all five traces before simulation. Run every arm for every admitted workload without inspecting performance. The optimized arm is the configured GUARD system; one-factor arms disable one endpoint refinement; the core arm disables all three refinements; HPCC is the shared-fabric baseline.",
+  "seeds": [1, 2, 3, 4, 5],
+  "limits": {
+    "max_flows": 10000,
+    "run_bytes": 104857600,
+    "campaign_bytes": 1073741824,
+    "run_timeout_seconds": 1800
+  },
+  "defaults": {
+    "topo": "leaf_spine_16_100G_OS4",
+    "hosts": 16,
+    "oversubscription": 4,
+    "simul_time": 0.02,
+    "netload": 40,
+    "bw": 100,
+    "priority_group": 3,
+    "analysis_warmup": 0.005,
+    "buffer": 9,
+    "lb": "fecmp",
+    "pfc": 1,
+    "irn": 0,
+    "monitor_profile": "bulk",
+    "guard_lambda": 1.4,
+    "guard_beta": 0.125,
+    "guard_gamma": 1.0,
+    "guard_selective_registration": 1,
+    "guard_proactive_release": 1,
+    "guard_keep_last_hop_int": 0,
+    "guard_srpt_quantum_packets": 64,
+    "guard_rebalance_interval_us": 200,
+    "guard_demand_threshold": 0.75,
+    "guard_receiver_util_threshold": 0.75
+  },
+  "arms": {
+    "guard": {
+      "cc": "guard",
+      "guard_size_priority": 1,
+      "guard_sender_srpt": 1,
+      "guard_work_conserving": 1
+    },
+    "no_priority": {
+      "cc": "guard",
+      "guard_size_priority": 0,
+      "guard_sender_srpt": 1,
+      "guard_work_conserving": 1
+    },
+    "no_srpt": {
+      "cc": "guard",
+      "guard_size_priority": 1,
+      "guard_sender_srpt": 0,
+      "guard_work_conserving": 1
+    },
+    "no_reclaim": {
+      "cc": "guard",
+      "guard_size_priority": 1,
+      "guard_sender_srpt": 1,
+      "guard_work_conserving": 0
+    },
+    "core": {
+      "cc": "guard",
+      "guard_size_priority": 0,
+      "guard_sender_srpt": 0,
+      "guard_work_conserving": 0
+    },
+    "hpcc": {"cc": "hpcc"}
+  },
+  "workloads": [
+    {"name": "AliStorage2019", "cdf": "AliStorage2019"},
+    {"name": "WebSearch", "cdf": "WebSearch"},
+    {"name": "FbHdp", "cdf": "FbHdp2015"}
+  ],
+  "flow_size_buckets": [
+    {"name": "le_8KB", "max_bytes": 8192},
+    {"name": "8KB_to_1BDP", "min_exclusive_bytes": 8192, "max_bytes": 104000},
+    {"name": "1BDP_to_1MB", "min_exclusive_bytes": 104000, "max_bytes": 1048576},
+    {"name": "gt_1MB", "min_exclusive_bytes": 1048576}
+  ],
+  "comparisons": [
+    ["guard", "no_priority"],
+    ["guard", "no_srpt"],
+    ["guard", "no_reclaim"],
+    ["guard", "core"],
+    ["core", "hpcc"]
+  ]
+}
