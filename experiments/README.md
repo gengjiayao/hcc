@@ -381,6 +381,18 @@ health gates.  It emits per-seed values, five-seed Student-t 95% intervals,
 paired full-minus-receiver-only intervals, and a separate per-flow sequence of
 sender-applied grant rates.
 
+## Open-loop ring diagnostic
+
+`ring-allreduce` remains a bounded, open-loop ring-shaped traffic trace: its
+30 nominal phases start at configured times and do not wait for the preceding
+phase to complete.  It must not be reported as dependency-aware All-Reduce
+CCT or training JCT.  For robustness checks, `--ring-jitter-us 0.5 --seed S`
+adds an independent sub-microsecond per-flow timing perturbation within each
+phase while preserving all 480 endpoint/size records.  Controller arms for a
+given seed must reuse the same flow hash, and different seeds must have
+different hashes.  Valid figures may report flow FCT, queue, PFC, and the
+open-loop trace completion span, with that scope stated explicitly.
+
 ## Scope
 
 This campaign deliberately excludes GoogleRPC because its small mean message
