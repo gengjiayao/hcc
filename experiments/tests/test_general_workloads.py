@@ -167,6 +167,16 @@ class GeneralWorkloadRunnerTests(unittest.TestCase):
         self.assertEqual(spec["arms"]["guard"]["guard_work_conserving"], 0)
         self.assertEqual(spec["defaults"]["guard_lambda"], 1.8)
 
+    def test_final_load_figures_freeze_optimized_guard(self):
+        for load in (30, 50):
+            spec = read_spec(
+                self.repo / f"experiments/campaigns/ali_load{load}_final_figures.json"
+            )
+            self.assertEqual(spec["seeds"], [21, 22, 23, 24, 25])
+            self.assertEqual(spec["defaults"]["netload"], load)
+            self.assertEqual(spec["defaults"]["guard_lambda"], 1.8)
+            self.assertEqual(spec["arms"]["guard"]["guard_work_conserving"], 0)
+
     def test_formal_plan_requires_passing_workload_and_excludes_seed1(self):
         selected = []
         for name in ("AliStorage2019", "WebSearch"):
