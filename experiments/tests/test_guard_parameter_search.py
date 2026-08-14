@@ -12,6 +12,7 @@ from experiments.summarize_guard_parameter_search import select_candidate
 
 REPO = Path(__file__).resolve().parents[2]
 SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage1.json"
+QUANTUM_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage1b.json"
 
 
 class GuardParameterSearchTest(unittest.TestCase):
@@ -60,6 +61,14 @@ class GuardParameterSearchTest(unittest.TestCase):
             path.write_text(json.dumps(broken), encoding="utf-8")
             with self.assertRaises(CampaignError):
                 read_spec(path)
+
+    def test_quantum_grid_is_complete(self):
+        spec = read_spec(QUANTUM_SPEC_PATH)
+        self.assertEqual(spec["search_kind"], "srpt_quantum")
+        self.assertEqual(
+            {arm["guard_srpt_quantum_packets"] for arm in spec["arms"].values()},
+            {16, 32, 64, 128},
+        )
 
     def test_selection_applies_primary_and_constraint_gates(self):
         result = select_candidate(self.spec, self.rows())
