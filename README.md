@@ -232,7 +232,7 @@ python3 run.py --cc guard-active-only --seed 3 ...
 | `--guard_min_share_fraction` | remaining-aware grant 的最小等分份额，范围 [0,1]，默认 0 |
 | `--guard_remaining_exponent` | remaining-aware 权重指数，范围 [0,2]，默认 1 |
 | `--guard_grant_refresh_bdps` | 每推进该 BDP 数后刷新 receiver 侧剩余量与 grants；0=关闭，默认 1 |
-| `--guard_work_conserving` | 1=回收接收端未使用的 flow share，0=固定 `C/N`，默认 1 |
+| `--guard_work_conserving` | 1=启用实验性闲置份额回收，0=关闭；正式优化配置默认 0 |
 | `--guard_rebalance_interval_us` | 接收端有界 demand 采样周期，默认 200 us |
 | `--guard_demand_threshold` | flow 实测速率低于 grant 的该比例时积累 demand-limited 证据，默认 0.75 |
 | `--guard_receiver_util_threshold` | 仅当接收端总利用率低于该比例时允许回收 share，默认 0.75 |

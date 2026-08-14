@@ -407,8 +407,8 @@ def main():
                         help="receiver progress between grant refreshes in BDPs; 0 disables (default: 1)")
     parser.add_argument('--guard_srpt_quantum_packets', type=int, default=64,
                         help="consecutive SRPT packet bound before RR service (default: 64)")
-    parser.add_argument('--guard_work_conserving', type=int, choices=(0, 1), default=1,
-                        help="reclaim persistently unused receiver shares (default: 1)")
+    parser.add_argument('--guard_work_conserving', type=int, choices=(0, 1), default=0,
+                        help="enable experimental unused-share reclamation (default: 0)")
     parser.add_argument('--guard_rebalance_interval_us', type=int, default=200,
                         help="GUARD receiver demand-sampling interval in us (default: 200)")
     parser.add_argument('--guard_demand_threshold', type=float, default=0.75,
