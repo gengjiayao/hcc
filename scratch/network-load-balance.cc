@@ -175,6 +175,7 @@ bool guard_size_priority = true;
 bool guard_work_conserving = true;
 uint64_t guard_rebalance_interval_us = 200;
 double guard_demand_threshold = 0.75;
+double guard_receiver_util_threshold = 0.75;
 uint32_t homa_overcommit = 4;
 uint64_t homa_resend_timeout_us = 1000;
 uint32_t homa_unscheduled_levels = 3;
@@ -1268,6 +1269,10 @@ int main(int argc, char *argv[]) {
             } else if (key.compare("GUARD_DEMAND_THRESHOLD") == 0) {
                 conf >> guard_demand_threshold;
                 std::cerr << "GUARD_DEMAND_THRESHOLD\t" << guard_demand_threshold << '\n';
+            } else if (key.compare("GUARD_RECEIVER_UTIL_THRESHOLD") == 0) {
+                conf >> guard_receiver_util_threshold;
+                std::cerr << "GUARD_RECEIVER_UTIL_THRESHOLD\t"
+                          << guard_receiver_util_threshold << '\n';
             } else if (key.compare("GUARD_LIFECYCLE_TRACE") == 0) {
                 conf >> guard_lifecycle_trace;
                 std::cerr << "GUARD_LIFECYCLE_TRACE\t" << guard_lifecycle_trace << '\n';
@@ -1459,6 +1464,10 @@ int main(int argc, char *argv[]) {
     }
     if (guard_demand_threshold <= 0.0 || guard_demand_threshold >= 1.0) {
         std::cerr << "GUARD_DEMAND_THRESHOLD must be in (0, 1)\n";
+        return 1;
+    }
+    if (guard_receiver_util_threshold <= 0.0 || guard_receiver_util_threshold >= 1.0) {
+        std::cerr << "GUARD_RECEIVER_UTIL_THRESHOLD must be in (0, 1)\n";
         return 1;
     }
     if (homa_overcommit < 1 || homa_overcommit > 6) {
@@ -1921,6 +1930,8 @@ int main(int argc, char *argv[]) {
             rdmaHw->SetAttribute("GuardRebalanceInterval",
                                  TimeValue(MicroSeconds(guard_rebalance_interval_us)));
             rdmaHw->SetAttribute("GuardDemandThreshold", DoubleValue(guard_demand_threshold));
+            rdmaHw->SetAttribute("GuardReceiverUtilThreshold",
+                                 DoubleValue(guard_receiver_util_threshold));
             rdmaHw->SetAttribute("HomaOvercommitDegree", UintegerValue(homa_overcommit));
             rdmaHw->SetAttribute("HomaResendTimeout",
                                  TimeValue(MicroSeconds(homa_resend_timeout_us)));
@@ -2551,9 +2562,10 @@ int main(int argc, char *argv[]) {
             total_grant_bytes_sent, total_guard_rebalance_events,
             total_guard_adaptive_grant_updates);
     fprintf(guard_stats_output,
-            "guard_adaptive_config enabled %u interval_us %lu demand_threshold %.6f\n",
+            "guard_adaptive_config enabled %u interval_us %lu demand_threshold %.6f "
+            "receiver_util_threshold %.6f\n",
             guard_work_conserving ? 1 : 0, guard_rebalance_interval_us,
-            guard_demand_threshold);
+            guard_demand_threshold, guard_receiver_util_threshold);
     fprintf(guard_stats_output, "switch_drops ingress %u egress %u total %u\n",
             Settings::dropped_pkt_sw_ingress, Settings::dropped_pkt_sw_egress,
             Settings::dropped_pkt_sw_ingress + Settings::dropped_pkt_sw_egress);

@@ -214,6 +214,7 @@ class RdmaHw : public Object {
     bool m_guardWorkConserving;
     Time m_guardRebalanceInterval;
     double m_guardDemandThreshold;
+    double m_guardReceiverUtilThreshold;
     uint64_t m_guardRateGrantsSent;
     uint64_t m_guardRateGrantBytesSent;
     uint64_t m_guardRateGrantsReceived;
@@ -242,6 +243,7 @@ class RdmaHw : public Object {
     uint64_t m_guardMaxActiveFlows;
     uint64_t m_guardRebalanceEvents;
     uint64_t m_guardAdaptiveGrantUpdates;
+    uint32_t m_guardUnderutilizedSamples;
     uint64_t m_recoveryNacksGenerated;
     uint64_t m_recoveryNacksReceived;
     uint64_t m_irnNacksGenerated;

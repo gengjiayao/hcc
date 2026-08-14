@@ -97,6 +97,7 @@ GUARD_SIZE_PRIORITY {guard_size_priority}
 GUARD_WORK_CONSERVING {guard_work_conserving}
 GUARD_REBALANCE_INTERVAL_US {guard_rebalance_interval_us}
 GUARD_DEMAND_THRESHOLD {guard_demand_threshold}
+GUARD_RECEIVER_UTIL_THRESHOLD {guard_receiver_util_threshold}
 GUARD_LIFECYCLE_TRACE {guard_lifecycle_trace}
 GUARD_LIFECYCLE_TRACE_MAX_LINES {guard_lifecycle_max_lines}
 GUARD_CONTROLLER_TRACE {guard_controller_trace}
@@ -379,6 +380,8 @@ def main():
                         help="GUARD receiver demand-sampling interval in us (default: 200)")
     parser.add_argument('--guard_demand_threshold', type=float, default=0.75,
                         help="arrival/grant ratio below which a share is reclaimable (default: 0.75)")
+    parser.add_argument('--guard_receiver_util_threshold', type=float, default=0.75,
+                        help="aggregate receiver utilization gate for share reclamation (default: 0.75)")
     parser.add_argument('--guard_lifecycle_trace', type=int, choices=(0, 1), default=0,
                         help="write a bounded per-flow GUARD lifecycle CSV (default: 0)")
     parser.add_argument('--guard_lifecycle_output', type=str,
@@ -457,6 +460,8 @@ def main():
         raise Exception("CONFIG ERROR: --guard_rebalance_interval_us must be positive.")
     if not 0.0 < args.guard_demand_threshold < 1.0:
         raise Exception("CONFIG ERROR: --guard_demand_threshold must be in (0, 1).")
+    if not 0.0 < args.guard_receiver_util_threshold < 1.0:
+        raise Exception("CONFIG ERROR: --guard_receiver_util_threshold must be in (0, 1).")
     if not 1 <= args.seed <= 2147483647:
         raise Exception("CONFIG ERROR: --seed must be in [1, 2147483647].")
     if args.homa_resend_timeout_us <= 0:
@@ -817,6 +822,7 @@ def main():
                                         guard_work_conserving=args.guard_work_conserving,
                                         guard_rebalance_interval_us=args.guard_rebalance_interval_us,
                                         guard_demand_threshold=args.guard_demand_threshold,
+                                        guard_receiver_util_threshold=args.guard_receiver_util_threshold,
                                         guard_lifecycle_trace=args.guard_lifecycle_trace,
                                         guard_lifecycle_output=guard_lifecycle_output,
                                         guard_lifecycle_max_lines=args.guard_lifecycle_max_lines,
