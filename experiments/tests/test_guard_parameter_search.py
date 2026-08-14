@@ -22,6 +22,7 @@ TAIL_THRESHOLD_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter
 ADAPTIVE_TARGET_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage3b.json"
 ADAPTIVE_SCOPE_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage3c.json"
 ADAPTIVE_REFINEMENT_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage3d.json"
+ADAPTIVE_EXPANSION_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage3e.json"
 
 
 class GuardParameterSearchTest(unittest.TestCase):
@@ -213,6 +214,15 @@ class GuardParameterSearchTest(unittest.TestCase):
         self.assertEqual(set(spec["arms"]), {"adaptive_off", "scope12"})
         self.assertEqual(
             spec["arms"]["scope12"]["guard_adaptive_target_max_bdps"], 12.0)
+
+    def test_adaptive_scope_expansion_is_frozen_before_runs(self):
+        spec = read_spec(ADAPTIVE_EXPANSION_SPEC_PATH)
+        self.assertEqual(spec["search_kind"], "adaptive_scope_expansion")
+        self.assertEqual(spec["seeds"], [96, 97, 98, 99, 100])
+        self.assertEqual(
+            {arm["guard_adaptive_target_max_bdps"] for arm in spec["arms"].values()},
+            {0.0, 16.0, 24.0, 32.0},
+        )
 
     def test_selection_applies_primary_and_constraint_gates(self):
         result = select_candidate(self.spec, self.rows())
