@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "name": "guard-hpcc-homa-collectives-final",
-  "purpose": "Candidate replacement for the initial All-to-All and ring-shaped panels; formal seeds are forbidden until both seed-1 cells pass.",
-  "selection_policy": "Configurations advance through committed ladders in order using only mechanism and safety gates. All-to-All selects 16 MiB because the 9 MiB diagnostic dropped Homa packets and the first predeclared larger buffer passed. The tensor/buffer ring ladder exhausted all levels because HPCC remained lossy, so this candidate starts the separately preregistered intensity ladder at i0-span4ms. Performance values are not selection criteria.",
+  "purpose": "Final five-seed replacement for the initial All-to-All and ring-shaped panels.",
+  "selection_policy": "Configurations advanced through committed ladders in order using only mechanism and safety gates. All-to-All selected 16 MiB because the 9 MiB diagnostic dropped Homa packets and the first predeclared larger buffer passed. The tensor/buffer ring ladder exhausted all levels because HPCC remained lossy; i0-span4ms was the first level of the separately preregistered intensity ladder where all three arms passed. Performance values were not selection criteria.",
   "qualification": {
     "all_to_all": "a0-buffer16 passed 240/240, zero switch drops and generic recovery, with all controller paths active",
-    "ring_open_loop": "tensor/buffer levels r0-r3 exhausted without a jointly safe point; testing intensity level i0-span4ms next"
+    "ring_open_loop": "i0-span4ms passed 480/480 in every arm with zero switch drops and generic recovery and all controller-specific activity gates"
   },
   "seeds": [1, 2, 3, 4, 5],
   "limits": {
