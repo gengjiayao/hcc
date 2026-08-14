@@ -122,6 +122,41 @@ class GeneralWorkloadRunnerTests(unittest.TestCase):
         self.assertEqual(commands["homa"][commands["homa"].index("--cc") + 1], "homa")
         self.assertNotIn("--guard_controller_trace", commands["homa"])
 
+    def test_optimized_holdout_freezes_new_controls_and_seeds(self):
+        spec = read_spec(
+            self.repo / "experiments/campaigns/guard_homa_optimized_holdout.json"
+        )
+        self.assertEqual(spec["seeds"], [6, 7, 8, 9, 10])
+        workload = {
+            "name": "FbHdp", "cdf": "FbHdp2015",
+            "selected_profile": "primary",
+            "attempts": {"primary": {"profile": {
+                "topo": "leaf_spine_16_100G_OS4", "hosts": 16,
+                "oversubscription": 4, "simul_time": 0.02,
+                "netload": 40, "bw": 100,
+            }}},
+        }
+        trace = {"seed": 6, "path": "/tmp/holdout-flow.txt", "sha256": "same"}
+        command = run_command(self.repo, spec, workload, trace, "guard", True)
+        expected = {
+            "--guard_lambda": "1.8", "--guard_tail_bypass_bdps": "8.0",
+            "--guard_min_share_fraction": "0.0",
+            "--guard_remaining_exponent": "1.0",
+            "--guard_grant_refresh_bdps": "1.0",
+            "--guard_srpt_quantum_packets": "64",
+        }
+        for option, value in expected.items():
+            self.assertEqual(command[command.index(option) + 1], value)
+
+        preflight = {"workloads": [{
+            **workload, "decision": "included",
+            "selected_traces": [{"seed": seed} for seed in spec["seeds"]],
+        }]}
+        admission = planned_runs(spec, preflight, "admission")
+        formal = planned_runs(spec, preflight, "formal", {"FbHdp": {"passed": True}})
+        self.assertEqual({row[1]["seed"] for row in admission}, {6})
+        self.assertEqual({row[1]["seed"] for row in formal}, {7, 8, 9, 10})
+
     def test_formal_plan_requires_passing_workload_and_excludes_seed1(self):
         selected = []
         for name in ("AliStorage2019", "WebSearch"):
@@ -269,6 +304,26 @@ class GeneralWorkloadSummaryTests(unittest.TestCase):
         rows[-1]["flow_sha256"] = "wrong"
         with self.assertRaisesRegex(AnalysisError, "flow hash mismatch"):
             aggregate_formal(rows, (("receiver", "hpcc"),))
+
+    def test_paired_t95_accepts_a_frozen_held_out_seed_cohort(self):
+        rows = []
+        for seed in range(6, 11):
+            for arm, value in (("guard", seed - 1.0), ("hpcc", float(seed)),
+                               ("homa", seed + 1.0)):
+                rows.append({
+                    "workload": "WebSearch", "cdf": "WebSearch",
+                    "seed": seed, "arm": arm, "git_sha": "sha",
+                    "flow_sha256": f"flow-{seed}", "output_id": f"{arm}-{seed}",
+                    "output_dir": "/tmp", "passed": True, "failures": [],
+                    "overall_slowdown_mean": value,
+                })
+        report, _csv = aggregate_formal(
+            rows, (("guard", "homa"), ("guard", "hpcc")),
+            ("guard", "hpcc", "homa"), tuple(range(6, 11)),
+        )
+        paired = report["WebSearch"]["paired"]["guard_minus_homa"]
+        self.assertEqual(paired["overall_slowdown_mean"]["difference"]["n"], 5)
+        self.assertEqual(paired["overall_slowdown_mean"]["difference"]["mean"], -2.0)
 
 
 if __name__ == "__main__":

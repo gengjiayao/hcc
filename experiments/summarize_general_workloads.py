@@ -67,6 +67,13 @@ GUARD_SCHEDULER_FIELDS = (
     "guard_sender_srpt_selections", "guard_sender_srpt_non_rr",
     "guard_sender_srpt_forced_rr",
 )
+GUARD_OPTIMIZATION_FIELDS = (
+    "guard_tail_bypass_enabled", "guard_tail_bypass_bdps",
+    "guard_tail_bypass_flows", "guard_tail_bypass_feedbacks",
+    "guard_remaining_aware", "guard_min_share_fraction",
+    "guard_remaining_exponent", "guard_grant_refresh_bdps",
+    "guard_remaining_refresh_events",
+)
 
 
 class AnalysisError(RuntimeError):
@@ -232,6 +239,15 @@ def validate_config(
             "guard_keep_last_hop_int": "GUARD_KEEP_LAST_HOP_INT",
             "guard_size_priority": "GUARD_SIZE_PRIORITY",
             "guard_sender_srpt": "GUARD_SENDER_SRPT",
+            "guard_one_rtt_bypass": "GUARD_ONE_RTT_BYPASS",
+            "guard_tail_bypass": "GUARD_TAIL_BYPASS",
+            "guard_tail_bypass_bdps": "GUARD_TAIL_BYPASS_BDPS",
+            "guard_ack_interval_packets": "GUARD_ACK_INTERVAL_PACKETS",
+            "guard_fixed_window": "GUARD_FIXED_WINDOW",
+            "guard_remaining_aware": "GUARD_REMAINING_AWARE",
+            "guard_min_share_fraction": "GUARD_MIN_SHARE_FRACTION",
+            "guard_remaining_exponent": "GUARD_REMAINING_EXPONENT",
+            "guard_grant_refresh_bdps": "GUARD_GRANT_REFRESH_BDPS",
             "guard_srpt_quantum_packets": "GUARD_SRPT_QUANTUM_PACKETS",
             "guard_work_conserving": "GUARD_WORK_CONSERVING",
         }
@@ -265,6 +281,9 @@ def mechanism_checks(arm: str, stats: Mapping[str, object]) -> Dict[str, bool]:
                 "guard_sender_srpt_enabled": int(stats["guard_sender_srpt_enabled"]) == 1,
                 "guard_sender_srpt_selected": int(stats["guard_sender_srpt_selections"]) > 0,
                 "guard_sender_srpt_non_rr": int(stats["guard_sender_srpt_non_rr"]) > 0,
+                "guard_tail_bypass": int(stats["guard_tail_bypass_flows"]) > 0,
+                "guard_progress_refresh":
+                    int(stats["guard_remaining_refresh_events"]) > 0,
             })
         return checks
     if arm == "hpcc":
@@ -404,6 +423,8 @@ def analyze_run(
         metrics[field] = float(stats[field])
     for field in GUARD_SCHEDULER_FIELDS:
         metrics[field] = float(stats[field])
+    for field in GUARD_OPTIMIZATION_FIELDS:
+        metrics[field] = float(stats[field])
     for field in ZERO_RECOVERY_FIELDS:
         metrics[field] = float(stats[field])
     for field in PFC_PRIORITY_FIELDS:
@@ -447,6 +468,7 @@ def admission_report(
 ) -> Tuple[Dict[str, object], List[Dict[str, object]]]:
     decisions: Dict[str, object] = {}
     rows: List[Dict[str, object]] = []
+    admission_seed = int(spec["seeds"][0])
     for workload in preflight["workloads"]:
         if workload["decision"] != "included":
             continue
@@ -454,11 +476,15 @@ def admission_report(
         arms = tuple(map(str, spec["arms"]))
         for arm in arms:
             try:
-                row, admission = analyze_run(campaign_dir, workload, spec, 1, arm)
+                row, admission = analyze_run(
+                    campaign_dir, workload, spec, admission_seed, arm)
                 rows.append(row)
                 arm_rows.append(admission)
             except (AnalysisError, SummaryError, OSError, KeyError, ValueError, StopIteration) as exc:
-                arm_rows.append({"seed": 1, "arm": arm, "passed": False, "failures": [str(exc)]})
+                arm_rows.append({
+                    "seed": admission_seed, "arm": arm,
+                    "passed": False, "failures": [str(exc)],
+                })
         hashes = {row.get("flow_sha256") for row in arm_rows if row.get("flow_sha256")}
         hash_matched = len(hashes) == 1 and len(arm_rows) == len(arms)
         passed = all(row.get("passed") is True for row in arm_rows) and hash_matched
@@ -470,7 +496,7 @@ def admission_report(
         }
     report = {
         "schema_version": 1,
-        "gate": "seed-1 mechanisms before performance",
+        "gate": f"seed-{admission_seed} mechanisms before performance",
         "preflight_sha256": sha256_file(campaign_dir / "preflight.json"),
         "workloads": decisions,
         "all_selected_passed": all(value["passed"] for value in decisions.values()),
@@ -482,6 +508,7 @@ def aggregate_formal(
     rows: Sequence[Mapping[str, object]],
     comparisons: Sequence[Sequence[str]],
     arms: Sequence[str] = ARMS,
+    seeds: Sequence[int] = tuple(range(1, 6)),
 ) -> Tuple[Dict[str, object], List[Dict[str, object]]]:
     by_workload: Dict[str, object] = {}
     csv_rows: List[Dict[str, object]] = []
@@ -496,8 +523,11 @@ def aggregate_formal(
         numeric_by_arm: Dict[str, set[str]] = {}
         for arm in arms:
             arm_rows = [row for row in workload_rows if row["arm"] == arm]
-            if len(arm_rows) != 5 or {int(row["seed"]) for row in arm_rows} != set(range(1, 6)):
-                raise AnalysisError(f"{workload}/{arm} does not contain exactly seeds 1..5")
+            if len(arm_rows) != len(seeds) or {
+                int(row["seed"]) for row in arm_rows
+            } != set(map(int, seeds)):
+                raise AnalysisError(
+                    f"{workload}/{arm} does not contain exactly seeds {list(seeds)}")
             keys = set.intersection(*(
                 {key for key, value in row.items() if isinstance(value, (int, float)) and key not in identity}
                 for row in arm_rows
@@ -521,7 +551,7 @@ def aggregate_formal(
                 differences: List[float] = []
                 percentages: List[float] = []
                 per_seed: List[Dict[str, object]] = []
-                for seed in range(1, 6):
+                for seed in seeds:
                     left_row = next(row for row in workload_rows if row["arm"] == left and row["seed"] == seed)
                     right_row = next(row for row in workload_rows if row["arm"] == right and row["seed"] == seed)
                     if left_row["flow_sha256"] != right_row["flow_sha256"]:
@@ -537,7 +567,7 @@ def aggregate_formal(
                         "difference": difference, "percent_vs_right": percent,
                     })
                 difference_stats = mean_ci(differences)
-                percent_stats = mean_ci(percentages) if len(percentages) == 5 else None
+                percent_stats = mean_ci(percentages) if len(percentages) == len(seeds) else None
                 paired[metric] = {
                     "per_seed": per_seed, "difference": difference_stats,
                     "percent_vs_right": percent_stats,
@@ -594,7 +624,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         name = str(workload["name"])
         if workload["decision"] != "included" or admission["workloads"][name]["passed"] is not True:
             continue
-        for seed in range(1, 6):
+        for seed in map(int, spec["seeds"]):
             for arm in spec["arms"]:
                 row, _admission = analyze_run(campaign_dir, workload, spec, seed, arm)
                 if row["passed"] is not True:
@@ -603,7 +633,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not formal_rows:
         raise AnalysisError("no admitted workload has a complete formal matrix")
     aggregates, metric_rows = aggregate_formal(
-        formal_rows, spec["comparisons"], tuple(map(str, spec["arms"]))
+        formal_rows, spec["comparisons"], tuple(map(str, spec["arms"])),
+        tuple(map(int, spec["seeds"])),
     )
     write_csv(output / "general_runs.csv", formal_rows)
     write_csv(output / "general_metrics.csv", metric_rows)

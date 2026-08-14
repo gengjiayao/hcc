@@ -119,6 +119,15 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
         "guard_sender_srpt_selections": 0, "guard_sender_srpt_non_rr": 0,
         "guard_sender_srpt_forced_rr": 0,
     }
+    guard_tail = {
+        "guard_tail_bypass_enabled": 0, "guard_tail_bypass_bdps": 0.0,
+        "guard_tail_bypass_flows": 0, "guard_tail_bypass_feedbacks": 0,
+    }
+    guard_receiver = {
+        "guard_remaining_aware": 0, "guard_min_share_fraction": 0.0,
+        "guard_remaining_exponent": 0.0, "guard_grant_refresh_bdps": 0.0,
+        "guard_remaining_refresh_events": 0,
+    }
     switch_drops = {"ingress": 0, "egress": 0, "total": 0}
     priorities: Dict[int, Dict[str, int]] = {}
     homa_priorities: Dict[int, Dict[str, int]] = {}
@@ -174,6 +183,21 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
                     "guard_sender_srpt_non_rr": int(parts[8]),
                     "guard_sender_srpt_forced_rr": int(parts[10]),
                 }
+            elif parts[:2] == ["guard_tail_bypass", "enabled"] and len(parts) == 9:
+                guard_tail = {
+                    "guard_tail_bypass_enabled": int(parts[2]),
+                    "guard_tail_bypass_bdps": float(parts[4]),
+                    "guard_tail_bypass_flows": int(parts[6]),
+                    "guard_tail_bypass_feedbacks": int(parts[8]),
+                }
+            elif parts[:2] == ["guard_receiver_scheduler", "remaining_aware"] and len(parts) == 11:
+                guard_receiver = {
+                    "guard_remaining_aware": int(parts[2]),
+                    "guard_min_share_fraction": float(parts[4]),
+                    "guard_remaining_exponent": float(parts[6]),
+                    "guard_grant_refresh_bdps": float(parts[8]),
+                    "guard_remaining_refresh_events": int(parts[10]),
+                }
             elif parts and parts[0] == "homa_priority" and len(parts) == 4:
                 try:
                     priority = int(parts[1])
@@ -193,6 +217,8 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
     if homa_tombstone_total is not None:
         result.update(homa_tombstone_total)
     result.update(guard_scheduler)
+    result.update(guard_tail)
+    result.update(guard_receiver)
     result.update({f"switch_drops_{key}": value for key, value in switch_drops.items()})
     result["pfc_priority"] = priorities
     result["homa_priority"] = homa_priorities

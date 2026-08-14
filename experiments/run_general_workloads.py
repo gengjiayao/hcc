@@ -2,10 +2,11 @@
 """Preflight and serially run the frozen general-workload comparison.
 
 The runner has three deliberately separate phases.  ``preflight`` generates
-all five traffic inputs without invoking ns-3.  ``admission`` runs only seed 1.
-``formal`` refuses to start until the summarizer has written a passing
-seed-1 admission decision, and then runs seeds 2--5.  Every arm of a seed uses
-the same persistent flow file through ``run.py --flow_file``.
+all five traffic inputs without invoking ns-3.  ``admission`` runs only the
+first frozen seed.  ``formal`` refuses to start until the summarizer has
+written a passing admission decision, and then runs the remaining four seeds.
+Every arm of a seed uses the same persistent flow file through
+``run.py --flow_file``.
 """
 
 from __future__ import annotations
@@ -58,8 +59,9 @@ def read_spec(path: Path) -> Mapping[str, object]:
     for field in ("name", "seeds", "limits", "defaults", "arms", "workloads"):
         if field not in spec:
             raise CampaignError(f"general workload spec is missing {field}")
-    if spec["seeds"] != [1, 2, 3, 4, 5]:
-        raise CampaignError("formal general workload comparison requires seeds 1..5")
+    seeds = list(map(int, spec["seeds"]))
+    if len(seeds) != 5 or seeds != list(range(seeds[0], seeds[0] + 5)) or seeds[0] < 1:
+        raise CampaignError("formal general workload comparison requires five consecutive seeds")
     arm_names = set(spec["arms"])
     supported = ({"full", "hpcc", "receiver"}, {"guard", "hpcc", "homa"})
     if arm_names not in supported:
@@ -83,12 +85,29 @@ def read_spec(path: Path) -> Mapping[str, object]:
         guard = dict(dict(spec["arms"])["guard"])
         if guard.get("cc") != "guard" or dict(spec["arms"])["homa"].get("cc") != "homa":
             raise CampaignError("guard/hpcc/homa arm names must map to their matching cc modes")
-        for field in (
+        controls = dict(defaults)
+        controls.update(guard)
+        base_fields = (
             "guard_size_priority", "guard_sender_srpt",
             "guard_srpt_quantum_packets", "guard_work_conserving",
-        ):
-            if field not in guard:
-                raise CampaignError(f"optimized guard arm must freeze {field}")
+        )
+        for field in base_fields:
+            if field not in controls:
+                raise CampaignError(f"guard arm must freeze {field}")
+        optimized_fields = (
+            "guard_one_rtt_bypass", "guard_tail_bypass",
+            "guard_tail_bypass_bdps", "guard_ack_interval_packets",
+            "guard_fixed_window", "guard_remaining_aware",
+            "guard_min_share_fraction", "guard_remaining_exponent",
+            "guard_grant_refresh_bdps",
+        )
+        present = [field for field in optimized_fields if field in controls]
+        if present and len(present) != len(optimized_fields):
+            missing = [field for field in optimized_fields if field not in controls]
+            raise CampaignError(
+                "optimized guard profile must freeze all new controls; missing "
+                + ", ".join(missing)
+            )
     return spec
 
 
@@ -350,6 +369,10 @@ def run_command(
         "guard_lambda", "guard_beta", "guard_gamma",
         "guard_selective_registration", "guard_proactive_release",
         "guard_keep_last_hop_int", "guard_size_priority", "guard_sender_srpt",
+        "guard_one_rtt_bypass", "guard_tail_bypass", "guard_tail_bypass_bdps",
+        "guard_ack_interval_packets", "guard_fixed_window", "guard_remaining_aware",
+        "guard_min_share_fraction", "guard_remaining_exponent",
+        "guard_grant_refresh_bdps",
         "guard_srpt_quantum_packets", "guard_work_conserving",
         "guard_rebalance_interval_us", "guard_demand_threshold",
         "guard_receiver_util_threshold",
@@ -387,7 +410,8 @@ def planned_runs(
             decision = dict(admission_decisions.get(str(workload["name"]), {}))
             if decision.get("passed") is not True:
                 continue
-        allowed_seeds = {1} if phase == "admission" else {2, 3, 4, 5}
+        seeds = list(map(int, spec["seeds"]))
+        allowed_seeds = {seeds[0]} if phase == "admission" else set(seeds[1:])
         for trace in workload["selected_traces"]:
             if int(trace["seed"]) not in allowed_seeds:
                 continue

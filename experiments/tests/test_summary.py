@@ -152,6 +152,29 @@ class SummaryTests(unittest.TestCase):
             self.assertEqual(stats["guard_sender_srpt_non_rr"], 25)
             self.assertEqual(stats["guard_sender_srpt_forced_rr"], 3)
 
+    def test_guard_optimization_stats_preserve_tail_and_receiver_activity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            path.write_text(
+                "total 0 0 0 0\n"
+                "guard_tail_bypass enabled 1 bdps 8.000000 flows 12 "
+                "feedbacks_skipped 34\n"
+                "guard_receiver_scheduler remaining_aware 1 "
+                "min_share_fraction 0.000000 remaining_exponent 1.000000 "
+                "refresh_bdps 1.000000 refresh_events 56\n",
+                encoding="utf-8",
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["guard_tail_bypass_enabled"], 1)
+            self.assertEqual(stats["guard_tail_bypass_bdps"], 8.0)
+            self.assertEqual(stats["guard_tail_bypass_flows"], 12)
+            self.assertEqual(stats["guard_tail_bypass_feedbacks"], 34)
+            self.assertEqual(stats["guard_remaining_aware"], 1)
+            self.assertEqual(stats["guard_min_share_fraction"], 0.0)
+            self.assertEqual(stats["guard_remaining_exponent"], 1.0)
+            self.assertEqual(stats["guard_grant_refresh_bdps"], 1.0)
+            self.assertEqual(stats["guard_remaining_refresh_events"], 56)
+
     def test_queue_summary_is_preaggregated_and_includes_zero_samples(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "queue.txt"
