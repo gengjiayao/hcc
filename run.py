@@ -375,10 +375,10 @@ def main():
                         help="remap GUARD flows to size-based priority groups (default: 1)")
     parser.add_argument('--guard_work_conserving', type=int, choices=(0, 1), default=1,
                         help="reclaim persistently unused receiver shares (default: 1)")
-    parser.add_argument('--guard_rebalance_interval_us', type=int, default=10,
-                        help="GUARD receiver demand-sampling interval in us (default: 10)")
-    parser.add_argument('--guard_demand_threshold', type=float, default=0.8,
-                        help="arrival/grant ratio below which a share is reclaimable (default: 0.8)")
+    parser.add_argument('--guard_rebalance_interval_us', type=int, default=200,
+                        help="GUARD receiver demand-sampling interval in us (default: 200)")
+    parser.add_argument('--guard_demand_threshold', type=float, default=0.75,
+                        help="arrival/grant ratio below which a share is reclaimable (default: 0.75)")
     parser.add_argument('--guard_lifecycle_trace', type=int, choices=(0, 1), default=0,
                         help="write a bounded per-flow GUARD lifecycle CSV (default: 0)")
     parser.add_argument('--guard_lifecycle_output', type=str,

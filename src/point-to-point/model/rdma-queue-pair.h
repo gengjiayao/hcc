@@ -247,6 +247,7 @@ class RdmaRxQueuePair : public Object {  // Rx side queue pair
     uint64_t m_guard_grant_rate_bps;
     uint64_t m_guard_measured_rate_bps;
     uint32_t m_guard_demand_samples;
+    uint32_t m_guard_below_threshold_samples;
     uint16_t m_guard_pg;
     bool m_guard_demand_limited;
 

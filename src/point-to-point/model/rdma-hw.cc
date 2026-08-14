@@ -134,12 +134,12 @@ TypeId RdmaHw::GetTypeId(void) {
                           MakeBooleanChecker())
             .AddAttribute("GuardRebalanceInterval",
                           "Receiver demand-sampling interval for adaptive grants",
-                          TimeValue(MicroSeconds(10)),
+                          TimeValue(MicroSeconds(200)),
                           MakeTimeAccessor(&RdmaHw::m_guardRebalanceInterval),
                           MakeTimeChecker())
             .AddAttribute("GuardDemandThreshold",
                           "Arrival/grant ratio below which a share is reclaimable",
-                          DoubleValue(0.8), MakeDoubleAccessor(&RdmaHw::m_guardDemandThreshold),
+                          DoubleValue(0.75), MakeDoubleAccessor(&RdmaHw::m_guardDemandThreshold),
                           MakeDoubleChecker<double>(0.0, 1.0))
             .AddAttribute("HomaOvercommitDegree",
                           "Maximum Homa messages granted concurrently at a receiver",
@@ -1536,6 +1536,7 @@ void RdmaHw::RedistributeGuardRates(const char *set_change) {
     for (auto *flow : m_rate_flow_ctl_set) {
         flow->m_guard_interval_bytes = 0;
         flow->m_guard_demand_samples = 0;
+        flow->m_guard_below_threshold_samples = 0;
         flow->m_guard_demand_limited = false;
         flow->m_guard_grant_rate_bps = (uint64_t)rate_mbps * 1000000;
         SendRateControlPacket(flow, rate_mbps, set_change);
@@ -1585,13 +1586,21 @@ void RdmaHw::RebalanceGuardRates() {
         uint64_t grant = std::max<uint64_t>(flow->m_guard_grant_rate_bps, 1);
         if (m_rate_flow_ctl_set.size() == 1) {
             flow->m_guard_demand_limited = false;
-        } else if (flow->m_guard_demand_samples >= 2) {
-            if (flow->m_guard_demand_limited) {
-                if ((double)measured >= 0.95 * grant) {
-                    flow->m_guard_demand_limited = false;
-                }
-            } else if ((double)measured < m_guardDemandThreshold * grant) {
+            flow->m_guard_below_threshold_samples = 0;
+        } else if (flow->m_guard_demand_limited) {
+            if ((double)measured >= 0.95 * grant) {
+                flow->m_guard_demand_limited = false;
+                flow->m_guard_below_threshold_samples = 0;
+            }
+        } else {
+            if ((double)measured < m_guardDemandThreshold * grant) {
+                flow->m_guard_below_threshold_samples++;
+            } else {
+                flow->m_guard_below_threshold_samples = 0;
+            }
+            if (flow->m_guard_below_threshold_samples >= 3) {
                 flow->m_guard_demand_limited = true;
+                flow->m_guard_below_threshold_samples = 0;
             }
         }
         uint64_t demand = unlimited;
@@ -1628,16 +1637,22 @@ void RdmaHw::RebalanceGuardRates() {
     }
 
     m_guardRebalanceEvents++;
+    bool update_vector = false;
     for (auto *flow : m_rate_flow_ctl_set) {
         uint64_t target = std::max<uint64_t>(1000000, targets[flow]);
         uint64_t current = flow->m_guard_grant_rate_bps;
         uint64_t difference = target > current ? target - current : current - target;
         uint64_t threshold = std::max<uint64_t>(100000000, current / 20);
-        if (difference < threshold) continue;
-        uint32_t rate_mbps = std::max<uint32_t>(1, target / 1000000);
-        flow->m_guard_grant_rate_bps = (uint64_t)rate_mbps * 1000000;
-        SendRateControlPacket(flow, rate_mbps, "demand");
-        m_guardAdaptiveGrantUpdates++;
+        if (difference >= threshold) update_vector = true;
+    }
+    if (update_vector) {
+        for (auto *flow : m_rate_flow_ctl_set) {
+            uint64_t target = std::max<uint64_t>(1000000, targets[flow]);
+            uint32_t rate_mbps = std::max<uint32_t>(1, target / 1000000);
+            flow->m_guard_grant_rate_bps = (uint64_t)rate_mbps * 1000000;
+            SendRateControlPacket(flow, rate_mbps, "demand");
+            m_guardAdaptiveGrantUpdates++;
+        }
     }
 
     m_guardRebalanceEvent = Simulator::Schedule(
