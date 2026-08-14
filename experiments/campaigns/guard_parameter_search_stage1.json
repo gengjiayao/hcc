@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "search_kind": "receiver_grid",
   "name": "guard-parameter-search-stage1",
   "purpose": "Improve GUARD's high-load elephant latency by tuning the receiver minimum share and remaining-size exponent before changing the algorithm.",
   "selection_policy": "The complete 3x3 eta/rho grid, constraints, metric order, and seeds are frozen before preflight. Seed 26 is inspected only for mechanism admission. All admitted seeds 26-30 enter the paired analysis; no seed or grid point may be removed because of its performance direction.",

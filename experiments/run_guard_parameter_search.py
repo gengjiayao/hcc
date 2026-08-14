@@ -21,6 +21,7 @@ except ModuleNotFoundError:  # Direct execution from experiments/.
 
 ETA_VALUES = (0.0, 0.1, 0.2)
 RHO_VALUES = (0.5, 0.75, 1.0)
+QUANTUM_VALUES = (16, 32, 64, 128)
 
 
 def read_spec(path: Path) -> Mapping[str, object]:
@@ -43,7 +44,6 @@ def read_spec(path: Path) -> Mapping[str, object]:
         "netload": 50,
         "priority_group": 3,
         "monitor_profile": "bulk",
-        "guard_srpt_quantum_packets": 64,
         "guard_remaining_aware": 1,
         "guard_work_conserving": 0,
     }
@@ -51,19 +51,41 @@ def read_spec(path: Path) -> Mapping[str, object]:
         if defaults.get(field) != expected:
             raise CampaignError(f"{field}={defaults.get(field)}, expected {expected}")
     arms = dict(spec.get("arms", {}))
-    observed = set()
-    for name, raw in arms.items():
-        arm = dict(raw)
-        if arm.get("cc") != "guard":
-            raise CampaignError(f"{name} must select cc=guard")
-        eta = float(arm.get("guard_min_share_fraction", -1))
-        rho = float(arm.get("guard_remaining_exponent", -1))
-        if eta not in ETA_VALUES or rho not in RHO_VALUES:
-            raise CampaignError(f"{name} is outside the frozen eta/rho grid")
-        observed.add((eta, rho))
-    expected_grid = {(eta, rho) for eta in ETA_VALUES for rho in RHO_VALUES}
-    if observed != expected_grid or len(arms) != len(expected_grid):
-        raise CampaignError("arms must cover each point of the frozen 3x3 eta/rho grid once")
+    kind = spec.get("search_kind")
+    if kind == "receiver_grid":
+        if int(defaults.get("guard_srpt_quantum_packets", -1)) != 64:
+            raise CampaignError("receiver grid must freeze SRPT quantum at 64 packets")
+        observed = set()
+        for name, raw in arms.items():
+            arm = dict(raw)
+            if arm.get("cc") != "guard":
+                raise CampaignError(f"{name} must select cc=guard")
+            eta = float(arm.get("guard_min_share_fraction", -1))
+            rho = float(arm.get("guard_remaining_exponent", -1))
+            if eta not in ETA_VALUES or rho not in RHO_VALUES:
+                raise CampaignError(f"{name} is outside the frozen eta/rho grid")
+            observed.add((eta, rho))
+        expected_grid = {(eta, rho) for eta in ETA_VALUES for rho in RHO_VALUES}
+        if observed != expected_grid or len(arms) != len(expected_grid):
+            raise CampaignError("arms must cover each point of the frozen 3x3 eta/rho grid once")
+    elif kind == "srpt_quantum":
+        if float(defaults.get("guard_min_share_fraction", -1)) != 0.0:
+            raise CampaignError("quantum sweep must retain eta=0")
+        if float(defaults.get("guard_remaining_exponent", -1)) != 1.0:
+            raise CampaignError("quantum sweep must retain rho=1")
+        observed = set()
+        for name, raw in arms.items():
+            arm = dict(raw)
+            if arm.get("cc") != "guard":
+                raise CampaignError(f"{name} must select cc=guard")
+            quantum = int(arm.get("guard_srpt_quantum_packets", -1))
+            if quantum not in QUANTUM_VALUES:
+                raise CampaignError(f"{name} is outside the frozen SRPT-quantum grid")
+            observed.add(quantum)
+        if observed != set(QUANTUM_VALUES) or len(arms) != len(QUANTUM_VALUES):
+            raise CampaignError("arms must cover each frozen SRPT quantum once")
+    else:
+        raise CampaignError("search_kind must be receiver_grid or srpt_quantum")
     selection = dict(spec.get("selection", {}))
     if selection.get("baseline_arm") not in arms:
         raise CampaignError("selection baseline is not a grid arm")
