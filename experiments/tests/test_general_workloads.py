@@ -158,6 +158,15 @@ class GeneralWorkloadRunnerTests(unittest.TestCase):
         self.assertEqual({row[1]["seed"] for row in admission}, {6})
         self.assertEqual({row[1]["seed"] for row in formal}, {7, 8, 9, 10})
 
+    def test_final_holdout_uses_fresh_seeds_without_share_reclamation(self):
+        spec = read_spec(
+            self.repo / "experiments/campaigns/guard_homa_final_holdout.json"
+        )
+        self.assertEqual(spec["seeds"], [16, 17, 18, 19, 20])
+        self.assertEqual(spec["admission"]["seed"], 16)
+        self.assertEqual(spec["arms"]["guard"]["guard_work_conserving"], 0)
+        self.assertEqual(spec["defaults"]["guard_lambda"], 1.8)
+
     def test_formal_plan_requires_passing_workload_and_excludes_seed1(self):
         selected = []
         for name in ("AliStorage2019", "WebSearch"):

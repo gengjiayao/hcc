@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "name": "guard-hpcc-homa-final-holdout",
+  "purpose": "Fresh five-seed validation of optimized GUARD after the feature ablation removed inactive share reclamation.",
+  "selection_policy": "The algorithm and all parameters were frozen before generating seeds 16-20. Seed 16 is used only for mechanism admission; no performance result may change the configuration or exclude an otherwise valid seed.",
+  "seeds": [16, 17, 18, 19, 20],
+  "limits": {
+    "max_flows": 10000,
+    "run_bytes": 104857600,
+    "campaign_bytes": 2147483648,
+    "run_timeout_seconds": 1800
+  },
+  "defaults": {
+    "topo": "leaf_spine_16_100G_OS4",
+    "hosts": 16,
+    "oversubscription": 4,
+    "simul_time": 0.02,
+    "netload": 40,
+    "bw": 100,
+    "priority_group": 3,
+    "analysis_warmup": 0.005,
+    "buffer": 9,
+    "lb": "fecmp",
+    "pfc": 1,
+    "irn": 0,
+    "monitor_profile": "bulk",
+    "guard_lambda": 1.8,
+    "guard_beta": 0.125,
+    "guard_gamma": 1.0,
+    "guard_selective_registration": 1,
+    "guard_proactive_release": 1,
+    "guard_keep_last_hop_int": 0,
+    "guard_one_rtt_bypass": 1,
+    "guard_tail_bypass": 1,
+    "guard_tail_bypass_bdps": 8.0,
+    "guard_ack_interval_packets": 8,
+    "guard_fixed_window": 1,
+    "guard_remaining_aware": 1,
+    "guard_min_share_fraction": 0.0,
+    "guard_remaining_exponent": 1.0,
+    "guard_grant_refresh_bdps": 1.0,
+    "guard_rebalance_interval_us": 200,
+    "guard_demand_threshold": 0.75,
+    "guard_receiver_util_threshold": 0.75,
+    "homa_resend_timeout_us": 1000
+  },
+  "admission": {
+    "seed": 16,
+    "controller_trace_arm": "guard",
+    "full_controller_trace": true,
+    "full_controller_max_lines": 300000,
+    "require_complete": true,
+    "require_zero_drop_recovery": true
+  },
+  "arms": {
+    "guard": {
+      "cc": "guard",
+      "guard_size_priority": 1,
+      "guard_sender_srpt": 1,
+      "guard_srpt_quantum_packets": 64,
+      "guard_work_conserving": 0
+    },
+    "hpcc": {"cc": "hpcc"},
+    "homa": {"cc": "homa"}
+  },
+  "workloads": [
+    {"name": "AliStorage2019", "cdf": "AliStorage2019"},
+    {"name": "WebSearch", "cdf": "WebSearch"},
+    {"name": "FbHdp", "cdf": "FbHdp2015"}
+  ],
+  "flow_size_buckets": [
+    {"name": "le_8KB", "max_bytes": 8192},
+    {"name": "8KB_to_1BDP", "min_exclusive_bytes": 8192, "max_bytes": 104000},
+    {"name": "1BDP_to_1MB", "min_exclusive_bytes": 104000, "max_bytes": 1048576},
+    {"name": "gt_1MB", "min_exclusive_bytes": 1048576}
+  ],
+  "comparisons": [
+    ["guard", "homa"],
+    ["guard", "hpcc"],
+    ["homa", "hpcc"]
+  ]
+}
