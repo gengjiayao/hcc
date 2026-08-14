@@ -187,6 +187,36 @@ seed-1 controller audit also groups reactive/grant binding events by flow-size
 bucket for long-flow root-cause analysis.  Rejected CDFs remain recorded in
 `summary/exclusions.json` and are never given performance results.
 
+### Optimized GUARD held-out comparison
+
+`campaigns/guard_homa_optimized_holdout.json` freezes the optimized GUARD
+configuration after development on seeds 1--5, then validates it against HPCC
+and Homa on the untouched consecutive cohort 6--10.  The frozen additions are
+one-RTT short-flow bypass, an eight-BDP tail bypass that retains the receiver
+cap, ACK coalescing, a one-BDP safety window, remaining-aware receiver grants,
+one-BDP progress refresh, seven static size priorities, and bounded sender
+SRPT.  Seed 6 is the mechanism gate; seeds 7--10 cannot start until it passes.
+The final report still aggregates all five held-out seeds and rejects any
+traffic-hash mismatch, incomplete flow, drop/recovery activity, truncated
+controller trace, or configuration drift.
+
+```bash
+RESULTS=experiments/results/guard-homa-optimized-holdout
+SPEC=experiments/campaigns/guard_homa_optimized_holdout.json
+python3 experiments/run_general_workloads.py "$SPEC" \
+  --campaign-dir "$RESULTS" --phase preflight
+python3 experiments/run_general_workloads.py "$SPEC" \
+  --campaign-dir "$RESULTS" --phase admission
+python3 experiments/summarize_general_workloads.py "$RESULTS" --admission-only
+python3 experiments/run_general_workloads.py "$SPEC" \
+  --campaign-dir "$RESULTS" --phase formal
+python3 experiments/summarize_general_workloads.py "$RESULTS"
+```
+
+The cohort is an out-of-sample validation, not another tuning set.  A result
+that is slower than either baseline remains in the paired output; the runner
+does not permit load adjustment or seed exclusion after preflight.
+
 For a matched three-arm custom-workload component study, generate every input
 at PG4 before running full GUARD, HPCC-only, and receiver-rate-only.  GUARD
 maps flows larger than one BDP to PG4 internally; using PG4 in the source trace

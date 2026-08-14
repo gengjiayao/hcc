@@ -163,8 +163,8 @@ python3 run.py --cc <hpcc|guard|homa|...> \
 reviewer 实验的示例：
 
 ```bash
-# 完整 GUARD；有效 HPCC target = 0.95 * 1.4 = 1.33
-python3 run.py --cc guard --guard_lambda 1.4 --guard_beta 0.125 \
+# 完整 GUARD；有效 HPCC target = 0.95 * 1.8 = 1.71
+python3 run.py --cc guard --guard_lambda 1.8 --guard_beta 0.125 \
   --guard_gamma 1.0 --seed 3 --pfc 1 --irn 0 \
   --simul_time 0.01 --netload 25 --topo leaf_spine_8_100G_OS1
 
@@ -218,11 +218,20 @@ python3 run.py --cc guard-active-only --seed 3 ...
 | `--qlen_monitoring_interval` | `full` 时队列时序及所有模式队列摘要的采样间隔（ns） |
 | `--guard_beta`   | OFLM EWMA 的历史样本权重，范围 [0,1]，默认 0.125 |
 | `--guard_gamma`  | OFLM 主动释放阈值倍数，非负，默认 1.0 |
-| `--guard_lambda` | 完整 GUARD 的 HPCC target 倍数，至少 1，默认 1.0 |
+| `--guard_lambda` | 完整 GUARD 的 HPCC target 倍数，至少 1，默认 1.8 |
 | `--guard_selective_registration` | 1=仅大于 1 BDP 的流在首包注册；0=所有流在首包注册，默认 1 |
 | `--guard_proactive_release` | 1=按剩余字节阈值提前释放已注册流；0=仅在完整接收时释放，默认 1 |
 | `--guard_oflm` | 兼容旧脚本；显式 0 无条件关闭上述两项，显式 1 不覆盖单独给出的新开关 |
 | `--guard_keep_last_hop_int` | last-hop INT 消融；0=默认删除，1=保留 |
+| `--guard_one_rtt_bypass` | 1=不注册不超过一 RTT 安全窗口的短流，默认 1 |
+| `--guard_tail_bypass` | 1=注册流进入尾部后停止使用可能过时的 HPCC cap，但仍受 receiver grant cap 约束，默认 1 |
+| `--guard_tail_bypass_bdps` | tail bypass 阈值，单位 BDP，范围 [1,16]，默认 8 |
+| `--guard_ack_interval_packets` | GUARD ACK 合并间隔（packet），默认 8 |
+| `--guard_fixed_window` | 1=发送端始终保留一个 BDP 的安全窗口，默认 1 |
+| `--guard_remaining_aware` | 1=receiver grant 按未完成字节加权，默认 1 |
+| `--guard_min_share_fraction` | remaining-aware grant 的最小等分份额，范围 [0,1]，默认 0 |
+| `--guard_remaining_exponent` | remaining-aware 权重指数，范围 [0,2]，默认 1 |
+| `--guard_grant_refresh_bdps` | 每推进该 BDP 数后刷新 receiver 侧剩余量与 grants；0=关闭，默认 1 |
 | `--guard_work_conserving` | 1=回收接收端未使用的 flow share，0=固定 `C/N`，默认 1 |
 | `--guard_rebalance_interval_us` | 接收端有界 demand 采样周期，默认 200 us |
 | `--guard_demand_threshold` | flow 实测速率低于 grant 的该比例时积累 demand-limited 证据，默认 0.75 |
