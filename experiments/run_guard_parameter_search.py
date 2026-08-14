@@ -273,13 +273,21 @@ def read_spec(path: Path) -> Mapping[str, object]:
         if (disabled != 1 or observed != set(ADAPTIVE_TARGET_EXPANDED_BDPS) or
                 len(arms) != 1 + len(ADAPTIVE_TARGET_EXPANDED_BDPS)):
             raise CampaignError("arms must cover disabled and each expanded adaptive scope")
+    elif kind == "adaptive_scope_bisection":
+        observed = {
+            (int(dict(raw).get("guard_adaptive_fabric_target", -1)),
+             float(dict(raw).get("guard_adaptive_target_max_bdps", -1)))
+            for raw in arms.values()
+        }
+        if observed != {(0, 0.0), (1, 20.0)} or len(arms) != 2:
+            raise CampaignError("adaptive bisection must compare disabled with 20-BDP scope")
     else:
         raise CampaignError(
             "search_kind must be receiver_grid, srpt_quantum, tail_gate, "
             "lambda_high_load, receiver_concurrency, elephant_concurrency, "
             "elephant_threshold, tail_bypass_threshold, adaptive_fabric_target, "
             "adaptive_target_scope, adaptive_scope_refinement, or "
-            "adaptive_scope_expansion")
+            "adaptive_scope_expansion, or adaptive_scope_bisection")
     selection = dict(spec.get("selection", {}))
     if selection.get("baseline_arm") not in arms:
         raise CampaignError("selection baseline is not a grid arm")
