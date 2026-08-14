@@ -102,7 +102,7 @@ def make_directed_hybrid(hosts, flow_bytes, pg, start_s, duration_s, seed,
 
 
 def make_ring_allreduce(hosts, tensor_bytes, pg, start_s, duration_s,
-                        seed=None, jitter_us=0.0):
+                        seed=None, jitter_us=0.0, placement="numeric"):
     # A ring executes N-1 reduce-scatter steps followed by N-1 all-gather
     # steps.  Each host sends one tensor chunk to its clockwise neighbor per
     # step.  Distinct start times represent nominal phases only; this remains
@@ -110,13 +110,22 @@ def make_ring_allreduce(hosts, tensor_bytes, pg, start_s, duration_s,
     steps = 2 * (hosts - 1)
     chunk_bytes = int(math.ceil(tensor_bytes / float(hosts)))
     rng = random.Random(seed)
+    if placement == "numeric":
+        ring = list(range(hosts))
+    elif placement == "alternating":
+        if hosts % 2:
+            raise ValueError("alternating ring placement requires an even host count")
+        half = hosts // 2
+        ring = [host for index in range(half) for host in (index, index + half)]
+    else:
+        raise ValueError("unknown ring placement: {}".format(placement))
     flows = []
     for step in range(steps):
         step_start = start_s + duration_s * (step + 1) / float(steps + 1)
-        for src in range(hosts):
+        for index, src in enumerate(ring):
             flow_start = step_start + (
                 rng.uniform(0, jitter_us * 1e-6) if jitter_us > 0 else 0.0)
-            flows.append(Flow(src, (src + 1) % hosts, pg, chunk_bytes, flow_start))
+            flows.append(Flow(src, ring[(index + 1) % hosts], pg, chunk_bytes, flow_start))
     return flows
 
 
@@ -302,7 +311,8 @@ def generate(args):
     elif args.workload == "ring-allreduce":
         flows = make_ring_allreduce(
             args.hosts, args.tensor_bytes, args.priority_group,
-            args.base_time, duration_s, args.seed, args.ring_jitter_us)
+            args.base_time, duration_s, args.seed, args.ring_jitter_us,
+            args.ring_placement)
     elif args.workload == "all-to-all":
         flows = make_all_to_all(
             args.hosts, args.flow_bytes, args.priority_group,
@@ -427,6 +437,9 @@ def parse_args(argv=None):
         "--ring-jitter-us", type=float, default=0.0,
         help="seeded per-flow jitter within each open-loop ring step")
     parser.add_argument(
+        "--ring-placement", choices=("numeric", "alternating"), default="numeric",
+        help="map logical neighbors numerically or alternate between host halves")
+    parser.add_argument(
         "--all-to-all-jitter-us", type=float, default=0.0,
         help="seeded per-flow uniform start jitter for all-to-all (default: legacy spread)")
     parser.add_argument("--oflm-bdp-bytes", type=positive_int,
@@ -496,6 +509,7 @@ def main(argv=None):
             "background_flow_bytes": args.background_flow_bytes,
             "tensor_bytes": args.tensor_bytes,
             "ring_jitter_us": args.ring_jitter_us,
+            "ring_placement": args.ring_placement,
             "all_to_all_jitter_us": args.all_to_all_jitter_us,
             "oflm_bdp_bytes": args.oflm_bdp_bytes,
             "oflm_elephant_flows": args.oflm_elephant_flows,
