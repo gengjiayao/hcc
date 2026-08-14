@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "name": "guard-hpcc-homa-collectives-final",
-  "purpose": "Final five-seed replacement for the initial All-to-All and ring-shaped panels.",
-  "selection_policy": "Configurations are the first mechanism-qualified levels from the committed ladders. All-to-All selects 16 MiB because the 9 MiB diagnostic dropped Homa packets and the first predeclared larger buffer passed. Ring selects the first 4 MiB alternating-placement level; the numeric placement was rejected for zero GUARD fabric-rate changes. Performance values were not selection criteria.",
+  "purpose": "Candidate replacement for the initial All-to-All and ring-shaped panels; formal seeds are forbidden until both seed-1 cells pass.",
+  "selection_policy": "Configurations advance through the committed ladder in order using only mechanism and safety gates. All-to-All selects 16 MiB because the 9 MiB diagnostic dropped Homa packets and the first predeclared larger buffer passed. Ring r0 failed the all-arm safety gate at 16 MiB, so this candidate advances to the predeclared r1 level. Performance values are not selection criteria.",
   "qualification": {
     "all_to_all": "a0-buffer16 passed 240/240, zero switch drops and generic recovery, with all controller paths active",
-    "ring_open_loop": "r0-4mib-buffer16 passed after the Homa empty-poll and completed-message tombstone correctness fixes; 480/480 with no ghost messages"
+    "ring_open_loop": "r0-4mib-buffer16 made Homa complete without ghost messages, but GUARD and HPCC recorded switch drops; testing r1-8mib-buffer16 next"
   },
   "seeds": [1, 2, 3, 4, 5],
   "limits": {
@@ -61,7 +61,7 @@
     "ring_open_loop": {
       "generator": "ring-allreduce",
       "hosts": 16,
-      "tensor_bytes": 4194304,
+      "tensor_bytes": 8388608,
       "jitter_us": 0.5,
       "ring_span_ms": 2,
       "ring_placement": "alternating",
