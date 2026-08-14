@@ -179,6 +179,9 @@ double guard_tail_bypass_bdps = 8.0;
 bool guard_tail_congestion_gate = false;
 double guard_tail_safe_ratio = 0.9;
 uint32_t guard_tail_safe_samples = 2;
+bool guard_adaptive_fabric_target = false;
+double guard_target_floor = 0.95;
+double guard_queue_budget_bdps = 0.5;
 uint32_t guard_ack_interval_packets = 8;
 bool guard_fixed_window = true;
 bool guard_remaining_aware = true;
@@ -1300,6 +1303,17 @@ int main(int argc, char *argv[]) {
             } else if (key.compare("GUARD_TAIL_SAFE_SAMPLES") == 0) {
                 conf >> guard_tail_safe_samples;
                 std::cerr << "GUARD_TAIL_SAFE_SAMPLES\t" << guard_tail_safe_samples << '\n';
+            } else if (key.compare("GUARD_ADAPTIVE_FABRIC_TARGET") == 0) {
+                conf >> guard_adaptive_fabric_target;
+                std::cerr << "GUARD_ADAPTIVE_FABRIC_TARGET\t"
+                          << guard_adaptive_fabric_target << '\n';
+            } else if (key.compare("GUARD_TARGET_FLOOR") == 0) {
+                conf >> guard_target_floor;
+                std::cerr << "GUARD_TARGET_FLOOR\t" << guard_target_floor << '\n';
+            } else if (key.compare("GUARD_QUEUE_BUDGET_BDPS") == 0) {
+                conf >> guard_queue_budget_bdps;
+                std::cerr << "GUARD_QUEUE_BUDGET_BDPS\t"
+                          << guard_queue_budget_bdps << '\n';
             } else if (key.compare("GUARD_ACK_INTERVAL_PACKETS") == 0) {
                 conf >> guard_ack_interval_packets;
                 std::cerr << "GUARD_ACK_INTERVAL_PACKETS\t"
@@ -1542,6 +1556,14 @@ int main(int argc, char *argv[]) {
 
     if (guard_lambda < 1.0) {
         std::cerr << "GUARD_LAMBDA must be at least 1.0\n";
+        return 1;
+    }
+    if (guard_target_floor < 0.5 || guard_target_floor > 1.0) {
+        std::cerr << "GUARD_TARGET_FLOOR must be in [0.5, 1]\n";
+        return 1;
+    }
+    if (guard_queue_budget_bdps < 0.01 || guard_queue_budget_bdps > 4.0) {
+        std::cerr << "GUARD_QUEUE_BUDGET_BDPS must be in [0.01, 4]\n";
         return 1;
     }
     if (guard_rebalance_interval_us == 0) {
@@ -2060,6 +2082,11 @@ int main(int argc, char *argv[]) {
             rdmaHw->SetAttribute("GuardTailSafeRatio", DoubleValue(guard_tail_safe_ratio));
             rdmaHw->SetAttribute("GuardTailSafeSamples",
                                  UintegerValue(guard_tail_safe_samples));
+            rdmaHw->SetAttribute("GuardAdaptiveFabricTarget",
+                                 BooleanValue(guard_adaptive_fabric_target));
+            rdmaHw->SetAttribute("GuardTargetFloor", DoubleValue(guard_target_floor));
+            rdmaHw->SetAttribute("GuardQueueBudgetBdps",
+                                 DoubleValue(guard_queue_budget_bdps));
             rdmaHw->SetAttribute("GuardAckIntervalPackets",
                                  UintegerValue(guard_ack_interval_packets));
             rdmaHw->SetAttribute("GuardFixedWindow", BooleanValue(guard_fixed_window));
@@ -2766,6 +2793,9 @@ int main(int argc, char *argv[]) {
     uint64_t total_guard_tail_bypass_feedbacks = 0;
     uint64_t total_guard_tail_gate_deferrals = 0;
     uint64_t total_guard_tail_gate_qualified_flows = 0;
+    uint64_t total_guard_adaptive_target_updates = 0;
+    double min_guard_adaptive_target = effective_u_target;
+    double max_guard_adaptive_queue_bdps = 0.0;
     uint64_t total_guard_remaining_refresh_events = 0;
     uint64_t total_guard_concurrency_limited_allocations = 0;
     uint64_t max_guard_concurrency_deferred_flows = 0;
@@ -2781,6 +2811,16 @@ int main(int argc, char *argv[]) {
         total_guard_tail_gate_deferrals += driver->m_rdma->m_guardTailGateDeferrals;
         total_guard_tail_gate_qualified_flows +=
             driver->m_rdma->m_guardTailGateQualifiedFlows;
+        total_guard_adaptive_target_updates +=
+            driver->m_rdma->m_guardAdaptiveTargetUpdates;
+        if (driver->m_rdma->m_guardAdaptiveTargetUpdates > 0) {
+            min_guard_adaptive_target = std::min(
+                min_guard_adaptive_target,
+                driver->m_rdma->m_guardAdaptiveTargetMinObserved);
+        }
+        max_guard_adaptive_queue_bdps = std::max(
+            max_guard_adaptive_queue_bdps,
+            driver->m_rdma->m_guardAdaptiveTargetMaxQueueBdps);
         total_guard_remaining_refresh_events +=
             driver->m_rdma->m_guardRemainingRefreshEvents;
         total_guard_concurrency_limited_allocations +=
@@ -2807,6 +2847,12 @@ int main(int argc, char *argv[]) {
             total_guard_tail_bypass_flows,
             total_guard_tail_bypass_feedbacks, total_guard_tail_gate_deferrals,
             total_guard_tail_gate_qualified_flows);
+    fprintf(guard_stats_output,
+            "guard_adaptive_target enabled %u floor %.6f queue_budget_bdps %.6f "
+            "updates %lu min_target %.9f max_queue_bdps %.9f\n",
+            guard_adaptive_fabric_target ? 1 : 0, guard_target_floor,
+            guard_queue_budget_bdps, total_guard_adaptive_target_updates,
+            min_guard_adaptive_target, max_guard_adaptive_queue_bdps);
     fprintf(guard_stats_output,
             "guard_receiver_scheduler remaining_aware %u min_share_fraction %.6f "
             "remaining_exponent %.6f concurrency %u limited_allocations %lu "
