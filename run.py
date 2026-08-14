@@ -94,6 +94,9 @@ GUARD_SELECTIVE_REGISTRATION {guard_selective_registration}
 GUARD_PROACTIVE_RELEASE {guard_proactive_release}
 GUARD_KEEP_LAST_HOP_INT {guard_keep_last_hop_int}
 GUARD_SIZE_PRIORITY {guard_size_priority}
+GUARD_WORK_CONSERVING {guard_work_conserving}
+GUARD_REBALANCE_INTERVAL_US {guard_rebalance_interval_us}
+GUARD_DEMAND_THRESHOLD {guard_demand_threshold}
 GUARD_LIFECYCLE_TRACE {guard_lifecycle_trace}
 GUARD_LIFECYCLE_TRACE_MAX_LINES {guard_lifecycle_max_lines}
 GUARD_CONTROLLER_TRACE {guard_controller_trace}
@@ -370,6 +373,12 @@ def main():
                         help="retain last-hop INT in GUARD for ablation (default: 0)")
     parser.add_argument('--guard_size_priority', type=int, choices=(0, 1), default=1,
                         help="remap GUARD flows to size-based priority groups (default: 1)")
+    parser.add_argument('--guard_work_conserving', type=int, choices=(0, 1), default=1,
+                        help="reclaim persistently unused receiver shares (default: 1)")
+    parser.add_argument('--guard_rebalance_interval_us', type=int, default=10,
+                        help="GUARD receiver demand-sampling interval in us (default: 10)")
+    parser.add_argument('--guard_demand_threshold', type=float, default=0.8,
+                        help="arrival/grant ratio below which a share is reclaimable (default: 0.8)")
     parser.add_argument('--guard_lifecycle_trace', type=int, choices=(0, 1), default=0,
                         help="write a bounded per-flow GUARD lifecycle CSV (default: 0)")
     parser.add_argument('--guard_lifecycle_output', type=str,
@@ -444,6 +453,10 @@ def main():
         raise Exception("CONFIG ERROR: --guard_gamma must be non-negative.")
     if args.guard_lambda < 1.0:
         raise Exception("CONFIG ERROR: --guard_lambda must be at least 1.0.")
+    if args.guard_rebalance_interval_us <= 0:
+        raise Exception("CONFIG ERROR: --guard_rebalance_interval_us must be positive.")
+    if not 0.0 < args.guard_demand_threshold < 1.0:
+        raise Exception("CONFIG ERROR: --guard_demand_threshold must be in (0, 1).")
     if not 1 <= args.seed <= 2147483647:
         raise Exception("CONFIG ERROR: --seed must be in [1, 2147483647].")
     if args.homa_resend_timeout_us <= 0:
@@ -801,6 +814,9 @@ def main():
                                         guard_proactive_release=guard_proactive_release,
                                         guard_keep_last_hop_int=args.guard_keep_last_hop_int,
                                         guard_size_priority=args.guard_size_priority,
+                                        guard_work_conserving=args.guard_work_conserving,
+                                        guard_rebalance_interval_us=args.guard_rebalance_interval_us,
+                                        guard_demand_threshold=args.guard_demand_threshold,
                                         guard_lifecycle_trace=args.guard_lifecycle_trace,
                                         guard_lifecycle_output=guard_lifecycle_output,
                                         guard_lifecycle_max_lines=args.guard_lifecycle_max_lines,

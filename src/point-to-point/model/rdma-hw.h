@@ -211,6 +211,9 @@ class RdmaHw : public Object {
     bool m_guardProactiveRelease;
     bool m_guardKeepLastHopInt;
     bool m_guardSizePriority;
+    bool m_guardWorkConserving;
+    Time m_guardRebalanceInterval;
+    double m_guardDemandThreshold;
     uint64_t m_guardRateGrantsSent;
     uint64_t m_guardRateGrantBytesSent;
     uint64_t m_guardRateGrantsReceived;
@@ -237,6 +240,8 @@ class RdmaHw : public Object {
     uint64_t m_guardProactiveReleases;
     uint64_t m_guardCompletionReleases;
     uint64_t m_guardMaxActiveFlows;
+    uint64_t m_guardRebalanceEvents;
+    uint64_t m_guardAdaptiveGrantUpdates;
     uint64_t m_recoveryNacksGenerated;
     uint64_t m_recoveryNacksReceived;
     uint64_t m_irnNacksGenerated;
@@ -293,6 +298,8 @@ class RdmaHw : public Object {
     GuardGrantTraceSink *m_guardGrantTraceSink;
     std::unordered_map<RdmaRxQueuePair*, GuardLifecycleState> m_guardLifecycleStates;
     std::unordered_set<RdmaRxQueuePair*> m_rate_flow_ctl_set;
+    EventId m_guardRebalanceEvent;
+    Time m_guardLastRebalanceTime;
     void ConfigureGuardLifecycleTrace(GuardLifecycleTraceSink *sink);
     void ConfigureGuardControllerTrace(GuardControllerTraceSink *sink);
     void ConfigureGuardGrantTrace(GuardGrantTraceSink *sink);
@@ -312,7 +319,10 @@ class RdmaHw : public Object {
                          uint64_t next_seq, uint64_t serialized_bytes);
     void TraceGuardGrantReceive(Ptr<RdmaQueuePair> qp, Ptr<Packet> packet,
                                 uint64_t grant_rate_bps);
-    void SendRateControlPacket(Ptr<RdmaRxQueuePair> qp, CustomHeader &ch, uint32_t rate,
+    void RedistributeGuardRates(const char *set_change);
+    void ScheduleGuardRebalance();
+    void RebalanceGuardRates();
+    void SendRateControlPacket(Ptr<RdmaRxQueuePair> qp, uint32_t rate,
                                const char *set_change);
 
    private:

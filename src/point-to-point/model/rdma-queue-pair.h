@@ -243,6 +243,12 @@ class RdmaRxQueuePair : public Object {  // Rx side queue pair
     double m_est_rate;
     double m_base_rtt_sec;
     bool m_proactive_released;
+    uint64_t m_guard_interval_bytes;
+    uint64_t m_guard_grant_rate_bps;
+    uint64_t m_guard_measured_rate_bps;
+    uint32_t m_guard_demand_samples;
+    uint16_t m_guard_pg;
+    bool m_guard_demand_limited;
 
     static TypeId GetTypeId(void);
     RdmaRxQueuePair();

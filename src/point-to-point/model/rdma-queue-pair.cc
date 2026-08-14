@@ -195,6 +195,12 @@ RdmaRxQueuePair::RdmaRxQueuePair() {
     m_est_rate = 0;
     m_base_rtt_sec = 0;
     m_proactive_released = false;
+    m_guard_interval_bytes = 0;
+    m_guard_grant_rate_bps = 0;
+    m_guard_measured_rate_bps = 0;
+    m_guard_demand_samples = 0;
+    m_guard_pg = 0;
+    m_guard_demand_limited = false;
 }
 
 uint32_t RdmaRxQueuePair::GetHash(void) {

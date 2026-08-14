@@ -172,6 +172,9 @@ bool guard_selective_registration = true;
 bool guard_proactive_release = true;
 bool guard_keep_last_hop_int = false;
 bool guard_size_priority = true;
+bool guard_work_conserving = true;
+uint64_t guard_rebalance_interval_us = 10;
+double guard_demand_threshold = 0.8;
 uint32_t homa_overcommit = 4;
 uint64_t homa_resend_timeout_us = 1000;
 uint32_t homa_unscheduled_levels = 3;
@@ -1255,6 +1258,16 @@ int main(int argc, char *argv[]) {
             } else if (key.compare("GUARD_SIZE_PRIORITY") == 0) {
                 conf >> guard_size_priority;
                 std::cerr << "GUARD_SIZE_PRIORITY\t" << guard_size_priority << '\n';
+            } else if (key.compare("GUARD_WORK_CONSERVING") == 0) {
+                conf >> guard_work_conserving;
+                std::cerr << "GUARD_WORK_CONSERVING\t" << guard_work_conserving << '\n';
+            } else if (key.compare("GUARD_REBALANCE_INTERVAL_US") == 0) {
+                conf >> guard_rebalance_interval_us;
+                std::cerr << "GUARD_REBALANCE_INTERVAL_US\t"
+                          << guard_rebalance_interval_us << '\n';
+            } else if (key.compare("GUARD_DEMAND_THRESHOLD") == 0) {
+                conf >> guard_demand_threshold;
+                std::cerr << "GUARD_DEMAND_THRESHOLD\t" << guard_demand_threshold << '\n';
             } else if (key.compare("GUARD_LIFECYCLE_TRACE") == 0) {
                 conf >> guard_lifecycle_trace;
                 std::cerr << "GUARD_LIFECYCLE_TRACE\t" << guard_lifecycle_trace << '\n';
@@ -1438,6 +1451,14 @@ int main(int argc, char *argv[]) {
 
     if (guard_lambda < 1.0) {
         std::cerr << "GUARD_LAMBDA must be at least 1.0\n";
+        return 1;
+    }
+    if (guard_rebalance_interval_us == 0) {
+        std::cerr << "GUARD_REBALANCE_INTERVAL_US must be positive\n";
+        return 1;
+    }
+    if (guard_demand_threshold <= 0.0 || guard_demand_threshold >= 1.0) {
+        std::cerr << "GUARD_DEMAND_THRESHOLD must be in (0, 1)\n";
         return 1;
     }
     if (homa_overcommit < 1 || homa_overcommit > 6) {
@@ -1896,6 +1917,10 @@ int main(int argc, char *argv[]) {
                                  BooleanValue(guard_proactive_release));
             rdmaHw->SetAttribute("GuardKeepLastHopInt", BooleanValue(guard_keep_last_hop_int));
             rdmaHw->SetAttribute("GuardSizePriority", BooleanValue(guard_size_priority));
+            rdmaHw->SetAttribute("GuardWorkConserving", BooleanValue(guard_work_conserving));
+            rdmaHw->SetAttribute("GuardRebalanceInterval",
+                                 TimeValue(MicroSeconds(guard_rebalance_interval_us)));
+            rdmaHw->SetAttribute("GuardDemandThreshold", DoubleValue(guard_demand_threshold));
             rdmaHw->SetAttribute("HomaOvercommitDegree", UintegerValue(homa_overcommit));
             rdmaHw->SetAttribute("HomaResendTimeout",
                                  TimeValue(MicroSeconds(homa_resend_timeout_us)));
@@ -2415,7 +2440,7 @@ int main(int argc, char *argv[]) {
             "tie_binding_updates reactive_binding_rate_changes grant_binding_rate_changes "
             "tie_binding_rate_changes "
             "int_hops_before_strip int_hops_after_strip int_records_stripped "
-            "grant_bytes_sent\n");
+            "grant_bytes_sent rebalance_events adaptive_grant_updates\n");
     uint64_t total_grants_sent = 0;
     uint64_t total_grant_bytes_sent = 0;
     uint64_t total_grants_received = 0;
@@ -2446,13 +2471,15 @@ int main(int argc, char *argv[]) {
     uint64_t total_int_hops_before_strip = 0;
     uint64_t total_int_hops_after_strip = 0;
     uint64_t total_int_records_stripped = 0;
+    uint64_t total_guard_rebalance_events = 0;
+    uint64_t total_guard_adaptive_grant_updates = 0;
     for (uint32_t i = 0; i < node_num; i++) {
         if (n.Get(i)->GetNodeType() != 0) continue;
         Ptr<RdmaDriver> driver = n.Get(i)->GetObject<RdmaDriver>();
         Ptr<RdmaHw> hw = driver->m_rdma;
         fprintf(guard_stats_output,
                 "%u %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu "
-                "%lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu\n", i,
+                "%lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu\n", i,
                 hw->m_guardRateGrantsSent,
                 hw->m_guardRateGrantsReceived, hw->m_guardHpccFeedbackUpdates,
                 hw->m_guardRegistrations, hw->m_guardSelectedRegistrations,
@@ -2469,7 +2496,8 @@ int main(int argc, char *argv[]) {
                 hw->m_guardGrantBindingRateChanges, hw->m_guardTieBindingRateChanges,
                 hw->m_guardIntHopsBeforeStrip,
                 hw->m_guardIntHopsAfterStrip, hw->m_guardIntRecordsStripped,
-                hw->m_guardRateGrantBytesSent);
+                hw->m_guardRateGrantBytesSent, hw->m_guardRebalanceEvents,
+                hw->m_guardAdaptiveGrantUpdates);
         total_grants_sent += hw->m_guardRateGrantsSent;
         total_grant_bytes_sent += hw->m_guardRateGrantBytesSent;
         total_grants_received += hw->m_guardRateGrantsReceived;
@@ -2500,10 +2528,12 @@ int main(int argc, char *argv[]) {
         total_int_hops_before_strip += hw->m_guardIntHopsBeforeStrip;
         total_int_hops_after_strip += hw->m_guardIntHopsAfterStrip;
         total_int_records_stripped += hw->m_guardIntRecordsStripped;
+        total_guard_rebalance_events += hw->m_guardRebalanceEvents;
+        total_guard_adaptive_grant_updates += hw->m_guardAdaptiveGrantUpdates;
     }
     fprintf(guard_stats_output,
             "total %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu "
-            "%lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu\n",
+            "%lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu\n",
             total_grants_sent, total_grants_received, total_hpcc_feedback_updates,
             total_registrations, total_selected_registrations, total_proactive_releases,
             total_completion_releases, max_active_flows, total_recovery_nacks_generated,
@@ -2518,7 +2548,12 @@ int main(int argc, char *argv[]) {
             total_tie_binding_rate_changes,
             total_int_hops_before_strip,
             total_int_hops_after_strip, total_int_records_stripped,
-            total_grant_bytes_sent);
+            total_grant_bytes_sent, total_guard_rebalance_events,
+            total_guard_adaptive_grant_updates);
+    fprintf(guard_stats_output,
+            "guard_adaptive_config enabled %u interval_us %lu demand_threshold %.6f\n",
+            guard_work_conserving ? 1 : 0, guard_rebalance_interval_us,
+            guard_demand_threshold);
     fprintf(guard_stats_output, "switch_drops ingress %u egress %u total %u\n",
             Settings::dropped_pkt_sw_ingress, Settings::dropped_pkt_sw_egress,
             Settings::dropped_pkt_sw_ingress + Settings::dropped_pkt_sw_egress);
