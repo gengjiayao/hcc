@@ -6,6 +6,7 @@
 #include <ns3/udp-header.h>
 
 #include <climits>
+#include <cmath>
 
 #include "cn-header.h"
 #include "flow-stat-tag.h"
@@ -138,6 +139,29 @@ TypeId RdmaHw::GetTypeId(void) {
                           BooleanValue(true),
                           MakeBooleanAccessor(&RdmaHw::m_guardOneRttBypass),
                           MakeBooleanChecker())
+            .AddAttribute("GuardAckIntervalPackets",
+                          "Packets between useful cumulative ACKs for registered GUARD flows",
+                          UintegerValue(8),
+                          MakeUintegerAccessor(&RdmaHw::m_guardAckIntervalPackets),
+                          MakeUintegerChecker<uint32_t>(1))
+            .AddAttribute("GuardFixedWindow",
+                          "Use a fixed one-BDP safety window while GUARD's two rate caps pace data",
+                          BooleanValue(true), MakeBooleanAccessor(&RdmaHw::m_guardFixedWindow),
+                          MakeBooleanChecker())
+            .AddAttribute("GuardRemainingAware",
+                          "Bias receiver grants toward smaller remaining registered flows",
+                          BooleanValue(true), MakeBooleanAccessor(&RdmaHw::m_guardRemainingAware),
+                          MakeBooleanChecker())
+            .AddAttribute("GuardMinShareFraction",
+                          "Fraction of equal share guaranteed before remaining-size weighting",
+                          DoubleValue(0.25),
+                          MakeDoubleAccessor(&RdmaHw::m_guardMinShareFraction),
+                          MakeDoubleChecker<double>(0.0, 1.0))
+            .AddAttribute("GuardRemainingExponent",
+                          "Exponent of inverse remaining bytes in GUARD receiver weighting",
+                          DoubleValue(0.5),
+                          MakeDoubleAccessor(&RdmaHw::m_guardRemainingExponent),
+                          MakeDoubleChecker<double>(0.0, 2.0))
             .AddAttribute("GuardSrptQuantumPackets",
                           "Maximum consecutive SRPT packets before one round-robin service",
                           UintegerValue(64),
@@ -243,6 +267,7 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardOneRttBypassFlows = 0;
     m_guardOneRttBypassFeedbacks = 0;
     m_guardOneRttAcksSuppressed = 0;
+    m_guardLongAcksSuppressed = 0;
     m_guardUnderutilizedSamples = 0;
     m_guardLastRebalanceTime = Time(0);
     m_guardLifecycleTraceSink = NULL;
@@ -368,6 +393,7 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
     qp->SetWin(win);
     qp->SetBaseRtt(baseRtt);
     qp->SetVarWin(m_var_win);
+    if (m_cc_mode == CC_MODE_GUARD && m_guardFixedWindow) qp->SetVarWin(false);
     qp->SetFlowId(flow_id);
     qp->SetTimeout(m_waitAckTimeout);
     qp->m_guard_sender_srpt = (m_cc_mode == CC_MODE_GUARD && m_guardSenderSrpt);
@@ -571,6 +597,7 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
             rxQp->m_flow_id = fit.GetId();
         }
         flow_size = fit.GetFlowSize();
+        rxQp->m_guard_flow_size = flow_size;
     }
     if (!rxQp->m_seen_first_pkt) {
         rxQp->m_first_pkt_time = Simulator::Now();
@@ -595,8 +622,8 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
     // removes reverse-path per-packet ACK traffic without weakening recovery:
     // IRN retains its normal ACK stream, while any out-of-order packet still
     // produces x==2 below.
-    if (m_cc_mode == CC_MODE_GUARD && m_guardOneRttBypass && !m_irn && x == 1 &&
-        has_flow_tag && flow_size > 0 && rxQp->ReceiverNextExpectedSeq < flow_size) {
+    if (m_cc_mode == CC_MODE_GUARD && !m_irn && x == 1 && has_flow_tag &&
+        flow_size > 0 && rxQp->ReceiverNextExpectedSeq < flow_size) {
         FlowStatTag fst;
         uint64_t bdp = 104000;
         if (p->PeekPacketTag(fst) && fst.HasBaseRtt()) {
@@ -605,10 +632,20 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
             bdp = (uint64_t)(fst.GetBaseRttSeconds() * rate.GetBitRate() / 8.0);
             if (bdp == 0) bdp = 104000;
         }
-        if (flow_size <= bdp) {
+        if (m_guardOneRttBypass && flow_size <= bdp) {
             x = 5;
             m_guardOneRttAcksSuppressed++;
+        } else if (m_guardAckIntervalPackets > 1 &&
+                   rxQp->m_guard_last_ack_seq != 0 &&
+                   rxQp->ReceiverNextExpectedSeq <
+                       rxQp->m_guard_last_ack_seq +
+                           (uint64_t)m_guardAckIntervalPackets * m_mtu) {
+            x = 5;
+            m_guardLongAcksSuppressed++;
         }
+    }
+    if (m_cc_mode == CC_MODE_GUARD && x == 1) {
+        rxQp->m_guard_last_ack_seq = rxQp->ReceiverNextExpectedSeq;
     }
 
     // x==2 is a recovery NACK caused by an out-of-order packet. x==6 is
@@ -1591,19 +1628,59 @@ void RdmaHw::RedistributeGuardRates(const char *set_change) {
     RdmaRxQueuePair *sample = *m_rate_flow_ctl_set.begin();
     uint32_t nic_idx = GetNicIdxOfRxQp(sample);
     uint64_t line_rate_bps = m_nic[nic_idx].dev->GetDataRate().GetBitRate();
-    uint64_t equal_rate_bps = line_rate_bps / m_rate_flow_ctl_set.size();
-    uint32_t rate_mbps = std::max<uint32_t>(1, equal_rate_bps / 1000000);
+    std::unordered_map<RdmaRxQueuePair*, uint64_t> targets =
+        ComputeGuardBaseTargets(line_rate_bps);
     for (auto *flow : m_rate_flow_ctl_set) {
         flow->m_guard_interval_bytes = 0;
         flow->m_guard_demand_samples = 0;
         flow->m_guard_below_threshold_samples = 0;
         flow->m_guard_demand_limited = false;
+        uint32_t rate_mbps = std::max<uint32_t>(1, targets[flow] / 1000000);
         flow->m_guard_grant_rate_bps = (uint64_t)rate_mbps * 1000000;
         SendRateControlPacket(flow, rate_mbps, set_change);
     }
     m_guardUnderutilizedSamples = 0;
     if (m_guardRebalanceEvent.IsRunning()) Simulator::Cancel(m_guardRebalanceEvent);
     m_guardLastRebalanceTime = Time(0);
+}
+
+std::unordered_map<RdmaRxQueuePair*, uint64_t> RdmaHw::ComputeGuardBaseTargets(
+    uint64_t line_rate_bps) const {
+    std::unordered_map<RdmaRxQueuePair*, uint64_t> targets;
+    size_t count = m_rate_flow_ctl_set.size();
+    if (count == 0) return targets;
+    uint64_t equal_share = line_rate_bps / count;
+    if (!m_guardRemainingAware || count == 1 || m_guardRemainingExponent == 0.0) {
+        for (auto *flow : m_rate_flow_ctl_set) targets[flow] = equal_share;
+        return targets;
+    }
+
+    uint64_t min_remaining = std::numeric_limits<uint64_t>::max();
+    for (auto *flow : m_rate_flow_ctl_set) {
+        uint64_t remaining = flow->m_guard_flow_size > flow->ReceiverNextExpectedSeq
+                                 ? flow->m_guard_flow_size - flow->ReceiverNextExpectedSeq
+                                 : 1;
+        min_remaining = std::min(min_remaining, std::max<uint64_t>(remaining, m_mtu));
+    }
+    std::unordered_map<RdmaRxQueuePair*, double> weights;
+    double weight_sum = 0.0;
+    for (auto *flow : m_rate_flow_ctl_set) {
+        uint64_t remaining = flow->m_guard_flow_size > flow->ReceiverNextExpectedSeq
+                                 ? flow->m_guard_flow_size - flow->ReceiverNextExpectedSeq
+                                 : 1;
+        remaining = std::max<uint64_t>(remaining, m_mtu);
+        double weight = std::pow((double)min_remaining / remaining,
+                                 m_guardRemainingExponent);
+        weights[flow] = weight;
+        weight_sum += weight;
+    }
+    uint64_t floor_share = (uint64_t)(m_guardMinShareFraction * equal_share);
+    uint64_t residual = line_rate_bps - floor_share * count;
+    for (auto *flow : m_rate_flow_ctl_set) {
+        targets[flow] = floor_share +
+            (uint64_t)(residual * weights[flow] / std::max(weight_sum, 1e-12));
+    }
+    return targets;
 }
 
 void RdmaHw::ScheduleGuardRebalance() {

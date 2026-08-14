@@ -203,6 +203,8 @@ RdmaRxQueuePair::RdmaRxQueuePair() {
     m_guard_measured_rate_bps = 0;
     m_guard_demand_samples = 0;
     m_guard_below_threshold_samples = 0;
+    m_guard_last_ack_seq = 0;
+    m_guard_flow_size = 0;
     m_guard_pg = 0;
     m_guard_demand_limited = false;
 }

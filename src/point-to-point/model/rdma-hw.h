@@ -213,6 +213,11 @@ class RdmaHw : public Object {
     bool m_guardSizePriority;
     bool m_guardSenderSrpt;
     bool m_guardOneRttBypass;
+    uint32_t m_guardAckIntervalPackets;
+    bool m_guardFixedWindow;
+    bool m_guardRemainingAware;
+    double m_guardMinShareFraction;
+    double m_guardRemainingExponent;
     uint32_t m_guardSrptQuantumPackets;
     bool m_guardWorkConserving;
     Time m_guardRebalanceInterval;
@@ -251,6 +256,7 @@ class RdmaHw : public Object {
     uint64_t m_guardOneRttBypassFlows;
     uint64_t m_guardOneRttBypassFeedbacks;
     uint64_t m_guardOneRttAcksSuppressed;
+    uint64_t m_guardLongAcksSuppressed;
     uint32_t m_guardUnderutilizedSamples;
     uint64_t m_recoveryNacksGenerated;
     uint64_t m_recoveryNacksReceived;
@@ -332,6 +338,8 @@ class RdmaHw : public Object {
     void TraceGuardGrantReceive(Ptr<RdmaQueuePair> qp, Ptr<Packet> packet,
                                 uint64_t grant_rate_bps);
     void RedistributeGuardRates(const char *set_change);
+    std::unordered_map<RdmaRxQueuePair*, uint64_t> ComputeGuardBaseTargets(
+        uint64_t line_rate_bps) const;
     void ScheduleGuardRebalance();
     void RebalanceGuardRates();
     void SendRateControlPacket(Ptr<RdmaRxQueuePair> qp, uint32_t rate,
