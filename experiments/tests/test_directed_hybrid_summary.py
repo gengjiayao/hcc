@@ -5,10 +5,16 @@ import unittest
 from pathlib import Path
 
 from experiments.summarize_campaign import SummaryError
-from experiments.summarize_directed_hybrid import mean_ci, parse_flow_geometry
+from experiments.summarize_directed_hybrid import SUMMARY_FIELDS, mean_ci, parse_flow_geometry
 
 
 class DirectedHybridSummaryTests(unittest.TestCase):
+    def test_binding_evidence_is_exported(self):
+        self.assertIn("reactive_binding_updates", SUMMARY_FIELDS)
+        self.assertIn("grant_binding_updates", SUMMARY_FIELDS)
+        self.assertIn("reactive_binding_rate_changes", SUMMARY_FIELDS)
+        self.assertIn("grant_binding_rate_changes", SUMMARY_FIELDS)
+
     def make_flow(self, root, jitter=0.4e-6):
         path = Path(root) / "flow.txt"
         rows = []

@@ -35,6 +35,8 @@ SUMMARY_FIELDS = (
     "aggregate_goodput_gbps", "queue_bytes_mean", "queue_bytes_p95",
     "queue_bytes_p99", "queue_bytes_max", "grants_sent", "grants_received",
     "hpcc_actual_rate_changes", "hpcc_valid_feedback", "reactive_binding_updates",
+    "grant_binding_updates", "reactive_binding_rate_changes",
+    "grant_binding_rate_changes",
     "switch_drops_total", "recovery_nacks_generated", "recovery_nacks_received",
     "irn_nacks_generated", "irn_nacks_received", "irn_retransmit_packets",
     "irn_retransmit_bytes", "timeout_recoveries", "pfc_matched_intervals",
@@ -188,6 +190,7 @@ def analyze(results: Path, simulator_sha: str) -> Tuple[List[Dict[str, object]],
                 mechanism = (
                     row["grants_sent"] > 0 and row["hpcc_actual_rate_changes"] > 0
                     and row["reactive_binding_updates"] > 0
+                    and row["grant_binding_updates"] > 0
                     and row["homa_data_packets"] == 0
                 )
             elif arm == "hpcc":
