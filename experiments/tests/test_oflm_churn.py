@@ -205,14 +205,16 @@ class OflmChurnAnalysisTests(unittest.TestCase):
             after["target_receiver_queue"][name] = 1.0
 
         selection = {
-            "decision": "selected", "flow_sha256": "same-flow",
+            "decision": "selected", "flow_sha256": "seed-1-flow",
             "tier": {"name": "tier1"},
             "criterion_values": {"registration_reduction": 0.4},
             "post_selection_performance": {
                 "00": before, "01": before, "10": after, "11": after,
             },
         }
-        result = aggregate({1: selection, 2: copy.deepcopy(selection)})
+        second = copy.deepcopy(selection)
+        second["flow_sha256"] = "seed-2-flow"
+        result = aggregate({1: selection, 2: second})
         self.assertEqual(result["status"], "validated_selected_aggregate")
         self.assertEqual(result["seeds"], [1, 2])
         reduction = result["paired_relative_reductions"][
@@ -226,10 +228,9 @@ class OflmChurnAnalysisTests(unittest.TestCase):
             "selective_with_proactive_off"]["target_queue_p95_bytes"]
         self.assertEqual(absolute["mean"], -1.0)
 
-        mismatched = copy.deepcopy(selection)
-        mismatched["flow_sha256"] = "different-flow"
-        with self.assertRaisesRegex(AggregateError, "one flow SHA"):
-            aggregate({1: selection, 2: mismatched})
+        repeated = copy.deepcopy(selection)
+        with self.assertRaisesRegex(AggregateError, "independent flow SHAs"):
+            aggregate({1: selection, 2: repeated})
 
 
 if __name__ == "__main__":

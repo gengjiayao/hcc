@@ -78,13 +78,13 @@ def flatten_performance(performance: Mapping[str, object]) -> Dict[str, float]:
 def aggregate(selections: Mapping[int, Mapping[str, object]]) -> Dict[str, object]:
     if len(selections) < 2:
         raise AggregateError("at least two selected seeds are required")
-    flow_hashes = set()
+    flow_hashes: Dict[int, str] = {}
     tiers = set()
     flattened: Dict[int, Dict[str, Dict[str, float]]] = {}
     for seed, selection in selections.items():
         if selection.get("decision") != "selected":
             raise AggregateError(f"seed {seed} did not select its tier")
-        flow_hashes.add(str(selection.get("flow_sha256", "")))
+        flow_hashes[seed] = str(selection.get("flow_sha256", ""))
         tier = selection.get("tier", {})
         tiers.add(json.dumps(tier, sort_keys=True))
         performance = selection.get("post_selection_performance")
@@ -94,8 +94,10 @@ def aggregate(selections: Mapping[int, Mapping[str, object]]) -> Dict[str, objec
             combo: flatten_performance(performance[combo])
             for combo in ("00", "01", "10", "11")
         }
-    if len(flow_hashes) != 1 or "" in flow_hashes:
-        raise AggregateError("selected seeds do not share one flow SHA")
+    if "" in flow_hashes.values():
+        raise AggregateError("selected seeds lack a flow SHA")
+    if len(set(flow_hashes.values())) != len(flow_hashes):
+        raise AggregateError("selected seeds do not use independent flow SHAs")
     if len(tiers) != 1:
         raise AggregateError("selected seeds use different tiers")
 
@@ -145,7 +147,9 @@ def aggregate(selections: Mapping[int, Mapping[str, object]]) -> Dict[str, objec
         "schema_version": 1,
         "status": "validated_selected_aggregate",
         "tier": json.loads(next(iter(tiers))),
-        "flow_sha256": next(iter(flow_hashes)),
+        "flow_sha256_by_seed": {
+            str(seed): flow_hashes[seed] for seed in sorted(flow_hashes)
+        },
         "seeds": sorted(selections),
         "mechanism_criterion_values": mechanism,
         "performance_by_combination": aggregates,
