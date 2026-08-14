@@ -118,6 +118,7 @@ class RdmaHw : public Object {
     int ReceiveCnp(Ptr<Packet> p, CustomHeader &ch);
     int ReceiveAck(Ptr<Packet> p, CustomHeader &ch);  // handle both ACK and NACK
     int ReceiveRate(Ptr<Packet> p, CustomHeader &ch); // guard rate-grant packet
+    int ReceiveGuardCapReport(Ptr<Packet> p, CustomHeader &ch);
     int ReceiveHomaSimpleCredit(Ptr<Packet> p, CustomHeader &ch); // homa-simple credit packet
     int Receive(Ptr<Packet> p,
                 CustomHeader &
@@ -223,6 +224,8 @@ class RdmaHw : public Object {
     double m_guardGrantRefreshBdps;
     uint32_t m_guardSrptQuantumPackets;
     bool m_guardWorkConserving;
+    bool m_guardCapAwareReclaim;
+    double m_guardCapHeadroom;
     Time m_guardRebalanceInterval;
     double m_guardDemandThreshold;
     double m_guardReceiverUtilThreshold;
@@ -256,6 +259,10 @@ class RdmaHw : public Object {
     uint64_t m_guardMaxActiveFlows;
     uint64_t m_guardRebalanceEvents;
     uint64_t m_guardAdaptiveGrantUpdates;
+    uint64_t m_guardCapReportsSent;
+    uint64_t m_guardCapReportBytesSent;
+    uint64_t m_guardCapReportsReceived;
+    uint64_t m_guardFabricBoundReportsReceived;
     uint64_t m_guardRemainingRefreshEvents;
     uint64_t m_guardOneRttBypassFlows;
     uint64_t m_guardOneRttBypassFeedbacks;
@@ -334,6 +341,7 @@ class RdmaHw : public Object {
                                    double threshold_ratio);
     void FlushGuardLifecycleTrace();
     void SyncHwRate(Ptr<RdmaQueuePair> qp, DataRate target_cc_rate);
+    void MaybeSendGuardCapReport(Ptr<RdmaQueuePair> qp);
     void HandleRccRequest(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch);
     bool HandleRccRemove(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch,
                          GuardReleaseReason reason, uint64_t remaining_bytes);

@@ -74,6 +74,9 @@ class RdmaQueuePair : public Object {
     bool m_guard_one_rtt_bypass;  // Ignore delayed fabric feedback for <=1-BDP flows
     bool m_guard_tail_bypass;  // Final BDP is paced only by the receiver cap
     uint32_t m_guard_srpt_quantum_packets;
+    Time m_guard_last_cap_report_time;
+    uint64_t m_guard_last_cap_report_rate_bps;
+    bool m_guard_has_cap_report;
     Time m_nextAvail;     //< Soonest time of next send
     uint32_t wp;          // current window of packets
     uint32_t lastPktSize;
@@ -257,6 +260,11 @@ class RdmaRxQueuePair : public Object {  // Rx side queue pair
     uint64_t m_guard_flow_size;
     uint16_t m_guard_pg;
     bool m_guard_demand_limited;
+    uint64_t m_guard_reported_rate_bps;
+    uint32_t m_guard_fabric_bound_reports;
+    bool m_guard_report_fabric_bound;
+    bool m_guard_cap_limited;
+    Time m_guard_last_cap_report_time;
 
     static TypeId GetTypeId(void);
     RdmaRxQueuePair();

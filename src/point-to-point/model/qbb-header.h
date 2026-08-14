@@ -25,7 +25,8 @@ public:
  
   enum {
 	  FLAG_CNP = 0,
-	  FLAG_GUARD_FABRIC_BOUND = 1
+	  FLAG_GUARD_FABRIC_BOUND = 1,
+	  FLAG_GUARD_CAP_REPORT = 2
   };
   qbbHeader (uint16_t pg);
   qbbHeader ();
@@ -42,6 +43,7 @@ public:
   void SetTs(uint64_t ts);
   void SetCnp();
   void SetGuardFabricBound(bool fabric_bound);
+  void SetGuardCapReport();
   void SetIntHeader(const IntHeader &_ih);
   void SetIrnNack(uint32_t seq);
   void SetIrnNackSize(size_t sz);
@@ -58,6 +60,7 @@ public:
   uint64_t GetTs() const;
   uint8_t GetCnp() const;
   bool GetGuardFabricBound() const;
+  bool GetGuardCapReport() const;
   uint32_t GetIrnNack() const;
   size_t GetIrnNackSize() const;
 

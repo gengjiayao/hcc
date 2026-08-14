@@ -185,6 +185,15 @@ TypeId RdmaHw::GetTypeId(void) {
                           "Reclaim persistently unused receiver grant shares",
                           BooleanValue(true), MakeBooleanAccessor(&RdmaHw::m_guardWorkConserving),
                           MakeBooleanChecker())
+            .AddAttribute("GuardCapAwareReclaim",
+                          "Let sender cap reports drive receiver unused-share reclamation",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(&RdmaHw::m_guardCapAwareReclaim),
+                          MakeBooleanChecker())
+            .AddAttribute("GuardCapHeadroom",
+                          "Headroom above a reported shared-fabric cap",
+                          DoubleValue(1.1), MakeDoubleAccessor(&RdmaHw::m_guardCapHeadroom),
+                          MakeDoubleChecker<double>(1.0, 2.0))
             .AddAttribute("GuardRebalanceInterval",
                           "Receiver demand-sampling interval for adaptive grants",
                           TimeValue(MicroSeconds(200)),
@@ -278,6 +287,10 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardMaxActiveFlows = 0;
     m_guardRebalanceEvents = 0;
     m_guardAdaptiveGrantUpdates = 0;
+    m_guardCapReportsSent = 0;
+    m_guardCapReportBytesSent = 0;
+    m_guardCapReportsReceived = 0;
+    m_guardFabricBoundReportsReceived = 0;
     m_guardRemainingRefreshEvents = 0;
     m_guardOneRttBypassFlows = 0;
     m_guardOneRttBypassFeedbacks = 0;
@@ -951,6 +964,43 @@ int RdmaHw::ReceiveRate(Ptr<Packet> p, CustomHeader &ch) {
     return 0;
 }
 
+int RdmaHw::ReceiveGuardCapReport(Ptr<Packet> /*p*/, CustomHeader &ch) {
+    uint16_t pg = ch.ack.pg;
+    Ptr<RdmaRxQueuePair> rx_qp = GetRxQp(
+        ch.dip, ch.sip, ch.ack.dport, ch.ack.sport, pg, false);
+    if (rx_qp == NULL ||
+        m_rate_flow_ctl_set.find(PeekPointer(rx_qp)) == m_rate_flow_ctl_set.end()) {
+        return 0;
+    }
+
+    uint64_t reported_rate_bps = static_cast<uint64_t>(ch.ack.seq) * 1000000lu;
+    bool fabric_bound =
+        ((ch.ack.flags >> qbbHeader::FLAG_GUARD_FABRIC_BOUND) & 1) != 0;
+    Time now = Simulator::Now();
+    Time freshness = rx_qp->m_base_rtt_sec > 0
+                         ? Seconds(4.0 * rx_qp->m_base_rtt_sec)
+                         : MicroSeconds(100);
+    bool consecutive = rx_qp->m_guard_report_fabric_bound &&
+                       !rx_qp->m_guard_last_cap_report_time.IsZero() &&
+                       now - rx_qp->m_guard_last_cap_report_time <= freshness;
+    bool below_grant = rx_qp->m_guard_grant_rate_bps > 0 &&
+                       reported_rate_bps * 100 <
+                           rx_qp->m_guard_grant_rate_bps * 95;
+    if (fabric_bound && below_grant) {
+        rx_qp->m_guard_fabric_bound_reports =
+            consecutive ? rx_qp->m_guard_fabric_bound_reports + 1 : 1;
+    } else {
+        rx_qp->m_guard_fabric_bound_reports = 0;
+    }
+    rx_qp->m_guard_reported_rate_bps = reported_rate_bps;
+    rx_qp->m_guard_report_fabric_bound = fabric_bound;
+    rx_qp->m_guard_cap_limited = rx_qp->m_guard_fabric_bound_reports >= 2;
+    rx_qp->m_guard_last_cap_report_time = now;
+    m_guardCapReportsReceived++;
+    if (fabric_bound) m_guardFabricBoundReportsReceived++;
+    return 0;
+}
+
 int RdmaHw::ReceiveAck(Ptr<Packet> p, CustomHeader &ch) {
     uint16_t qIndex = ch.ack.pg;
     uint16_t port = ch.ack.dport;   // sport for this host
@@ -1105,8 +1155,12 @@ int RdmaHw::Receive(Ptr<Packet> p, CustomHeader &ch) {
         return ReceiveAck(p, ch);
     } else if (ch.l3Prot == 0xFC) {  // ACK
         return ReceiveAck(p, ch);
-    } else if (ch.l3Prot == 0xFB) {  // guard rate grant or homa-simple credit
+    } else if (ch.l3Prot == 0xFB) {  // guard grant/report or homa-simple credit
         if (m_cc_mode == 11 || m_cc_mode == 13) {
+            if (m_cc_mode == 11 &&
+                ((ch.ack.flags >> qbbHeader::FLAG_GUARD_CAP_REPORT) & 1) != 0) {
+                return ReceiveGuardCapReport(p, ch);
+            }
             return ReceiveRate(p, ch);
         } else if (m_cc_mode == 10) {
             return ReceiveHomaSimpleCredit(p, ch);
@@ -1637,6 +1691,59 @@ void RdmaHw::SyncHwRate(Ptr<RdmaQueuePair> qp, DataRate target_cc_rate) {
     if (final_rate > qp->m_max_rate) final_rate = qp->m_max_rate;
 
     ChangeRate(qp, final_rate);
+    MaybeSendGuardCapReport(qp);
+}
+
+void RdmaHw::MaybeSendGuardCapReport(Ptr<RdmaQueuePair> qp) {
+    if (!m_guardCapAwareReclaim || m_cc_mode != CC_MODE_GUARD || qp == NULL ||
+        qp->IsFinishedConst()) {
+        return;
+    }
+    uint64_t bdp_bytes =
+        qp->m_baseRtt * qp->m_max_rate.GetBitRate() / 8000000000lu;
+    if (m_guardSelectiveRegistration && bdp_bytes > 0 && qp->m_size <= bdp_bytes) {
+        return;
+    }
+    Time now = Simulator::Now();
+    Time interval = NanoSeconds(std::max<uint64_t>(1, qp->m_baseRtt));
+    if (qp->m_guard_has_cap_report &&
+        now - qp->m_guard_last_cap_report_time < interval) {
+        return;
+    }
+
+    bool fabric_bound = !qp->m_guard_tail_bypass &&
+                        qp->hp.m_curRate < qp->hp.m_grantRate;
+    uint32_t rate_mbps = std::max<uint32_t>(
+        1, static_cast<uint32_t>(qp->m_rate.GetBitRate() / 1000000));
+    qbbHeader report;
+    report.SetSeq(rate_mbps);
+    report.SetPG(qp->m_pg);
+    report.SetSport(qp->sport);
+    report.SetDport(qp->dport);
+    report.SetGuardCapReport();
+    report.SetGuardFabricBound(fabric_bound);
+
+    Ptr<Packet> packet = Create<Packet>(
+        std::max(60 - 14 - 20 - static_cast<int>(report.GetSerializedSize()), 0));
+    packet->AddHeader(report);
+    Ipv4Header ip;
+    ip.SetDestination(qp->dip);
+    ip.SetSource(qp->sip);
+    ip.SetProtocol(0xFB);
+    ip.SetTtl(64);
+    ip.SetPayloadSize(packet->GetSize());
+    ip.SetIdentification(qp->m_ipid++);
+    packet->AddHeader(ip);
+    AddHeader(packet, 0x800);
+
+    qp->m_guard_last_cap_report_time = now;
+    qp->m_guard_last_cap_report_rate_bps = qp->m_rate.GetBitRate();
+    qp->m_guard_has_cap_report = true;
+    m_guardCapReportsSent++;
+    m_guardCapReportBytesSent += packet->GetSize();
+    uint32_t nic_idx = GetNicIdxOfQp(qp);
+    m_nic[nic_idx].dev->RdmaEnqueueHighPrioQ(packet);
+    m_nic[nic_idx].dev->TriggerTransmit();
 }
 
 void RdmaHw::HandleRccRequest(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomHeader &ch) {
