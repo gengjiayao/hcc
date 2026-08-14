@@ -223,6 +223,10 @@ python3 run.py --cc guard-active-only --seed 3 ...
 | `--guard_proactive_release` | 1=按剩余字节阈值提前释放已注册流；0=仅在完整接收时释放，默认 1 |
 | `--guard_oflm` | 兼容旧脚本；显式 0 无条件关闭上述两项，显式 1 不覆盖单独给出的新开关 |
 | `--guard_keep_last_hop_int` | last-hop INT 消融；0=默认删除，1=保留 |
+| `--guard_work_conserving` | 1=回收接收端未使用的 flow share，0=固定 `C/N`，默认 1 |
+| `--guard_rebalance_interval_us` | 接收端有界 demand 采样周期，默认 200 us |
+| `--guard_demand_threshold` | flow 实测速率低于 grant 的该比例时积累 demand-limited 证据，默认 0.75 |
+| `--guard_receiver_util_threshold` | 仅当接收端总利用率低于该比例时允许回收 share，默认 0.75 |
 | `--guard_lifecycle_trace` | 有界 OFLM 逐流生命周期 CSV；默认 0，仅支持 GUARD 模式 |
 | `--guard_lifecycle_output` | 可选 CSV 路径；未给出时写入本次 run 目录 |
 | `--guard_lifecycle_max_lines` | 最多接纳及输出的生命周期记录，默认 1024，硬上限 10000 |
@@ -355,6 +359,12 @@ python3 experiments/aggregate_oflm_sensitivity.py \
 `run_general_workloads.py` 管理。它先在不启动 ns-3 的情况下冻结五个 PG3 flow
 snapshot，再用 seed 1 做机制准入；只有通过准入的 workload 才能扩展五个 seed 并由
 `summarize_general_workloads.py` 计算按流大小分组的配对 t95 结果。
+
+GUARD 的 work-conserving receiver-grant 修复、冻结的异质瓶颈诊断、同质安全检查和
+AliStorage/WebSearch/FbHdp 五种子安全门槛见
+[`docs/guard-work-conserving.md`](docs/guard-work-conserving.md)。该验证只支持“存在可回收
+空闲 share 时修复利用率缺口且未观察到通用负载退化”，不应写成所有负载或所有指标均
+有收益。
 
 `--flow_file` 完全绕过 Poisson/CDF 随机生成。`run.py` 先检查首行声明的 flow 数，
 再将输入复制到本次 `mix/output/<ID>/`；配置和模拟器只使用这份只读快照，因此原文件
