@@ -46,6 +46,26 @@ class GuardFeatureAblationTests(unittest.TestCase):
         self.assertEqual(command[command.index("--cc") + 1], "hpcc")
         self.assertFalse(any(value.startswith("--guard_") for value in command))
 
+    def test_optimized_ablation_freezes_one_factor_arms_on_new_seeds(self):
+        spec = read_spec(
+            self.repo / "experiments/campaigns/guard_optimized_feature_ablation.json")
+        self.assertEqual(spec["seeds"], [11, 12, 13, 14, 15])
+        expected = {
+            "no_priority": ("--guard_size_priority", "0"),
+            "no_srpt": ("--guard_sender_srpt", "0"),
+            "no_reclaim": ("--guard_work_conserving", "0"),
+            "no_one_rtt": ("--guard_one_rtt_bypass", "0"),
+            "no_tail": ("--guard_tail_bypass", "0"),
+            "no_remaining": ("--guard_remaining_aware", "0"),
+            "no_ack_coalescing": ("--guard_ack_interval_packets", "1"),
+            "no_fixed_window": ("--guard_fixed_window", "0"),
+        }
+        trace = {"seed": 11, "path": "/tmp/frozen-flow.txt"}
+        for arm, (option, value) in expected.items():
+            command = run_command(self.repo, spec, spec["workloads"][0], trace, arm)
+            self.assertEqual(command[command.index(option) + 1], value)
+            self.assertEqual(command[command.index("--guard_lambda") + 1], "1.8")
+
 
 if __name__ == "__main__":
     unittest.main()

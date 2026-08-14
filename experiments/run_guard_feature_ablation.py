@@ -39,13 +39,22 @@ except ModuleNotFoundError:  # Direct execution from experiments/.
     from run_general_workloads import generate_trace
 
 
-EXPECTED_ARMS = (
+LEGACY_ARMS = (
     "guard", "no_priority", "no_srpt", "no_reclaim", "core", "hpcc",
 )
+OPTIMIZED_ARMS = (
+    "guard", "no_priority", "no_srpt", "no_reclaim", "no_one_rtt",
+    "no_tail", "no_remaining", "no_ack_coalescing", "no_fixed_window",
+)
+EXPECTED_ARMS = LEGACY_ARMS
 GUARD_OPTIONS = (
     "guard_lambda", "guard_beta", "guard_gamma",
     "guard_selective_registration", "guard_proactive_release",
     "guard_keep_last_hop_int", "guard_size_priority", "guard_sender_srpt",
+    "guard_one_rtt_bypass", "guard_tail_bypass", "guard_tail_bypass_bdps",
+    "guard_ack_interval_packets", "guard_fixed_window", "guard_remaining_aware",
+    "guard_min_share_fraction", "guard_remaining_exponent",
+    "guard_grant_refresh_bdps",
     "guard_srpt_quantum_packets", "guard_work_conserving",
     "guard_rebalance_interval_us", "guard_demand_threshold",
     "guard_receiver_util_threshold",
@@ -57,31 +66,67 @@ def read_spec(path: Path) -> Mapping[str, object]:
         spec = json.load(stream)
     if spec.get("schema_version") != 1:
         raise CampaignError("feature-ablation spec must use schema version 1")
-    if list(spec.get("seeds", [])) != [1, 2, 3, 4, 5]:
-        raise CampaignError("feature ablation requires seeds 1..5")
-    if tuple(spec.get("arms", {}).keys()) != EXPECTED_ARMS:
-        raise CampaignError(f"feature ablation requires arms {EXPECTED_ARMS}")
+    seeds = list(map(int, spec.get("seeds", [])))
+    if len(seeds) != 5 or seeds != list(range(seeds[0], seeds[0] + 5)):
+        raise CampaignError("feature ablation requires five consecutive seeds")
+    arms = tuple(spec.get("arms", {}).keys())
+    if arms not in (LEGACY_ARMS, OPTIMIZED_ARMS):
+        raise CampaignError(
+            f"feature ablation requires arms {LEGACY_ARMS} or {OPTIMIZED_ARMS}")
     defaults = dict(spec["defaults"])
     if int(defaults.get("priority_group", -1)) != 3:
         raise CampaignError("feature-ablation traces must use PG3")
     if defaults.get("monitor_profile") != "bulk":
         raise CampaignError("feature ablation requires bulk monitoring")
-    expected_switches = {
-        "guard": (1, 1, 1),
-        "no_priority": (0, 1, 1),
-        "no_srpt": (1, 0, 1),
-        "no_reclaim": (1, 1, 0),
-        "core": (0, 0, 0),
-    }
-    for arm, expected in expected_switches.items():
-        config = dict(spec["arms"][arm])
-        actual = tuple(int(config[field]) for field in (
-            "guard_size_priority", "guard_sender_srpt", "guard_work_conserving"
-        ))
-        if config.get("cc") != "guard" or actual != expected:
-            raise CampaignError(f"{arm} does not match its frozen switch tuple")
-    if dict(spec["arms"]["hpcc"]).get("cc") != "hpcc":
-        raise CampaignError("hpcc arm must select cc=hpcc")
+    if arms == LEGACY_ARMS:
+        expected_switches = {
+            "guard": (1, 1, 1),
+            "no_priority": (0, 1, 1),
+            "no_srpt": (1, 0, 1),
+            "no_reclaim": (1, 1, 0),
+            "core": (0, 0, 0),
+        }
+        for arm, expected in expected_switches.items():
+            config = dict(spec["arms"][arm])
+            actual = tuple(int(config[field]) for field in (
+                "guard_size_priority", "guard_sender_srpt", "guard_work_conserving"
+            ))
+            if config.get("cc") != "guard" or actual != expected:
+                raise CampaignError(f"{arm} does not match its frozen switch tuple")
+        if dict(spec["arms"]["hpcc"]).get("cc") != "hpcc":
+            raise CampaignError("hpcc arm must select cc=hpcc")
+    else:
+        frozen = (
+            "guard_size_priority", "guard_sender_srpt", "guard_work_conserving",
+            "guard_one_rtt_bypass", "guard_tail_bypass",
+            "guard_tail_bypass_bdps", "guard_ack_interval_packets",
+            "guard_fixed_window", "guard_remaining_aware",
+            "guard_min_share_fraction", "guard_remaining_exponent",
+            "guard_grant_refresh_bdps",
+        )
+        expected_override = {
+            "guard": None,
+            "no_priority": ("guard_size_priority", 0),
+            "no_srpt": ("guard_sender_srpt", 0),
+            "no_reclaim": ("guard_work_conserving", 0),
+            "no_one_rtt": ("guard_one_rtt_bypass", 0),
+            "no_tail": ("guard_tail_bypass", 0),
+            "no_remaining": ("guard_remaining_aware", 0),
+            "no_ack_coalescing": ("guard_ack_interval_packets", 1),
+            "no_fixed_window": ("guard_fixed_window", 0),
+        }
+        baseline = {field: defaults[field] for field in frozen}
+        for arm, override in expected_override.items():
+            config = dict(defaults)
+            config.update(dict(spec["arms"][arm]))
+            if config.get("cc") != "guard":
+                raise CampaignError(f"{arm} must select cc=guard")
+            expected = dict(baseline)
+            if override:
+                expected[override[0]] = override[1]
+            actual = {field: config[field] for field in frozen}
+            if actual != expected:
+                raise CampaignError(f"{arm} is not a one-factor optimized ablation")
     return spec
 
 
@@ -178,7 +223,8 @@ def run_command(
         controls = dict(defaults)
         controls.update(arm)
         for option in GUARD_OPTIONS:
-            command.extend([f"--{option}", str(controls[option])])
+            if option in controls:
+                command.extend([f"--{option}", str(controls[option])])
     return command
 
 
@@ -293,7 +339,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--phase", choices=("preflight", "run"), required=True)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--workload")
-    parser.add_argument("--arm", choices=EXPECTED_ARMS)
+    parser.add_argument("--arm", choices=tuple(dict.fromkeys(LEGACY_ARMS + OPTIMIZED_ARMS)))
     parser.add_argument("--max-runs", type=int)
     return parser.parse_args(argv)
 

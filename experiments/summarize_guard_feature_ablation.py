@@ -14,7 +14,7 @@ from typing import Dict, List, Mapping, MutableMapping, Sequence
 
 try:
     from experiments.run_campaign import directory_size, sha256_file, write_json
-    from experiments.run_guard_feature_ablation import EXPECTED_ARMS, read_spec
+    from experiments.run_guard_feature_ablation import read_spec
     from experiments.summarize_campaign import (
         GUARD_TOTAL_FIELDS, parse_guard_stats, parse_pfc, queue_summary_metrics,
     )
@@ -24,7 +24,7 @@ try:
     )
 except ModuleNotFoundError:  # Direct execution from experiments/.
     from run_campaign import directory_size, sha256_file, write_json
-    from run_guard_feature_ablation import EXPECTED_ARMS, read_spec
+    from run_guard_feature_ablation import read_spec
     from summarize_campaign import (
         GUARD_TOTAL_FIELDS, parse_guard_stats, parse_pfc, queue_summary_metrics,
     )
@@ -111,11 +111,24 @@ def analyze_run(
     if arm != "hpcc":
         controls = dict(spec["defaults"])
         controls.update(dict(spec["arms"][arm]))
+        config_names = {
+            "guard_lambda": "GUARD_LAMBDA",
+            "guard_size_priority": "GUARD_SIZE_PRIORITY",
+            "guard_sender_srpt": "GUARD_SENDER_SRPT",
+            "guard_work_conserving": "GUARD_WORK_CONSERVING",
+            "guard_one_rtt_bypass": "GUARD_ONE_RTT_BYPASS",
+            "guard_tail_bypass": "GUARD_TAIL_BYPASS",
+            "guard_tail_bypass_bdps": "GUARD_TAIL_BYPASS_BDPS",
+            "guard_ack_interval_packets": "GUARD_ACK_INTERVAL_PACKETS",
+            "guard_fixed_window": "GUARD_FIXED_WINDOW",
+            "guard_remaining_aware": "GUARD_REMAINING_AWARE",
+            "guard_min_share_fraction": "GUARD_MIN_SHARE_FRACTION",
+            "guard_remaining_exponent": "GUARD_REMAINING_EXPONENT",
+            "guard_grant_refresh_bdps": "GUARD_GRANT_REFRESH_BDPS",
+        }
         expected_config.update({
-            "GUARD_LAMBDA": controls["guard_lambda"],
-            "GUARD_SIZE_PRIORITY": controls["guard_size_priority"],
-            "GUARD_SENDER_SRPT": controls["guard_sender_srpt"],
-            "GUARD_WORK_CONSERVING": controls["guard_work_conserving"],
+            config_name: controls[option]
+            for option, config_name in config_names.items() if option in controls
         })
     for key, expected in expected_config.items():
         if config.get(key) != str(expected):
@@ -136,9 +149,31 @@ def analyze_run(
         )
         if any(int(stats[field]) == 0 for field in required):
             failures.append("a GUARD controller path was inactive")
-        expected_srpt = int(dict(spec["arms"])[arm]["guard_sender_srpt"])
+        controls = dict(spec["defaults"])
+        controls.update(dict(spec["arms"])[arm])
+        expected_srpt = int(controls["guard_sender_srpt"])
         if int(stats["guard_sender_srpt_enabled"]) != expected_srpt:
             failures.append("sender SRPT activity flag disagrees with configuration")
+        flag_fields = {
+            "guard_one_rtt_bypass": "guard_one_rtt_bypass_enabled",
+            "guard_tail_bypass": "guard_tail_bypass_enabled",
+            "guard_remaining_aware": "guard_remaining_aware",
+        }
+        for option, field in flag_fields.items():
+            if option in controls and int(stats[field]) != int(controls[option]):
+                failures.append(f"{field} disagrees with configuration")
+        if int(controls.get("guard_one_rtt_bypass", 0)):
+            if int(stats["guard_one_rtt_bypass_flows"]) == 0:
+                failures.append("one-RTT bypass did not exercise any flow")
+        if int(controls.get("guard_tail_bypass", 0)):
+            if int(stats["guard_tail_bypass_flows"]) == 0:
+                failures.append("tail bypass did not exercise any flow")
+        if int(controls.get("guard_remaining_aware", 0)):
+            if int(stats["guard_remaining_refresh_events"]) == 0:
+                failures.append("remaining-aware grants never refreshed")
+        if int(controls.get("guard_ack_interval_packets", 1)) == 1:
+            if int(stats["guard_long_acks_suppressed"]) != 0:
+                failures.append("ACK coalescing disabled but long ACKs were suppressed")
 
     metrics: Dict[str, float] = fct_metrics(fct, spec["flow_size_buckets"])
     starts = [float(row["start_ns"]) for row in fct]
@@ -156,7 +191,15 @@ def analyze_run(
     for field in (
         "guard_sender_srpt_enabled", "guard_srpt_quantum_packets",
         "guard_sender_srpt_selections", "guard_sender_srpt_non_rr",
-        "guard_sender_srpt_forced_rr",
+        "guard_sender_srpt_forced_rr", "guard_one_rtt_bypass_enabled",
+        "guard_one_rtt_bypass_flows", "guard_one_rtt_bypass_feedbacks",
+        "guard_one_rtt_acks_suppressed", "guard_long_acks_suppressed",
+        "guard_ack_interval_packets", "guard_fixed_window",
+        "guard_tail_bypass_enabled", "guard_tail_bypass_bdps",
+        "guard_tail_bypass_flows", "guard_tail_bypass_feedbacks",
+        "guard_remaining_aware", "guard_min_share_fraction",
+        "guard_remaining_exponent", "guard_grant_refresh_bdps",
+        "guard_remaining_refresh_events",
     ):
         metrics[field] = float(stats[field])
     pfc = parse_pfc(output / f"{output_id}_out_pfc.txt")
@@ -185,9 +228,11 @@ def analyze(campaign: Path, spec_path: Path) -> None:
     if preflight.get("spec_sha256") != sha256_file(spec_path):
         raise AnalysisError("spec changed after preflight")
     runs = []
+    arms = tuple(map(str, spec["arms"]))
+    seeds = tuple(map(int, spec["seeds"]))
     for workload in preflight["workloads"]:
         for trace in workload["traces"]:
-            for arm in EXPECTED_ARMS:
+            for arm in arms:
                 runs.append(analyze_run(campaign, spec, preflight, workload, trace, arm))
     rejected = [row for row in runs if not row["passed"]]
     if rejected:
@@ -224,17 +269,20 @@ def analyze(campaign: Path, spec_path: Path) -> None:
     ci_rows = []
     indexed = {(row["workload"], row["seed"], row["arm"]): row for row in runs}
     for workload in [row["name"] for row in preflight["workloads"]]:
-        for arm in EXPECTED_ARMS:
+        for arm in arms:
             for metric in metric_names:
-                values = [float(indexed[(workload, seed, arm)]["metrics"][metric]) for seed in range(1, 6)]
+                values = [float(indexed[(workload, seed, arm)]["metrics"][metric])
+                          for seed in seeds]
                 ci_rows.append({
                     "analysis": "arm_mean", "workload": workload,
                     "comparison": arm, "metric": metric, **mean_ci(values),
                 })
         for left, right in spec["comparisons"]:
             for metric in metric_names:
-                left_values = [float(indexed[(workload, seed, left)]["metrics"][metric]) for seed in range(1, 6)]
-                right_values = [float(indexed[(workload, seed, right)]["metrics"][metric]) for seed in range(1, 6)]
+                left_values = [float(indexed[(workload, seed, left)]["metrics"][metric])
+                               for seed in seeds]
+                right_values = [float(indexed[(workload, seed, right)]["metrics"][metric])
+                                for seed in seeds]
                 differences = [a - b for a, b in zip(left_values, right_values)]
                 percents = [(a - b) / b * 100.0 for a, b in zip(left_values, right_values) if b != 0]
                 ci_rows.append({
@@ -258,7 +306,7 @@ def analyze(campaign: Path, spec_path: Path) -> None:
         "spec_sha256": sha256_file(spec_path),
         "preflight_sha256": sha256_file(campaign / "preflight.json"),
         "run_count": len(runs), "workloads": [row["name"] for row in preflight["workloads"]],
-        "arms": list(EXPECTED_ARMS), "all_runs_passed": True,
+        "arms": list(arms), "seeds": list(seeds), "all_runs_passed": True,
     }
     write_json(summary / "feature_ablation_admission.json", report)
     print(f"validated {len(runs)} runs at {report['simulator_sha']}")
