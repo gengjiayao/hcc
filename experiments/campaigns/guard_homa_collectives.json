@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "name": "guard-hpcc-homa-collectives",
+  "purpose": "Replace the initial collective panels with hash-matched GUARD, HPCC, and qualified Homa ns-3 runs.",
+  "selection_policy": "Freeze both workload definitions and all five seeded traces before ns-3. Seed 1 admits completion, safety, and controller activity without inspecting comparative performance. Expand seeds 2-5 only if every arm passes; do not tune a workload by outcome.",
+  "seeds": [1, 2, 3, 4, 5],
+  "limits": {
+    "max_flows": 1000,
+    "run_bytes": 104857600,
+    "campaign_bytes": 1073741824,
+    "run_timeout_seconds": 1800
+  },
+  "defaults": {
+    "topo": "leaf_spine_16_100G_OS4",
+    "simul_time": 0.02,
+    "netload": 40,
+    "bw": 100,
+    "priority_group": 4,
+    "analysis_warmup": 0,
+    "buffer": 9,
+    "lb": "fecmp",
+    "pfc": 1,
+    "irn": 0,
+    "monitor_profile": "bulk",
+    "guard_lambda": 1.4,
+    "guard_beta": 0.125,
+    "guard_gamma": 1.0,
+    "guard_selective_registration": 1,
+    "guard_proactive_release": 1,
+    "guard_keep_last_hop_int": 0,
+    "guard_rebalance_interval_us": 200,
+    "guard_demand_threshold": 0.75,
+    "guard_receiver_util_threshold": 0.75,
+    "homa_resend_timeout_us": 1000
+  },
+  "arms": {
+    "guard": {
+      "cc": "guard",
+      "guard_size_priority": 1,
+      "guard_sender_srpt": 1,
+      "guard_srpt_quantum_packets": 64,
+      "guard_work_conserving": 1
+    },
+    "hpcc": {"cc": "hpcc"},
+    "homa": {"cc": "homa"}
+  },
+  "workloads": {
+    "all_to_all": {
+      "generator": "all-to-all",
+      "hosts": 16,
+      "flow_bytes": 524288,
+      "jitter_us": 0.5,
+      "expected_flows": 240,
+      "completion_semantics": "communication_phase_cct"
+    },
+    "ring_open_loop": {
+      "generator": "ring-allreduce",
+      "hosts": 16,
+      "tensor_bytes": 4194304,
+      "jitter_us": 0.5,
+      "expected_flows": 480,
+      "completion_semantics": "open_loop_trace_only"
+    }
+  },
+  "admission": {
+    "same_seed_hash_matches_all_arms": true,
+    "distinct_hash_across_seeds": true,
+    "all_flows_complete": true,
+    "zero_switch_drop_and_generic_recovery": true,
+    "guard_requires_grants_and_actual_hpcc_changes": true,
+    "hpcc_requires_actual_hpcc_changes_and_zero_grants": true,
+    "homa_requires_native_data_grants_completion_and_multiple_priorities": true
+  }
+}
