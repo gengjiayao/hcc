@@ -95,9 +95,14 @@ def analyze_run(
     if Counter(int(row["pg"]) for row in flows) != Counter({3: len(flows)}):
         failures.append("input is not uniformly PG3")
     fct = parse_fct(output / f"{output_id}_out_fct.txt")
-    validate_completions(flows, fct, int(dict(spec["defaults"])["hosts"]))
-    if len(fct) != int(trace["flow_count"]):
-        failures.append("not every flow completed")
+    expected_flows = int(trace["flow_count"])
+    if len(fct) == expected_flows:
+        validate_completions(flows, fct, int(dict(spec["defaults"])["hosts"]))
+    else:
+        failures.append(
+            f"completed {len(fct)} of {expected_flows} flows; "
+            "exclude this seed from latency comparisons"
+        )
 
     config = parse_config(output / "config.txt")
     expected_config = {
@@ -209,6 +214,8 @@ def analyze_run(
         "workload": workload["name"], "seed": seed, "arm": arm,
         "git_sha": manifest["git_sha"], "flow_sha256": trace["sha256"],
         "flow_count": trace["flow_count"], "output_id": output_id,
+        "completed_flow_count": len(fct),
+        "completion_fraction": len(fct) / float(expected_flows),
         "output_dir": str(output), "output_bytes": directory_size(output),
         "elapsed_seconds": manifest["elapsed_seconds"], "passed": not failures,
         "failures": failures, "metrics": metrics,
@@ -220,6 +227,14 @@ def write_csv(path: Path, rows: Sequence[Mapping[str, object]], fields: Sequence
         writer = csv.DictWriter(stream, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
+
+
+def cohort_passes(
+    indexed: Mapping[tuple, Mapping[str, object]], workload: str,
+    arm: str, seeds: Sequence[int],
+) -> bool:
+    """Return whether every preregistered seed in an arm passed admission."""
+    return all(bool(indexed[(workload, seed, arm)]["passed"]) for seed in seeds)
 
 
 def analyze(campaign: Path, spec_path: Path) -> None:
@@ -235,9 +250,6 @@ def analyze(campaign: Path, spec_path: Path) -> None:
             for arm in arms:
                 runs.append(analyze_run(campaign, spec, preflight, workload, trace, arm))
     rejected = [row for row in runs if not row["passed"]]
-    if rejected:
-        reasons = [f"{r['workload']}/s{r['seed']}/{r['arm']}: {r['failures']}" for r in rejected]
-        raise AnalysisError("\n".join(reasons))
     shas = {row["git_sha"] for row in runs}
     if len(shas) != 1:
         raise AnalysisError(f"runs used multiple simulator revisions: {shas}")
@@ -246,6 +258,7 @@ def analyze(campaign: Path, spec_path: Path) -> None:
     summary.mkdir(parents=True, exist_ok=True)
     run_fields = (
         "workload", "seed", "arm", "git_sha", "flow_sha256", "flow_count",
+        "completed_flow_count", "completion_fraction",
         "output_id", "output_dir", "output_bytes", "elapsed_seconds", "passed", "failures",
     )
     write_csv(summary / "feature_ablation_runs.csv", [
@@ -253,9 +266,10 @@ def analyze(campaign: Path, spec_path: Path) -> None:
          "failures": "; ".join(row["failures"])} for row in runs
     ], run_fields)
 
-    metric_names = sorted(set.intersection(*[set(row["metrics"]) for row in runs]))
+    admitted_runs = [row for row in runs if row["passed"]]
+    metric_names = sorted(set.intersection(*[set(row["metrics"]) for row in admitted_runs]))
     long_rows = []
-    for row in runs:
+    for row in admitted_runs:
         for metric in metric_names:
             long_rows.append({
                 "workload": row["workload"], "seed": row["seed"], "arm": row["arm"],
@@ -268,8 +282,14 @@ def analyze(campaign: Path, spec_path: Path) -> None:
 
     ci_rows = []
     indexed = {(row["workload"], row["seed"], row["arm"]): row for row in runs}
+    eligible_cohorts = []
+    rejected_cohorts = []
     for workload in [row["name"] for row in preflight["workloads"]]:
         for arm in arms:
+            if not cohort_passes(indexed, workload, arm, seeds):
+                rejected_cohorts.append({"workload": workload, "arm": arm})
+                continue
+            eligible_cohorts.append({"workload": workload, "arm": arm})
             for metric in metric_names:
                 values = [float(indexed[(workload, seed, arm)]["metrics"][metric])
                           for seed in seeds]
@@ -278,6 +298,9 @@ def analyze(campaign: Path, spec_path: Path) -> None:
                     "comparison": arm, "metric": metric, **mean_ci(values),
                 })
         for left, right in spec["comparisons"]:
+            if not (cohort_passes(indexed, workload, left, seeds)
+                    and cohort_passes(indexed, workload, right, seeds)):
+                continue
             for metric in metric_names:
                 left_values = [float(indexed[(workload, seed, left)]["metrics"][metric])
                                for seed in seeds]
@@ -302,14 +325,28 @@ def analyze(campaign: Path, spec_path: Path) -> None:
     )
     write_csv(summary / "feature_ablation_ci.csv", ci_rows, ci_fields)
     report = {
-        "schema_version": 1, "status": "valid", "simulator_sha": next(iter(shas)),
+        "schema_version": 1,
+        "status": "valid" if not rejected else "valid_with_rejected_cohorts",
+        "simulator_sha": next(iter(shas)),
         "spec_sha256": sha256_file(spec_path),
         "preflight_sha256": sha256_file(campaign / "preflight.json"),
-        "run_count": len(runs), "workloads": [row["name"] for row in preflight["workloads"]],
-        "arms": list(arms), "seeds": list(seeds), "all_runs_passed": True,
+        "run_count": len(runs), "admitted_run_count": len(admitted_runs),
+        "rejected_run_count": len(rejected),
+        "workloads": [row["name"] for row in preflight["workloads"]],
+        "arms": list(arms), "seeds": list(seeds), "all_runs_passed": not rejected,
+        "eligible_cohorts": eligible_cohorts, "rejected_cohorts": rejected_cohorts,
+        "rejected_runs": [
+            {"workload": row["workload"], "seed": row["seed"], "arm": row["arm"],
+             "completed_flow_count": row["completed_flow_count"],
+             "flow_count": row["flow_count"], "failures": row["failures"]}
+            for row in rejected
+        ],
     }
     write_json(summary / "feature_ablation_admission.json", report)
-    print(f"validated {len(runs)} runs at {report['simulator_sha']}")
+    print(
+        f"admitted {len(admitted_runs)}/{len(runs)} runs at {report['simulator_sha']}; "
+        f"rejected {len(rejected_cohorts)} workload/arm cohorts"
+    )
 
 
 def main() -> None:
