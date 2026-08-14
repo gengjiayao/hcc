@@ -130,6 +130,7 @@ class SummaryTests(unittest.TestCase):
             path.write_text(
                 "total 0 0 0 0\n"
                 "guard_cap_aware_config enabled 1 headroom 1.100000 "
+                "min_share_fraction 0.250000 "
                 "reports_sent 10 report_bytes_sent 940 reports_received 9 "
                 "fabric_bound_reports 7 rebalance_events 3 grant_updates 5 "
                 "max_reclaimed_bps 25000000000\n",
@@ -138,6 +139,7 @@ class SummaryTests(unittest.TestCase):
             stats = parse_guard_stats(path)
             self.assertEqual(stats["guard_cap_aware_enabled"], 1)
             self.assertEqual(stats["guard_cap_headroom"], 1.1)
+            self.assertEqual(stats["guard_cap_min_share_fraction"], 0.25)
             self.assertEqual(stats["guard_cap_reports_sent"], 10)
             self.assertEqual(stats["guard_cap_report_bytes_sent"], 940)
             self.assertEqual(stats["guard_cap_reports_received"], 9)

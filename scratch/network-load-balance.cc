@@ -186,6 +186,7 @@ uint32_t guard_srpt_quantum_packets = 64;
 bool guard_work_conserving = false;
 bool guard_cap_aware_reclaim = false;
 double guard_cap_headroom = 1.1;
+double guard_cap_min_share_fraction = 0.25;
 uint64_t guard_rebalance_interval_us = 200;
 double guard_demand_threshold = 0.75;
 double guard_receiver_util_threshold = 0.75;
@@ -1320,6 +1321,10 @@ int main(int argc, char *argv[]) {
             } else if (key.compare("GUARD_CAP_HEADROOM") == 0) {
                 conf >> guard_cap_headroom;
                 std::cerr << "GUARD_CAP_HEADROOM\t" << guard_cap_headroom << '\n';
+            } else if (key.compare("GUARD_CAP_MIN_SHARE_FRACTION") == 0) {
+                conf >> guard_cap_min_share_fraction;
+                std::cerr << "GUARD_CAP_MIN_SHARE_FRACTION\t"
+                          << guard_cap_min_share_fraction << '\n';
             } else if (key.compare("GUARD_REBALANCE_INTERVAL_US") == 0) {
                 conf >> guard_rebalance_interval_us;
                 std::cerr << "GUARD_REBALANCE_INTERVAL_US\t"
@@ -1522,6 +1527,10 @@ int main(int argc, char *argv[]) {
     }
     if (guard_cap_headroom < 1.0 || guard_cap_headroom > 2.0) {
         std::cerr << "GUARD_CAP_HEADROOM must be in [1, 2]\n";
+        return 1;
+    }
+    if (guard_cap_min_share_fraction < 0.0 || guard_cap_min_share_fraction > 1.0) {
+        std::cerr << "GUARD_CAP_MIN_SHARE_FRACTION must be in [0, 1]\n";
         return 1;
     }
     if (guard_demand_threshold <= 0.0 || guard_demand_threshold >= 1.0) {
@@ -2027,6 +2036,8 @@ int main(int argc, char *argv[]) {
             rdmaHw->SetAttribute("GuardCapAwareReclaim",
                                  BooleanValue(guard_cap_aware_reclaim));
             rdmaHw->SetAttribute("GuardCapHeadroom", DoubleValue(guard_cap_headroom));
+            rdmaHw->SetAttribute("GuardCapMinShareFraction",
+                                 DoubleValue(guard_cap_min_share_fraction));
             rdmaHw->SetAttribute("GuardRebalanceInterval",
                                  TimeValue(MicroSeconds(guard_rebalance_interval_us)));
             rdmaHw->SetAttribute("GuardDemandThreshold", DoubleValue(guard_demand_threshold));
@@ -2686,10 +2697,12 @@ int main(int argc, char *argv[]) {
             guard_work_conserving ? 1 : 0, guard_rebalance_interval_us,
             guard_demand_threshold, guard_receiver_util_threshold);
     fprintf(guard_stats_output,
-            "guard_cap_aware_config enabled %u headroom %.6f reports_sent %lu "
+            "guard_cap_aware_config enabled %u headroom %.6f min_share_fraction %.6f "
+            "reports_sent %lu "
             "report_bytes_sent %lu reports_received %lu fabric_bound_reports %lu "
             "rebalance_events %lu grant_updates %lu max_reclaimed_bps %lu\n",
             guard_cap_aware_reclaim ? 1 : 0, guard_cap_headroom,
+            guard_cap_min_share_fraction,
             total_guard_cap_reports_sent, total_guard_cap_report_bytes_sent,
             total_guard_cap_reports_received, total_guard_fabric_bound_reports_received,
             total_guard_cap_rebalance_events, total_guard_cap_grant_updates,

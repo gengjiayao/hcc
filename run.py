@@ -108,6 +108,7 @@ GUARD_SRPT_QUANTUM_PACKETS {guard_srpt_quantum_packets}
 GUARD_WORK_CONSERVING {guard_work_conserving}
 GUARD_CAP_AWARE_RECLAIM {guard_cap_aware_reclaim}
 GUARD_CAP_HEADROOM {guard_cap_headroom}
+GUARD_CAP_MIN_SHARE_FRACTION {guard_cap_min_share_fraction}
 GUARD_REBALANCE_INTERVAL_US {guard_rebalance_interval_us}
 GUARD_DEMAND_THRESHOLD {guard_demand_threshold}
 GUARD_RECEIVER_UTIL_THRESHOLD {guard_receiver_util_threshold}
@@ -415,6 +416,8 @@ def main():
                         help="reclaim shares using bounded sender cap reports (default: 0)")
     parser.add_argument('--guard_cap_headroom', type=float, default=1.1,
                         help="headroom above reported fabric caps in [1,2] (default: 1.1)")
+    parser.add_argument('--guard_cap_min_share_fraction', type=float, default=0.25,
+                        help="donor safety floor as equal-share fraction in [0,1] (default: 0.25)")
     parser.add_argument('--guard_rebalance_interval_us', type=int, default=200,
                         help="GUARD receiver demand-sampling interval in us (default: 200)")
     parser.add_argument('--guard_demand_threshold', type=float, default=0.75,
@@ -499,6 +502,8 @@ def main():
         raise Exception("CONFIG ERROR: --guard_rebalance_interval_us must be positive.")
     if not 1.0 <= args.guard_cap_headroom <= 2.0:
         raise Exception("CONFIG ERROR: --guard_cap_headroom must be in [1, 2].")
+    if not 0.0 <= args.guard_cap_min_share_fraction <= 1.0:
+        raise Exception("CONFIG ERROR: --guard_cap_min_share_fraction must be in [0, 1].")
     if args.guard_srpt_quantum_packets <= 0:
         raise Exception("CONFIG ERROR: --guard_srpt_quantum_packets must be positive.")
     if args.guard_ack_interval_packets <= 0:
@@ -886,6 +891,7 @@ def main():
                                         guard_work_conserving=args.guard_work_conserving,
                                         guard_cap_aware_reclaim=args.guard_cap_aware_reclaim,
                                         guard_cap_headroom=args.guard_cap_headroom,
+                                        guard_cap_min_share_fraction=args.guard_cap_min_share_fraction,
                                         guard_rebalance_interval_us=args.guard_rebalance_interval_us,
                                         guard_demand_threshold=args.guard_demand_threshold,
                                         guard_receiver_util_threshold=args.guard_receiver_util_threshold,
