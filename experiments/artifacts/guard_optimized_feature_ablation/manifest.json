@@ -1,0 +1,42 @@
+{
+  "description": "Fresh-seed one-factor ablation of optimized GUARD",
+  "files": {
+    "admission.json": {
+      "bytes": 4347,
+      "sha256": "c370dde23f6a1f0bdf48407db67c31281e62682a2bedddf656ed09f3511cc230"
+    },
+    "ci.csv": {
+      "bytes": 725765,
+      "sha256": "693e6181834c8274dbf4f3c2f3805a4205cde29b01d7835cb992c764ee2a4a08"
+    },
+    "per_seed.csv": {
+      "bytes": 720716,
+      "sha256": "e9f49f3c7ccd0bc951d2df58915946a2c0152404930fb858a136429090dcfe27"
+    },
+    "preflight.json": {
+      "bytes": 15477,
+      "sha256": "2482aed3b21064721cba5c0c112424768d29e47e0d565380e62f0ff84f7dce03"
+    },
+    "run_registry.csv": {
+      "bytes": 26246,
+      "sha256": "a96228cc5256a361e22747d1df0edbb517bbfab209e9249cdc5b3278d65b8e12"
+    },
+    "spec.json": {
+      "bytes": 3347,
+      "sha256": "90661eaccb819498c2bdad0b66721d7d9645a48ab32b0f3df1abd8a9a58e4c1f"
+    }
+  },
+  "raw_locator_rule": "run_registry output_dir is relative to the guard repository",
+  "raw_outputs_in_git": false,
+  "schema_version": 1,
+  "seeds": [
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
+  "simulator_git_shas": [
+    "2d805e3ebb3cfe7590fe30678ee0edd5b53b09b1"
+  ]
+}

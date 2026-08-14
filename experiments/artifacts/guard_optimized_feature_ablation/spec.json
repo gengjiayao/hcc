@@ -1,0 +1,161 @@
+{
+  "arms": {
+    "guard": {
+      "cc": "guard"
+    },
+    "no_ack_coalescing": {
+      "cc": "guard",
+      "guard_ack_interval_packets": 1
+    },
+    "no_fixed_window": {
+      "cc": "guard",
+      "guard_fixed_window": 0
+    },
+    "no_one_rtt": {
+      "cc": "guard",
+      "guard_one_rtt_bypass": 0
+    },
+    "no_priority": {
+      "cc": "guard",
+      "guard_size_priority": 0
+    },
+    "no_reclaim": {
+      "cc": "guard",
+      "guard_work_conserving": 0
+    },
+    "no_remaining": {
+      "cc": "guard",
+      "guard_remaining_aware": 0
+    },
+    "no_srpt": {
+      "cc": "guard",
+      "guard_sender_srpt": 0
+    },
+    "no_tail": {
+      "cc": "guard",
+      "guard_tail_bypass": 0
+    }
+  },
+  "comparisons": [
+    [
+      "guard",
+      "no_priority"
+    ],
+    [
+      "guard",
+      "no_srpt"
+    ],
+    [
+      "guard",
+      "no_reclaim"
+    ],
+    [
+      "guard",
+      "no_one_rtt"
+    ],
+    [
+      "guard",
+      "no_tail"
+    ],
+    [
+      "guard",
+      "no_remaining"
+    ],
+    [
+      "guard",
+      "no_ack_coalescing"
+    ],
+    [
+      "guard",
+      "no_fixed_window"
+    ]
+  ],
+  "defaults": {
+    "analysis_warmup": 0.005,
+    "buffer": 9,
+    "bw": 100,
+    "guard_ack_interval_packets": 8,
+    "guard_beta": 0.125,
+    "guard_demand_threshold": 0.75,
+    "guard_fixed_window": 1,
+    "guard_gamma": 1.0,
+    "guard_grant_refresh_bdps": 1.0,
+    "guard_keep_last_hop_int": 0,
+    "guard_lambda": 1.8,
+    "guard_min_share_fraction": 0.0,
+    "guard_one_rtt_bypass": 1,
+    "guard_proactive_release": 1,
+    "guard_rebalance_interval_us": 200,
+    "guard_receiver_util_threshold": 0.75,
+    "guard_remaining_aware": 1,
+    "guard_remaining_exponent": 1.0,
+    "guard_selective_registration": 1,
+    "guard_sender_srpt": 1,
+    "guard_size_priority": 1,
+    "guard_srpt_quantum_packets": 64,
+    "guard_tail_bypass": 1,
+    "guard_tail_bypass_bdps": 8.0,
+    "guard_work_conserving": 1,
+    "hosts": 16,
+    "irn": 0,
+    "lb": "fecmp",
+    "monitor_profile": "bulk",
+    "netload": 40,
+    "oversubscription": 4,
+    "pfc": 1,
+    "priority_group": 3,
+    "simul_time": 0.02,
+    "topo": "leaf_spine_16_100G_OS4"
+  },
+  "flow_size_buckets": [
+    {
+      "max_bytes": 8192,
+      "name": "le_8KB"
+    },
+    {
+      "max_bytes": 104000,
+      "min_exclusive_bytes": 8192,
+      "name": "8KB_to_1BDP"
+    },
+    {
+      "max_bytes": 1048576,
+      "min_exclusive_bytes": 104000,
+      "name": "1BDP_to_1MB"
+    },
+    {
+      "min_exclusive_bytes": 1048576,
+      "name": "gt_1MB"
+    }
+  ],
+  "limits": {
+    "campaign_bytes": 2147483648,
+    "max_flows": 10000,
+    "run_bytes": 104857600,
+    "run_timeout_seconds": 1800
+  },
+  "name": "guard-optimized-feature-ablation",
+  "purpose": "Attribute the frozen optimized GUARD result by disabling one endpoint mechanism at a time on a fresh seed cohort.",
+  "schema_version": 1,
+  "seeds": [
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
+  "selection_policy": "Freeze all arms and seeds before simulation. Run every cell without performance-based exclusion. The ablation does not authorize changing the held-out optimized configuration.",
+  "workloads": [
+    {
+      "cdf": "AliStorage2019",
+      "name": "AliStorage2019"
+    },
+    {
+      "cdf": "WebSearch",
+      "name": "WebSearch"
+    },
+    {
+      "cdf": "FbHdp2015",
+      "name": "FbHdp"
+    }
+  ]
+}

@@ -1,0 +1,211 @@
+{
+  "admitted_run_count": 129,
+  "all_runs_passed": false,
+  "arms": [
+    "guard",
+    "no_priority",
+    "no_srpt",
+    "no_reclaim",
+    "no_one_rtt",
+    "no_tail",
+    "no_remaining",
+    "no_ack_coalescing",
+    "no_fixed_window"
+  ],
+  "eligible_cohorts": [
+    {
+      "arm": "guard",
+      "workload": "AliStorage2019"
+    },
+    {
+      "arm": "no_priority",
+      "workload": "AliStorage2019"
+    },
+    {
+      "arm": "no_srpt",
+      "workload": "AliStorage2019"
+    },
+    {
+      "arm": "no_reclaim",
+      "workload": "AliStorage2019"
+    },
+    {
+      "arm": "no_one_rtt",
+      "workload": "AliStorage2019"
+    },
+    {
+      "arm": "no_tail",
+      "workload": "AliStorage2019"
+    },
+    {
+      "arm": "no_remaining",
+      "workload": "AliStorage2019"
+    },
+    {
+      "arm": "no_ack_coalescing",
+      "workload": "AliStorage2019"
+    },
+    {
+      "arm": "guard",
+      "workload": "WebSearch"
+    },
+    {
+      "arm": "no_priority",
+      "workload": "WebSearch"
+    },
+    {
+      "arm": "no_srpt",
+      "workload": "WebSearch"
+    },
+    {
+      "arm": "no_reclaim",
+      "workload": "WebSearch"
+    },
+    {
+      "arm": "no_one_rtt",
+      "workload": "WebSearch"
+    },
+    {
+      "arm": "no_tail",
+      "workload": "WebSearch"
+    },
+    {
+      "arm": "no_remaining",
+      "workload": "WebSearch"
+    },
+    {
+      "arm": "no_ack_coalescing",
+      "workload": "WebSearch"
+    },
+    {
+      "arm": "guard",
+      "workload": "FbHdp"
+    },
+    {
+      "arm": "no_priority",
+      "workload": "FbHdp"
+    },
+    {
+      "arm": "no_srpt",
+      "workload": "FbHdp"
+    },
+    {
+      "arm": "no_reclaim",
+      "workload": "FbHdp"
+    },
+    {
+      "arm": "no_one_rtt",
+      "workload": "FbHdp"
+    },
+    {
+      "arm": "no_tail",
+      "workload": "FbHdp"
+    },
+    {
+      "arm": "no_remaining",
+      "workload": "FbHdp"
+    },
+    {
+      "arm": "no_ack_coalescing",
+      "workload": "FbHdp"
+    }
+  ],
+  "preflight_sha256": "2482aed3b21064721cba5c0c112424768d29e47e0d565380e62f0ff84f7dce03",
+  "rejected_cohorts": [
+    {
+      "arm": "no_fixed_window",
+      "workload": "AliStorage2019"
+    },
+    {
+      "arm": "no_fixed_window",
+      "workload": "WebSearch"
+    },
+    {
+      "arm": "no_fixed_window",
+      "workload": "FbHdp"
+    }
+  ],
+  "rejected_run_count": 6,
+  "rejected_runs": [
+    {
+      "arm": "no_fixed_window",
+      "completed_flow_count": 9636,
+      "failures": [
+        "completed 9636 of 9637 flows; exclude this seed from latency comparisons",
+        "drop or recovery counter is nonzero"
+      ],
+      "flow_count": 9637,
+      "seed": 13,
+      "workload": "AliStorage2019"
+    },
+    {
+      "arm": "no_fixed_window",
+      "completed_flow_count": 9845,
+      "failures": [
+        "completed 9845 of 9847 flows; exclude this seed from latency comparisons",
+        "drop or recovery counter is nonzero"
+      ],
+      "flow_count": 9847,
+      "seed": 15,
+      "workload": "AliStorage2019"
+    },
+    {
+      "arm": "no_fixed_window",
+      "completed_flow_count": 230,
+      "failures": [
+        "drop or recovery counter is nonzero"
+      ],
+      "flow_count": 230,
+      "seed": 12,
+      "workload": "WebSearch"
+    },
+    {
+      "arm": "no_fixed_window",
+      "completed_flow_count": 206,
+      "failures": [
+        "drop or recovery counter is nonzero"
+      ],
+      "flow_count": 206,
+      "seed": 14,
+      "workload": "WebSearch"
+    },
+    {
+      "arm": "no_fixed_window",
+      "completed_flow_count": 218,
+      "failures": [
+        "drop or recovery counter is nonzero"
+      ],
+      "flow_count": 218,
+      "seed": 15,
+      "workload": "WebSearch"
+    },
+    {
+      "arm": "no_fixed_window",
+      "completed_flow_count": 3211,
+      "failures": [
+        "completed 3211 of 3212 flows; exclude this seed from latency comparisons",
+        "drop or recovery counter is nonzero"
+      ],
+      "flow_count": 3212,
+      "seed": 13,
+      "workload": "FbHdp"
+    }
+  ],
+  "run_count": 135,
+  "schema_version": 1,
+  "seeds": [
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
+  "simulator_sha": "2d805e3ebb3cfe7590fe30678ee0edd5b53b09b1",
+  "spec_sha256": "5e859a35987b11a3799627c3300b4357d66cfdb149d4698372a24c4dd2dae2de",
+  "status": "valid_with_rejected_cohorts",
+  "workloads": [
+    "AliStorage2019",
+    "WebSearch",
+    "FbHdp"
+  ]
+}
