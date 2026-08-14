@@ -80,6 +80,8 @@ TypeId RdmaEgressQueue::GetTypeId(void) {
 
 RdmaEgressQueue::RdmaEgressQueue() {
     m_rrlast = 0;
+    m_guardSrptLastIndex = -1;
+    m_guardSrptConsecutive = 0;
     m_qlast = 0;
     m_mtu = 1000;
     m_ackQ = CreateObject<DropTailQueue>();
@@ -190,6 +192,13 @@ int RdmaEgressQueue::GetNextQindex(bool paused[]) {
             }
         }
         if (best != -1024) {
+            Ptr<RdmaQueuePair> shortest = m_qpGrp->Get((uint32_t)best);
+            uint32_t quantum = std::max<uint32_t>(1, shortest->m_guard_srpt_quantum_packets);
+            if (best == m_guardSrptLastIndex && m_guardSrptConsecutive >= quantum &&
+                first_ready != -1024 && first_ready != best) {
+                best = first_ready;
+                Settings::guard_sender_srpt_forced_rr++;
+            }
             Ptr<RdmaQueuePair> qp = m_qpGrp->Get((uint32_t)best);
             if (MAP_KEY_EXISTS(current_pause_time, qp->m_flow_id)) {
                 Time duration = Simulator::Now() - current_pause_time[qp->m_flow_id];
@@ -201,6 +210,12 @@ int RdmaEgressQueue::GetNextQindex(bool paused[]) {
             }
             Settings::guard_sender_srpt_selections++;
             if (best != first_ready) Settings::guard_sender_srpt_non_rr_selections++;
+            if (best == m_guardSrptLastIndex) {
+                m_guardSrptConsecutive++;
+            } else {
+                m_guardSrptLastIndex = best;
+                m_guardSrptConsecutive = 1;
+            }
         }
         return best;
     }

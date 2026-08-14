@@ -132,6 +132,11 @@ TypeId RdmaHw::GetTypeId(void) {
                           "Select the shortest remaining ready GUARD flow at each sender NIC",
                           BooleanValue(true), MakeBooleanAccessor(&RdmaHw::m_guardSenderSrpt),
                           MakeBooleanChecker())
+            .AddAttribute("GuardSrptQuantumPackets",
+                          "Maximum consecutive SRPT packets before one round-robin service",
+                          UintegerValue(64),
+                          MakeUintegerAccessor(&RdmaHw::m_guardSrptQuantumPackets),
+                          MakeUintegerChecker<uint32_t>(1))
             .AddAttribute("GuardWorkConserving",
                           "Reclaim persistently unused receiver grant shares",
                           BooleanValue(true), MakeBooleanAccessor(&RdmaHw::m_guardWorkConserving),
@@ -354,6 +359,7 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
     qp->SetFlowId(flow_id);
     qp->SetTimeout(m_waitAckTimeout);
     qp->m_guard_sender_srpt = (m_cc_mode == CC_MODE_GUARD && m_guardSenderSrpt);
+    qp->m_guard_srpt_quantum_packets = m_guardSrptQuantumPackets;
 
     if (m_irn) {
         qp->irn.m_enabled = m_irn;

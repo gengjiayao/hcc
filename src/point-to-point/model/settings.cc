@@ -26,6 +26,7 @@ uint32_t Settings::dropped_pkt_sw_ingress = 0;
 uint32_t Settings::dropped_pkt_sw_egress = 0;
 uint64_t Settings::guard_sender_srpt_selections = 0;
 uint64_t Settings::guard_sender_srpt_non_rr_selections = 0;
+uint64_t Settings::guard_sender_srpt_forced_rr = 0;
 
 /* for load balancer */
 std::map<uint32_t, uint32_t> Settings::hostIp2SwitchId;

@@ -212,6 +212,7 @@ class RdmaHw : public Object {
     bool m_guardKeepLastHopInt;
     bool m_guardSizePriority;
     bool m_guardSenderSrpt;
+    uint32_t m_guardSrptQuantumPackets;
     bool m_guardWorkConserving;
     Time m_guardRebalanceInterval;
     double m_guardDemandThreshold;
