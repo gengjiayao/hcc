@@ -69,6 +69,38 @@ def make_background(hosts, count, flow_bytes, pg, start_s, duration_s, seed):
     return flows
 
 
+def make_directed_hybrid(hosts, flow_bytes, pg, start_s, duration_s, seed,
+                         jitter_us):
+    """Exercise one shared fabric uplink and one receiver downlink.
+
+    The first ToR contributes one cross-ToR flow to every host on the second
+    ToR, so those flows share the first ToR's uplink but have independent
+    receiver budgets.  The remaining hosts on the second ToR send locally to
+    its first host, adding a fan-in bottleneck without consuming that fabric
+    uplink.  This keeps the two control scopes explicit with only hosts-1
+    flows instead of relying on a large random background.
+    """
+    if hosts < 4 or hosts % 2:
+        raise ValueError("directed-hybrid requires an even host count >= 4")
+    hosts_per_tor = hosts // 2
+    destination = hosts_per_tor
+    trigger_s = start_s + duration_s * 0.35
+    rng = random.Random(seed)
+
+    def jittered_start():
+        return trigger_s + (rng.uniform(0, jitter_us * 1e-6) if jitter_us else 0.0)
+
+    flows = [
+        Flow(src, hosts_per_tor + src, pg, flow_bytes, jittered_start())
+        for src in range(hosts_per_tor)
+    ]
+    flows.extend(
+        Flow(src, destination, pg, flow_bytes, jittered_start())
+        for src in range(hosts_per_tor + 1, hosts)
+    )
+    return flows
+
+
 def make_ring_allreduce(hosts, tensor_bytes, pg, start_s, duration_s,
                         seed=None, jitter_us=0.0):
     # A ring executes N-1 reduce-scatter steps followed by N-1 all-gather
@@ -263,6 +295,10 @@ def generate(args):
         flows += make_background(
             args.hosts, args.background_flows, args.background_flow_bytes,
             args.priority_group, args.base_time, duration_s, args.seed)
+    elif args.workload == "directed-hybrid":
+        flows = make_directed_hybrid(
+            args.hosts, args.flow_bytes, args.priority_group,
+            args.base_time, duration_s, args.seed, args.incast_jitter_us)
     elif args.workload == "ring-allreduce":
         flows = make_ring_allreduce(
             args.hosts, args.tensor_bytes, args.priority_group,
@@ -364,8 +400,8 @@ def parse_args(argv=None):
         description="Generate deterministic bounded ns-3 reviewer workloads")
     parser.add_argument(
         "--workload", required=True,
-        choices=("incast", "hybrid", "ring-allreduce", "all-to-all", "oflm-churn",
-                 "receiver-share"))
+        choices=("incast", "hybrid", "directed-hybrid", "ring-allreduce",
+                 "all-to-all", "oflm-churn", "receiver-share"))
     parser.add_argument("--output", required=True, help="flow file to write")
     parser.add_argument("--manifest", help="manifest path (default: OUTPUT.manifest.json)")
     parser.add_argument("--force", action="store_true", help="replace existing outputs")

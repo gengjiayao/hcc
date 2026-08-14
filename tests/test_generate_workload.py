@@ -21,6 +21,7 @@ class GenerateWorkloadTest(unittest.TestCase):
         expected_counts = {
             "incast": 15,
             "hybrid": 527,
+            "directed-hybrid": 15,
             "ring-allreduce": 480,
             "all-to-all": 240,
         }
@@ -50,6 +51,31 @@ class GenerateWorkloadTest(unittest.TestCase):
                 generate_workload.main(common + ["--output", str(first)])
                 generate_workload.main(common + ["--output", str(second)])
             self.assertEqual(first.read_bytes(), second.read_bytes())
+
+    def test_directed_hybrid_separates_fabric_and_receiver_scopes(self):
+        common = [
+            "--workload", "directed-hybrid", "--output", "unused",
+            "--hosts", "16", "--duration-ms", "10",
+            "--flow-bytes", str(2 * 1024 * 1024),
+            "--incast-jitter-us", "0.5", "--priority-group", "4",
+        ]
+        first = generate_workload.generate(generate_workload.parse_args(
+            common + ["--seed", "1"]))
+        repeat = generate_workload.generate(generate_workload.parse_args(
+            common + ["--seed", "1"]))
+        second = generate_workload.generate(generate_workload.parse_args(
+            common + ["--seed", "2"]))
+        self.assertEqual(first, repeat)
+        self.assertNotEqual(first, second)
+        self.assertEqual(len(first), 15)
+        endpoints = {(flow.src, flow.dst) for flow in first}
+        self.assertTrue({(src, src + 8) for src in range(8)} <= endpoints)
+        self.assertTrue({(src, 8) for src in range(9, 16)} <= endpoints)
+        self.assertTrue(all(flow.pg == 4 for flow in first))
+        self.assertTrue(all(flow.size_bytes == 2 * 1024 * 1024 for flow in first))
+        self.assertLessEqual(
+            max(flow.start_s for flow in first) - min(flow.start_s for flow in first),
+            0.5e-6)
 
     def test_incast_seeded_jitter_changes_trace_but_remains_synchronized(self):
         first = generate_workload.parse_args([
