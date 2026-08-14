@@ -28,6 +28,7 @@ RECEIVER_CONCURRENCY_VALUES = (0, 1)
 ELEPHANT_THRESHOLD_BDPS = (4.0, 6.0, 8.0, 12.0)
 TAIL_BYPASS_BDPS = (1.0, 2.0, 4.0, 8.0)
 ADAPTIVE_QUEUE_BUDGET_BDPS = (0.25, 0.5, 1.0)
+ADAPTIVE_TARGET_MAX_BDPS = (4.0, 8.0, 12.0)
 
 
 def read_spec(path: Path) -> Mapping[str, object]:
@@ -210,11 +211,38 @@ def read_spec(path: Path) -> Mapping[str, object]:
         if (disabled != 1 or observed != set(ADAPTIVE_QUEUE_BUDGET_BDPS) or
                 len(arms) != 1 + len(ADAPTIVE_QUEUE_BUDGET_BDPS)):
             raise CampaignError("arms must cover disabled and each adaptive queue budget")
+    elif kind == "adaptive_target_scope":
+        if int(defaults.get("guard_receiver_concurrency", -1)) != 1:
+            raise CampaignError("adaptive scope search must retain one-elephant service")
+        if float(defaults.get("guard_concurrency_min_bdps", -1)) != 12.0:
+            raise CampaignError("adaptive scope search must retain the selected 12-BDP policy")
+        if float(defaults.get("guard_target_floor", -1)) != 0.95:
+            raise CampaignError("adaptive scope search must retain target floor 0.95")
+        if float(defaults.get("guard_queue_budget_bdps", -1)) != 0.5:
+            raise CampaignError("adaptive scope search must retain the 0.5-BDP queue budget")
+        observed = set()
+        disabled = 0
+        for name, raw in arms.items():
+            arm = dict(raw)
+            if arm.get("cc") != "guard":
+                raise CampaignError(f"{name} must select cc=guard")
+            enabled = int(arm.get("guard_adaptive_fabric_target", -1))
+            max_bdps = float(arm.get("guard_adaptive_target_max_bdps", -1))
+            if enabled == 0:
+                disabled += 1
+            elif enabled == 1 and max_bdps in ADAPTIVE_TARGET_MAX_BDPS:
+                observed.add(max_bdps)
+            else:
+                raise CampaignError(f"{name} is outside the frozen adaptive-scope grid")
+        if (disabled != 1 or observed != set(ADAPTIVE_TARGET_MAX_BDPS) or
+                len(arms) != 1 + len(ADAPTIVE_TARGET_MAX_BDPS)):
+            raise CampaignError("arms must cover disabled and each adaptive flow-size scope")
     else:
         raise CampaignError(
             "search_kind must be receiver_grid, srpt_quantum, tail_gate, "
             "lambda_high_load, receiver_concurrency, elephant_concurrency, "
-            "elephant_threshold, tail_bypass_threshold, or adaptive_fabric_target")
+            "elephant_threshold, tail_bypass_threshold, adaptive_fabric_target, "
+            "or adaptive_target_scope")
     selection = dict(spec.get("selection", {}))
     if selection.get("baseline_arm") not in arms:
         raise CampaignError("selection baseline is not a grid arm")
