@@ -47,7 +47,7 @@ RUN_COLUMNS = (
     "hpcc_full_computations", "hpcc_fast_computations",
     "reactive_binding_updates", "grant_binding_updates", "int_hops_before_strip",
     "tie_binding_updates", "reactive_binding_rate_changes", "grant_binding_rate_changes",
-    "tie_binding_rate_changes",
+    "tie_binding_rate_changes", "grant_event_rate_changes",
     "int_hops_after_strip", "int_records_stripped", "grant_bytes_sent",
     "registrations", "selected_registrations", "proactive_releases",
     "completion_releases", "max_active_flows", "recovery_nacks_generated",
@@ -87,7 +87,7 @@ GUARD_TOTAL_FIELDS = (
     "hpcc_full_computations", "hpcc_fast_computations",
     "hpcc_actual_rate_changes", "reactive_binding_updates", "grant_binding_updates",
     "tie_binding_updates", "reactive_binding_rate_changes", "grant_binding_rate_changes",
-    "tie_binding_rate_changes",
+    "tie_binding_rate_changes", "grant_event_rate_changes",
     "int_hops_before_strip", "int_hops_after_strip", "int_records_stripped",
     "grant_bytes_sent", "guard_rebalance_events", "guard_adaptive_grant_updates",
 )
@@ -126,7 +126,7 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
         for line in stream:
             parts = line.split()
             if parts and parts[0] == "total" and len(parts) in (
-                5, 12, 16, 18, 24, 27, 30, 31, 33
+                5, 12, 16, 18, 24, 27, 30, 31, 33, 34
             ):
                 values = tuple(map(int, parts[1:]))
                 if len(values) == 4:
@@ -142,10 +142,14 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
                         "irn_retransmit_bytes", "timeout_recoveries",
                     )
                     total = dict(zip(legacy_fields, values))
-                elif len(values) == 15:
+                elif len(values) == 33:
                     total = dict(zip(GUARD_TOTAL_FIELDS, values))
                 else:
-                    total = dict(zip(GUARD_TOTAL_FIELDS, values))
+                    legacy_fields = tuple(
+                        field for field in GUARD_TOTAL_FIELDS
+                        if field != "grant_event_rate_changes"
+                    )
+                    total = dict(zip(legacy_fields, values))
             elif parts[:2] == ["switch_drops", "ingress"] and len(parts) == 7:
                 switch_drops = {
                     "ingress": int(parts[2]), "egress": int(parts[4]), "total": int(parts[6])

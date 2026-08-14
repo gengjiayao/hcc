@@ -122,6 +122,20 @@ class SummaryTests(unittest.TestCase):
             self.assertEqual(stats["grant_bytes_sent"], 30)
             self.assertEqual(stats["guard_rebalance_events"], 31)
             self.assertEqual(stats["guard_adaptive_grant_updates"], 32)
+            self.assertEqual(stats["grant_event_rate_changes"], 0)
+
+    def test_guard_stats_parse_grant_event_rate_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            values = list(range(1, 34))
+            path.write_text(
+                "total " + " ".join(map(str, values)) + "\n",
+                encoding="utf-8",
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["grant_event_rate_changes"], 27)
+            self.assertEqual(stats["int_hops_before_strip"], 28)
+            self.assertEqual(stats["guard_adaptive_grant_updates"], 33)
 
     def test_guard_sender_scheduler_stats_are_bounded_counters(self):
         with tempfile.TemporaryDirectory() as directory:
