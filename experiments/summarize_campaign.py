@@ -137,6 +137,13 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
         "guard_remaining_exponent": 0.0, "guard_grant_refresh_bdps": 0.0,
         "guard_remaining_refresh_events": 0,
     }
+    guard_cap_aware = {
+        "guard_cap_aware_enabled": 0, "guard_cap_headroom": 0.0,
+        "guard_cap_reports_sent": 0, "guard_cap_report_bytes_sent": 0,
+        "guard_cap_reports_received": 0, "guard_fabric_bound_reports": 0,
+        "guard_cap_rebalance_events": 0, "guard_cap_grant_updates": 0,
+        "guard_cap_max_reclaimed_bps": 0,
+    }
     switch_drops = {"ingress": 0, "egress": 0, "total": 0}
     priorities: Dict[int, Dict[str, int]] = {}
     homa_priorities: Dict[int, Dict[str, int]] = {}
@@ -171,6 +178,18 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
             elif parts[:2] == ["switch_drops", "ingress"] and len(parts) == 7:
                 switch_drops = {
                     "ingress": int(parts[2]), "egress": int(parts[4]), "total": int(parts[6])
+                }
+            elif parts[:2] == ["guard_cap_aware_config", "enabled"] and len(parts) == 19:
+                guard_cap_aware = {
+                    "guard_cap_aware_enabled": int(parts[2]),
+                    "guard_cap_headroom": float(parts[4]),
+                    "guard_cap_reports_sent": int(parts[6]),
+                    "guard_cap_report_bytes_sent": int(parts[8]),
+                    "guard_cap_reports_received": int(parts[10]),
+                    "guard_fabric_bound_reports": int(parts[12]),
+                    "guard_cap_rebalance_events": int(parts[14]),
+                    "guard_cap_grant_updates": int(parts[16]),
+                    "guard_cap_max_reclaimed_bps": int(parts[18]),
                 }
             elif parts and parts[0] == "pfc_priority" and len(parts) == 9:
                 try:
@@ -239,6 +258,7 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
     result.update(guard_short)
     result.update(guard_tail)
     result.update(guard_receiver)
+    result.update(guard_cap_aware)
     result.update({f"switch_drops_{key}": value for key, value in switch_drops.items()})
     result["pfc_priority"] = priorities
     result["homa_priority"] = homa_priorities

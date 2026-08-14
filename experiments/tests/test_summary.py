@@ -124,6 +124,28 @@ class SummaryTests(unittest.TestCase):
             self.assertEqual(stats["guard_adaptive_grant_updates"], 32)
             self.assertEqual(stats["grant_event_rate_changes"], 0)
 
+    def test_cap_aware_guard_stats_preserve_reports_and_reclamation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            path.write_text(
+                "total 0 0 0 0\n"
+                "guard_cap_aware_config enabled 1 headroom 1.100000 "
+                "reports_sent 10 report_bytes_sent 940 reports_received 9 "
+                "fabric_bound_reports 7 rebalance_events 3 grant_updates 5 "
+                "max_reclaimed_bps 25000000000\n",
+                encoding="utf-8",
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["guard_cap_aware_enabled"], 1)
+            self.assertEqual(stats["guard_cap_headroom"], 1.1)
+            self.assertEqual(stats["guard_cap_reports_sent"], 10)
+            self.assertEqual(stats["guard_cap_report_bytes_sent"], 940)
+            self.assertEqual(stats["guard_cap_reports_received"], 9)
+            self.assertEqual(stats["guard_fabric_bound_reports"], 7)
+            self.assertEqual(stats["guard_cap_rebalance_events"], 3)
+            self.assertEqual(stats["guard_cap_grant_updates"], 5)
+            self.assertEqual(stats["guard_cap_max_reclaimed_bps"], 25000000000)
+
     def test_guard_stats_parse_grant_event_rate_changes(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "stats.txt"

@@ -2585,6 +2585,13 @@ int main(int argc, char *argv[]) {
     uint64_t total_int_records_stripped = 0;
     uint64_t total_guard_rebalance_events = 0;
     uint64_t total_guard_adaptive_grant_updates = 0;
+    uint64_t total_guard_cap_reports_sent = 0;
+    uint64_t total_guard_cap_report_bytes_sent = 0;
+    uint64_t total_guard_cap_reports_received = 0;
+    uint64_t total_guard_fabric_bound_reports_received = 0;
+    uint64_t total_guard_cap_rebalance_events = 0;
+    uint64_t total_guard_cap_grant_updates = 0;
+    uint64_t max_guard_cap_reclaimed_bps = 0;
     for (uint32_t i = 0; i < node_num; i++) {
         if (n.Get(i)->GetNodeType() != 0) continue;
         Ptr<RdmaDriver> driver = n.Get(i)->GetObject<RdmaDriver>();
@@ -2644,6 +2651,14 @@ int main(int argc, char *argv[]) {
         total_int_records_stripped += hw->m_guardIntRecordsStripped;
         total_guard_rebalance_events += hw->m_guardRebalanceEvents;
         total_guard_adaptive_grant_updates += hw->m_guardAdaptiveGrantUpdates;
+        total_guard_cap_reports_sent += hw->m_guardCapReportsSent;
+        total_guard_cap_report_bytes_sent += hw->m_guardCapReportBytesSent;
+        total_guard_cap_reports_received += hw->m_guardCapReportsReceived;
+        total_guard_fabric_bound_reports_received += hw->m_guardFabricBoundReportsReceived;
+        total_guard_cap_rebalance_events += hw->m_guardCapRebalanceEvents;
+        total_guard_cap_grant_updates += hw->m_guardCapGrantUpdates;
+        max_guard_cap_reclaimed_bps = std::max(
+            max_guard_cap_reclaimed_bps, hw->m_guardCapMaxReclaimedBps);
     }
     fprintf(guard_stats_output,
             "total %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu "
@@ -2670,6 +2685,15 @@ int main(int argc, char *argv[]) {
             "receiver_util_threshold %.6f\n",
             guard_work_conserving ? 1 : 0, guard_rebalance_interval_us,
             guard_demand_threshold, guard_receiver_util_threshold);
+    fprintf(guard_stats_output,
+            "guard_cap_aware_config enabled %u headroom %.6f reports_sent %lu "
+            "report_bytes_sent %lu reports_received %lu fabric_bound_reports %lu "
+            "rebalance_events %lu grant_updates %lu max_reclaimed_bps %lu\n",
+            guard_cap_aware_reclaim ? 1 : 0, guard_cap_headroom,
+            total_guard_cap_reports_sent, total_guard_cap_report_bytes_sent,
+            total_guard_cap_reports_received, total_guard_fabric_bound_reports_received,
+            total_guard_cap_rebalance_events, total_guard_cap_grant_updates,
+            max_guard_cap_reclaimed_bps);
     fprintf(guard_stats_output,
             "guard_sender_scheduler enabled %u quantum_packets %u selections %lu non_rr %lu "
             "forced_rr %lu\n",
