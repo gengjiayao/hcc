@@ -42,6 +42,8 @@ RdmaQueuePair::RdmaQueuePair(uint16_t pg, Ipv4Address _sip, Ipv4Address _dip, ui
     m_guard_sender_srpt = false;
     m_guard_one_rtt_bypass = false;
     m_guard_tail_bypass = false;
+    m_guard_tail_safe_samples = 0;
+    m_guard_tail_deferred = false;
     m_guard_srpt_quantum_packets = 64;
     m_guard_last_cap_report_time = Time(0);
     m_guard_last_cap_report_rate_bps = 0;

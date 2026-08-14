@@ -73,6 +73,8 @@ class RdmaQueuePair : public Object {
     bool m_guard_sender_srpt;  // GUARD sender selects the shortest ready flow
     bool m_guard_one_rtt_bypass;  // Ignore delayed fabric feedback for <=1-BDP flows
     bool m_guard_tail_bypass;  // Final BDP is paced only by the receiver cap
+    uint32_t m_guard_tail_safe_samples;
+    bool m_guard_tail_deferred;
     uint32_t m_guard_srpt_quantum_packets;
     Time m_guard_last_cap_report_time;
     uint64_t m_guard_last_cap_report_rate_bps;

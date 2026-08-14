@@ -216,6 +216,9 @@ class RdmaHw : public Object {
     bool m_guardOneRttBypass;
     bool m_guardTailBypass;
     double m_guardTailBypassBdps;
+    bool m_guardTailCongestionGate;
+    double m_guardTailSafeRatio;
+    uint32_t m_guardTailSafeSamples;
     uint32_t m_guardAckIntervalPackets;
     bool m_guardFixedWindow;
     bool m_guardRemainingAware;
@@ -274,6 +277,8 @@ class RdmaHw : public Object {
     uint64_t m_guardLongAcksSuppressed;
     uint64_t m_guardTailBypassFlows;
     uint64_t m_guardTailBypassFeedbacks;
+    uint64_t m_guardTailGateDeferrals;
+    uint64_t m_guardTailGateQualifiedFlows;
     uint32_t m_guardUnderutilizedSamples;
     uint64_t m_recoveryNacksGenerated;
     uint64_t m_recoveryNacksReceived;

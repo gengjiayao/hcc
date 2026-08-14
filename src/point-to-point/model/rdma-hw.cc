@@ -147,6 +147,19 @@ TypeId RdmaHw::GetTypeId(void) {
                           "Acknowledged BDPs remaining when GUARD enters tail bypass",
                           DoubleValue(8.0), MakeDoubleAccessor(&RdmaHw::m_guardTailBypassBdps),
                           MakeDoubleChecker<double>(1.0, 16.0))
+            .AddAttribute("GuardTailCongestionGate",
+                          "Require low shared-fabric congestion before tail bypass",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(&RdmaHw::m_guardTailCongestionGate),
+                          MakeBooleanChecker())
+            .AddAttribute("GuardTailSafeRatio",
+                          "Maximum HPCC utilization-to-target ratio for a safe sample",
+                          DoubleValue(0.9), MakeDoubleAccessor(&RdmaHw::m_guardTailSafeRatio),
+                          MakeDoubleChecker<double>(0.5, 1.0))
+            .AddAttribute("GuardTailSafeSamples",
+                          "Consecutive safe fabric samples required for tail bypass",
+                          UintegerValue(2), MakeUintegerAccessor(&RdmaHw::m_guardTailSafeSamples),
+                          MakeUintegerChecker<uint32_t>(1, 8))
             .AddAttribute("GuardAckIntervalPackets",
                           "Packets between useful cumulative ACKs for registered GUARD flows",
                           UintegerValue(8),
@@ -306,6 +319,8 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardLongAcksSuppressed = 0;
     m_guardTailBypassFlows = 0;
     m_guardTailBypassFeedbacks = 0;
+    m_guardTailGateDeferrals = 0;
+    m_guardTailGateQualifiedFlows = 0;
     m_guardUnderutilizedSamples = 0;
     m_guardLastRebalanceTime = Time(0);
     m_guardLifecycleTraceSink = NULL;
@@ -1398,11 +1413,20 @@ Ptr<Packet> RdmaHw::GetNxtPacket(Ptr<RdmaQueuePair> qp) {
         uint64_t acknowledged_remaining =
             qp->m_size > qp->snd_una ? qp->m_size - qp->snd_una : 0;
         uint64_t tail_bytes = (uint64_t)(m_guardTailBypassBdps * bdp_bytes);
+        bool gate_ready = !m_guardTailCongestionGate ||
+                          qp->m_guard_tail_safe_samples >= m_guardTailSafeSamples;
         if (bdp_bytes > 0 && qp->m_size > bdp_bytes &&
-            acknowledged_remaining > 0 && acknowledged_remaining <= tail_bytes) {
+            acknowledged_remaining > 0 && acknowledged_remaining <= tail_bytes &&
+            gate_ready) {
             qp->m_guard_tail_bypass = true;
             m_guardTailBypassFlows++;
+            if (m_guardTailCongestionGate) m_guardTailGateQualifiedFlows++;
             SyncHwRate(qp, qp->hp.m_curRate);
+        } else if (bdp_bytes > 0 && qp->m_size > bdp_bytes &&
+                   acknowledged_remaining > 0 && acknowledged_remaining <= tail_bytes &&
+                   !gate_ready && !qp->m_guard_tail_deferred) {
+            qp->m_guard_tail_deferred = true;
+            m_guardTailGateDeferrals++;
         }
     }
     uint32_t payload_size = qp->GetBytesLeft();
@@ -3055,6 +3079,12 @@ void RdmaHw::HandleAckHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch)
         m_guardOneRttBypassFeedbacks++;
         return;
     }
+    if (m_cc_mode == CC_MODE_GUARD && m_guardTailCongestionGate &&
+        ch.ack.ih.nhop == 0) {
+        // After receiver-hop removal, no remaining INT record means there is
+        // no shared-fabric hop whose queue the bypass could aggravate.
+        qp->m_guard_tail_safe_samples = m_guardTailSafeSamples;
+    }
     uint32_t ack_seq = ch.ack.seq;
     // update rate
     if (ack_seq > qp->hp.m_lastUpdateSeq) {  // if full RTT feedback is ready, do full update
@@ -3177,6 +3207,7 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
                 for (uint32_t i = 0; i < ih.nhop; i++) {
                     if (updated[i]) {
                         double c = qp->hp.hopState[i].u / m_targetUtil;
+                        max_c = std::max(max_c, c);
                         if (c >= 1 || qp->hp.hopState[i].incStage >= m_miThresh) {
                             new_rate_per_hop[i] = qp->hp.hopState[i].Rc / c + m_rai;
                             new_incStage_per_hop[i] = 0;
@@ -3208,6 +3239,15 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
             }
 
             if (updated_any) {
+                if (m_cc_mode == CC_MODE_GUARD && m_guardTailCongestionGate &&
+                    !fast_react) {
+                    if (max_c <= m_guardTailSafeRatio) {
+                        qp->m_guard_tail_safe_samples = std::min<uint32_t>(
+                            m_guardTailSafeSamples, qp->m_guard_tail_safe_samples + 1);
+                    } else {
+                        qp->m_guard_tail_safe_samples = 0;
+                    }
+                }
                 m_guardHpccRateUpdatesApplied++;
                 if (fast_react) {
                     m_guardHpccFastComputations++;
