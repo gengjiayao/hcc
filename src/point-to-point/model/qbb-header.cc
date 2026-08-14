@@ -47,6 +47,13 @@ namespace ns3 {
 	void qbbHeader::SetCnp(){
 		flags |= 1 << FLAG_CNP;
 	}
+	void qbbHeader::SetGuardFabricBound(bool fabric_bound){
+		if (fabric_bound) {
+			flags |= 1 << FLAG_GUARD_FABRIC_BOUND;
+		} else {
+			flags &= ~(1 << FLAG_GUARD_FABRIC_BOUND);
+		}
+	}
 	void qbbHeader::SetIntHeader(const IntHeader &_ih){
 		ih = _ih;
 	}
@@ -80,6 +87,9 @@ namespace ns3 {
 	}
 	uint8_t qbbHeader::GetCnp() const{
 		return (flags >> FLAG_CNP) & 1;
+	}
+	bool qbbHeader::GetGuardFabricBound() const{
+		return ((flags >> FLAG_GUARD_FABRIC_BOUND) & 1) != 0;
 	}
 	uint32_t qbbHeader::GetIrnNack() const{
 		return m_irn_nack;

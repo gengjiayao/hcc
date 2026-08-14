@@ -24,7 +24,8 @@ class qbbHeader : public Header
 public:
  
   enum {
-	  FLAG_CNP = 0
+	  FLAG_CNP = 0,
+	  FLAG_GUARD_FABRIC_BOUND = 1
   };
   qbbHeader (uint16_t pg);
   qbbHeader ();
@@ -40,6 +41,7 @@ public:
   void SetDport(uint32_t _dport);
   void SetTs(uint64_t ts);
   void SetCnp();
+  void SetGuardFabricBound(bool fabric_bound);
   void SetIntHeader(const IntHeader &_ih);
   void SetIrnNack(uint32_t seq);
   void SetIrnNackSize(size_t sz);
@@ -55,6 +57,7 @@ public:
   uint16_t GetDport() const;
   uint64_t GetTs() const;
   uint8_t GetCnp() const;
+  bool GetGuardFabricBound() const;
   uint32_t GetIrnNack() const;
   size_t GetIrnNackSize() const;
 
