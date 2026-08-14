@@ -23,6 +23,7 @@ ETA_VALUES = (0.0, 0.1, 0.2)
 RHO_VALUES = (0.5, 0.75, 1.0)
 QUANTUM_VALUES = (16, 32, 64, 128)
 TAIL_SAFE_RATIOS = (0.8, 0.9, 1.0)
+HIGH_LOAD_LAMBDAS = (1.8, 2.0, 2.2, 2.4)
 
 
 def read_spec(path: Path) -> Mapping[str, object]:
@@ -107,8 +108,21 @@ def read_spec(path: Path) -> Mapping[str, object]:
         expected = {(0, 0.9)} | {(1, ratio) for ratio in TAIL_SAFE_RATIOS}
         if observed != expected or len(arms) != len(expected):
             raise CampaignError("arms must cover the frozen tail-gate baseline and ratios")
+    elif kind == "lambda_high_load":
+        observed = set()
+        for name, raw in arms.items():
+            arm = dict(raw)
+            if arm.get("cc") != "guard":
+                raise CampaignError(f"{name} must select cc=guard")
+            value = float(arm.get("guard_lambda", -1))
+            if value not in HIGH_LOAD_LAMBDAS:
+                raise CampaignError(f"{name} has an unfrozen lambda")
+            observed.add(value)
+        if observed != set(HIGH_LOAD_LAMBDAS) or len(arms) != len(HIGH_LOAD_LAMBDAS):
+            raise CampaignError("arms must cover the frozen high-load lambda grid")
     else:
-        raise CampaignError("search_kind must be receiver_grid, srpt_quantum, or tail_gate")
+        raise CampaignError(
+            "search_kind must be receiver_grid, srpt_quantum, tail_gate, or lambda_high_load")
     selection = dict(spec.get("selection", {}))
     if selection.get("baseline_arm") not in arms:
         raise CampaignError("selection baseline is not a grid arm")
