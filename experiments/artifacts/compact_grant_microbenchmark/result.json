@@ -1,0 +1,26 @@
+{
+  "compact_grant_bytes": 240,
+  "compact_run_commit": "993b676",
+  "compact_serialized_bytes_per_grant": 60,
+  "completed_flows": 2,
+  "fct_rows_equal": true,
+  "flow_sha256": "f6d3e6ead4525cf5a2e81be0b5564ec4d37e57e28089c9574feb8bf6c78086a9",
+  "grant_count": 4,
+  "grant_trace_truncated": 0,
+  "legacy_commit": "bc44373",
+  "legacy_grant_bytes": 376,
+  "legacy_serialized_bytes_per_grant": 94,
+  "non_byte_guard_counters_equal": true,
+  "pfc_events": 0,
+  "receiver_arrival_advance_ns": [
+    3,
+    3,
+    9,
+    6
+  ],
+  "recovery_events": 0,
+  "semantic_grant_events_equal": true,
+  "serialized_byte_reduction_percent": 36.170212765957444,
+  "status": "passed",
+  "switch_drops": 0
+}

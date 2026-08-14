@@ -1,0 +1,99 @@
+node_id grants_sent grants_received hpcc_feedback_updates registrations selected_registrations proactive_releases completion_releases max_active_flows recovery_nacks_generated recovery_nacks_received irn_nacks_generated irn_nacks_received irn_retransmit_packets irn_retransmit_bytes timeout_recoveries hpcc_valid_feedback hpcc_rate_updates_applied hpcc_full_computations hpcc_fast_computations hpcc_actual_rate_changes reactive_binding_updates grant_binding_updates tie_binding_updates reactive_binding_rate_changes grant_binding_rate_changes tie_binding_rate_changes grant_event_rate_changes int_hops_before_strip int_hops_after_strip int_records_stripped grant_bytes_sent rebalance_events adaptive_grant_updates
+0 0 2 149 0 0 0 0 0 0 0 0 0 0 0 0 149 148 148 0 41 30 118 0 30 11 0 1 0 0 0 0 0 0
+1 0 2 163 0 0 0 0 0 0 0 0 0 0 0 0 163 162 162 0 148 146 14 2 146 1 1 1 0 0 0 0 0 0
+2 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+3 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+4 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+5 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+6 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+7 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+8 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+9 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+10 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+11 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+12 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+13 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+14 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+15 4 0 0 2 2 0 2 2 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 6300 4200 2100 240 0 0
+total 4 4 312 2 2 0 2 2 0 0 0 0 0 0 0 312 310 310 0 189 176 132 2 176 12 1 2 6300 4200 2100 240 0 0
+guard_adaptive_config enabled 0 interval_us 200 demand_threshold 0.750000 receiver_util_threshold 0.750000
+guard_cap_aware_config enabled 0 headroom 1.100000 min_share_fraction 0.250000 reports_sent 0 report_bytes_sent 0 reports_received 0 fabric_bound_reports 0 rebalance_events 0 grant_updates 0 max_reclaimed_bps 0
+guard_sender_scheduler enabled 0 quantum_packets 64 selections 0 non_rr 0 forced_rr 0
+guard_one_rtt_bypass enabled 1 flows 0 feedbacks_skipped 0 acks_suppressed 0 long_acks_suppressed 14678 ack_interval_packets 8 fixed_window 1
+guard_tail_bypass enabled 0 bdps 8.000000 congestion_gate 0 safe_ratio 0.900000 safe_samples 2 flows 0 feedbacks_skipped 0 deferrals 0 qualified_flows 0
+guard_adaptive_target enabled 0 floor 0.950000 queue_budget_bdps 0.500000 max_flow_bdps 0.000000 updates 0 min_target 0.950000000 max_queue_bdps 0.000000000
+guard_receiver_scheduler remaining_aware 0 min_share_fraction 0.000000 remaining_exponent 1.000000 concurrency 0 limited_allocations 0 max_deferred 0 concurrency_min_bdps 8.000000 refresh_bdps 1.000000 refresh_events 0
+switch_drops ingress 0 egress 0 total 0
+pfc_priority qindex pause_count resume_count matched_intervals cumulative_pause_ns max_pause_ns unmatched_pauses unmatched_resumes
+pfc_priority 0 0 0 0 0 0 0 0
+pfc_priority 1 0 0 0 0 0 0 0
+pfc_priority 2 0 0 0 0 0 0 0
+pfc_priority 3 0 0 0 0 0 0 0
+pfc_priority 4 0 0 0 0 0 0 0
+pfc_priority 5 0 0 0 0 0 0 0
+pfc_priority 6 0 0 0 0 0 0 0
+pfc_priority 7 0 0 0 0 0 0 0
+dcqcn node_id cnp_generated_ecn cnp_generated_ooo cnp_received alpha_updates alpha_cnp_updates rate_decrease_events actual_rate_decreases rate_increase_events actual_rate_increases
+dcqcn 0 0 0 0 0 0 0 0 0 0
+dcqcn 1 0 0 0 0 0 0 0 0 0
+dcqcn 2 0 0 0 0 0 0 0 0 0
+dcqcn 3 0 0 0 0 0 0 0 0 0
+dcqcn 4 0 0 0 0 0 0 0 0 0
+dcqcn 5 0 0 0 0 0 0 0 0 0
+dcqcn 6 0 0 0 0 0 0 0 0 0
+dcqcn 7 0 0 0 0 0 0 0 0 0
+dcqcn 8 0 0 0 0 0 0 0 0 0
+dcqcn 9 0 0 0 0 0 0 0 0 0
+dcqcn 10 0 0 0 0 0 0 0 0 0
+dcqcn 11 0 0 0 0 0 0 0 0 0
+dcqcn 12 0 0 0 0 0 0 0 0 0
+dcqcn 13 0 0 0 0 0 0 0 0 0
+dcqcn 14 0 0 0 0 0 0 0 0 0
+dcqcn 15 0 0 0 0 0 0 0 0 0
+dcqcn_total 0 0 0 0 0 0 0 0 0
+homa node_id data_packets data_bytes retransmit_packets grants_sent grants_received resends_sent resends_received completion_notices_sent completion_notices_received messages_tracked messages_completed max_pending_messages
+homa_config overcommit_degree 4 resend_timeout_us 1000 strict_priority 0 unscheduled_levels 3 scheduled_levels 4 cutoffs 26000 52000
+homa 0 0 0 0 0 0 0 0 0 0 0 0 0
+homa 1 0 0 0 0 0 0 0 0 0 0 0 0
+homa 2 0 0 0 0 0 0 0 0 0 0 0 0
+homa 3 0 0 0 0 0 0 0 0 0 0 0 0
+homa 4 0 0 0 0 0 0 0 0 0 0 0 0
+homa 5 0 0 0 0 0 0 0 0 0 0 0 0
+homa 6 0 0 0 0 0 0 0 0 0 0 0 0
+homa 7 0 0 0 0 0 0 0 0 0 0 0 0
+homa 8 0 0 0 0 0 0 0 0 0 0 0 0
+homa 9 0 0 0 0 0 0 0 0 0 0 0 0
+homa 10 0 0 0 0 0 0 0 0 0 0 0 0
+homa 11 0 0 0 0 0 0 0 0 0 0 0 0
+homa 12 0 0 0 0 0 0 0 0 0 0 0 0
+homa 13 0 0 0 0 0 0 0 0 0 0 0 0
+homa 14 0 0 0 0 0 0 0 0 0 0 0 0
+homa 15 0 0 0 0 0 0 0 0 0 0 0 0
+homa_total 0 0 0 0 0 0 0 0 0 0 0 0
+homa_tombstone node_id completed_ids duplicate_data completion_replays
+homa_tombstone 0 0 0 0
+homa_tombstone 1 0 0 0
+homa_tombstone 2 0 0 0
+homa_tombstone 3 0 0 0
+homa_tombstone 4 0 0 0
+homa_tombstone 5 0 0 0
+homa_tombstone 6 0 0 0
+homa_tombstone 7 0 0 0
+homa_tombstone 8 0 0 0
+homa_tombstone 9 0 0 0
+homa_tombstone 10 0 0 0
+homa_tombstone 11 0 0 0
+homa_tombstone 12 0 0 0
+homa_tombstone 13 0 0 0
+homa_tombstone 14 0 0 0
+homa_tombstone 15 0 0 0
+homa_tombstone_total 0 0 0
+homa_priority priority data_packets data_bytes
+homa_priority 0 0 0
+homa_priority 1 0 0
+homa_priority 2 0 0
+homa_priority 3 0 0
+homa_priority 4 0 0
+homa_priority 5 0 0
+homa_priority 6 0 0
+homa_priority 7 0 0

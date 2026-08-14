@@ -1,0 +1,49 @@
+{
+  "flow_file": "homogeneous-n2-s1.flow",
+  "parameters": {
+    "all_to_all_jitter_us": 0.0,
+    "background_flow_bytes": 65536,
+    "background_flows": 512,
+    "base_time_s": 2.002,
+    "duration_ms": 20.0,
+    "flow_bytes": 8388608,
+    "hosts": 16,
+    "incast_destination": 0,
+    "incast_fanin": null,
+    "incast_jitter_us": 0.0,
+    "incast_round_gap_us": 0.0,
+    "incast_rounds": 1,
+    "max_flows": 1000,
+    "oflm_bdp_bytes": 104000,
+    "oflm_churn_interval_us": 25.0,
+    "oflm_churn_jitter_us": 0.0,
+    "oflm_churn_rounds": 8,
+    "oflm_elephant_bytes": 16777216,
+    "oflm_elephant_flows": 8,
+    "priority_group": 4,
+    "receiver_share_background_bytes": 16777216,
+    "receiver_share_background_flows": 0,
+    "receiver_share_destination": 15,
+    "receiver_share_flows": 2,
+    "receiver_share_jitter_us": 1.0,
+    "ring_jitter_us": 0.0,
+    "ring_placement": "numeric",
+    "ring_span_ms": null,
+    "seed": 1,
+    "tensor_bytes": 4194304
+  },
+  "run_hint": {
+    "max_flows": 1000,
+    "simul_time_s": 0.02
+  },
+  "schema_version": 1,
+  "validation": {
+    "first_start_s": 2.004000134,
+    "flow_count": 2,
+    "last_start_s": 2.004000847,
+    "sha256": "f6d3e6ead4525cf5a2e81be0b5564ec4d37e57e28089c9574feb8bf6c78086a9",
+    "status": "passed",
+    "total_bytes": 16777216
+  },
+  "workload": "receiver-share"
+}
