@@ -42,8 +42,8 @@ ZERO_STATS = (
     "irn_retransmit_packets",
     "irn_retransmit_bytes",
     "timeout_recoveries",
-    "switch_ingress_drops",
-    "switch_egress_drops",
+    "switch_drops_ingress",
+    "switch_drops_egress",
 )
 
 
@@ -134,7 +134,7 @@ def analyze_one(seed: int, output: Path, flow: Path, manifest_path: Path,
 
     controller, footer = parse_controller(output / f"{output_id}_out_guard_controller.csv")
     stats = parse_guard_stats(output / f"{output_id}_out_guard_stats.txt")
-    total = stats["total"]
+    total = stats
     nonzero = {field: int(total.get(field, 0)) for field in ZERO_STATS if int(total.get(field, 0))}
     if nonzero:
         raise SummaryError(f"seed {seed} has loss/recovery activity: {nonzero}")
