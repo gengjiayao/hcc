@@ -261,7 +261,9 @@ class RdmaRxQueuePair : public Object {  // Rx side queue pair
     uint16_t m_guard_pg;
     bool m_guard_demand_limited;
     uint64_t m_guard_reported_rate_bps;
+    uint32_t m_guard_cap_report_samples;
     uint32_t m_guard_fabric_bound_reports;
+    uint32_t m_guard_unbound_reports;
     bool m_guard_report_fabric_bound;
     bool m_guard_cap_limited;
     Time m_guard_last_cap_report_time;

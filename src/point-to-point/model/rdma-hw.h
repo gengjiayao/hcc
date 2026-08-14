@@ -226,6 +226,7 @@ class RdmaHw : public Object {
     bool m_guardWorkConserving;
     bool m_guardCapAwareReclaim;
     double m_guardCapHeadroom;
+    double m_guardCapMinShareFraction;
     Time m_guardRebalanceInterval;
     double m_guardDemandThreshold;
     double m_guardReceiverUtilThreshold;

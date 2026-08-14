@@ -194,6 +194,11 @@ TypeId RdmaHw::GetTypeId(void) {
                           "Headroom above a reported shared-fabric cap",
                           DoubleValue(1.1), MakeDoubleAccessor(&RdmaHw::m_guardCapHeadroom),
                           MakeDoubleChecker<double>(1.0, 2.0))
+            .AddAttribute("GuardCapMinShareFraction",
+                          "Safety floor as a fraction of equal receiver share",
+                          DoubleValue(0.25),
+                          MakeDoubleAccessor(&RdmaHw::m_guardCapMinShareFraction),
+                          MakeDoubleChecker<double>(0.0, 1.0))
             .AddAttribute("GuardRebalanceInterval",
                           "Receiver demand-sampling interval for adaptive grants",
                           TimeValue(MicroSeconds(200)),
@@ -980,24 +985,53 @@ int RdmaHw::ReceiveGuardCapReport(Ptr<Packet> /*p*/, CustomHeader &ch) {
     bool fabric_bound =
         ((ch.ack.flags >> qbbHeader::FLAG_GUARD_FABRIC_BOUND) & 1) != 0;
     Time now = Simulator::Now();
-    Time freshness = rx_qp->m_base_rtt_sec > 0
-                         ? Seconds(4.0 * rx_qp->m_base_rtt_sec)
-                         : MicroSeconds(100);
-    bool consecutive = rx_qp->m_guard_report_fabric_bound &&
-                       !rx_qp->m_guard_last_cap_report_time.IsZero() &&
-                       now - rx_qp->m_guard_last_cap_report_time <= freshness;
+    Time freshness = MilliSeconds(1);
+    if (rx_qp->m_base_rtt_sec > 0) {
+        freshness = std::max(freshness, Seconds(32.0 * rx_qp->m_base_rtt_sec));
+    }
+    bool fresh_previous = !rx_qp->m_guard_last_cap_report_time.IsZero() &&
+                          now - rx_qp->m_guard_last_cap_report_time <= freshness;
+    rx_qp->m_guard_cap_report_samples = fresh_previous
+                                             ? rx_qp->m_guard_cap_report_samples + 1
+                                             : 1;
     bool below_grant = rx_qp->m_guard_grant_rate_bps > 0 &&
                        reported_rate_bps * 100 <
                            rx_qp->m_guard_grant_rate_bps * 95;
     if (fabric_bound && below_grant) {
+        if ((rx_qp->m_guard_cap_limited ||
+             (fresh_previous && rx_qp->m_guard_report_fabric_bound)) &&
+            rx_qp->m_guard_reported_rate_bps > 0) {
+            rx_qp->m_guard_reported_rate_bps = std::max(
+                rx_qp->m_guard_reported_rate_bps, reported_rate_bps);
+        } else {
+            rx_qp->m_guard_reported_rate_bps = reported_rate_bps;
+        }
         rx_qp->m_guard_fabric_bound_reports =
-            consecutive ? rx_qp->m_guard_fabric_bound_reports + 1 : 1;
+            fresh_previous && rx_qp->m_guard_report_fabric_bound
+                ? rx_qp->m_guard_fabric_bound_reports + 1
+                : 1;
+        rx_qp->m_guard_unbound_reports = 0;
+        if (rx_qp->m_guard_fabric_bound_reports >= 2) {
+            rx_qp->m_guard_cap_limited = true;
+        }
     } else {
         rx_qp->m_guard_fabric_bound_reports = 0;
+        rx_qp->m_guard_unbound_reports =
+            fresh_previous && !rx_qp->m_guard_report_fabric_bound
+                ? rx_qp->m_guard_unbound_reports + 1
+                : 1;
+        // Once a fabric cap has been confirmed, an unbound report means the
+        // reclaimed grant may now be the limiter.  Raise its demand estimate
+        // from the observed grant instead of immediately restoring C/N; the
+        // headroom factor then converges upward if fabric capacity returned.
+        if (rx_qp->m_guard_cap_limited) {
+            rx_qp->m_guard_reported_rate_bps = std::max(
+                rx_qp->m_guard_reported_rate_bps, reported_rate_bps);
+        } else {
+            rx_qp->m_guard_reported_rate_bps = reported_rate_bps;
+        }
     }
-    rx_qp->m_guard_reported_rate_bps = reported_rate_bps;
     rx_qp->m_guard_report_fabric_bound = fabric_bound;
-    rx_qp->m_guard_cap_limited = rx_qp->m_guard_fabric_bound_reports >= 2;
     rx_qp->m_guard_last_cap_report_time = now;
     m_guardCapReportsReceived++;
     if (fabric_bound) m_guardFabricBoundReportsReceived++;
@@ -1800,7 +1834,9 @@ void RdmaHw::RedistributeGuardRates(const char *set_change) {
     uint32_t nic_idx = GetNicIdxOfRxQp(sample);
     uint64_t line_rate_bps = m_nic[nic_idx].dev->GetDataRate().GetBitRate();
     std::unordered_map<RdmaRxQueuePair*, uint64_t> targets =
-        ComputeGuardBaseTargets(line_rate_bps);
+        m_guardCapAwareReclaim
+            ? ComputeGuardCapAwareTargets(line_rate_bps)
+            : ComputeGuardBaseTargets(line_rate_bps);
     for (auto *flow : m_rate_flow_ctl_set) {
         flow->m_guard_interval_bytes = 0;
         flow->m_guard_demand_samples = 0;
@@ -1866,17 +1902,23 @@ std::unordered_map<RdmaRxQueuePair*, uint64_t> RdmaHw::ComputeGuardCapAwareTarge
     size_t capped = 0;
     Time now = Simulator::Now();
     for (auto *flow : m_rate_flow_ctl_set) {
-        Time freshness = flow->m_base_rtt_sec > 0
-                             ? Seconds(4.0 * flow->m_base_rtt_sec)
-                             : MicroSeconds(100);
+        Time freshness = MilliSeconds(1);
+        if (flow->m_base_rtt_sec > 0) {
+            freshness = std::max(freshness, Seconds(32.0 * flow->m_base_rtt_sec));
+        }
         bool fresh = !flow->m_guard_last_cap_report_time.IsZero() &&
                      now - flow->m_guard_last_cap_report_time <= freshness;
+        if (!fresh || flow->m_guard_cap_report_samples < 2) return base;
         if (fresh && flow->m_guard_cap_limited &&
             flow->m_guard_reported_rate_bps > 0) {
             long double demand = m_guardCapHeadroom *
                                  (long double)flow->m_guard_reported_rate_bps;
+            uint64_t safety_floor = (uint64_t)(
+                m_guardCapMinShareFraction *
+                ((long double)line_rate_bps / m_rate_flow_ctl_set.size()));
             demands[flow] = std::max<uint64_t>(
-                1000000, std::min<uint64_t>(line_rate_bps, (uint64_t)demand));
+                std::max<uint64_t>(1000000, safety_floor),
+                std::min<uint64_t>(line_rate_bps, (uint64_t)demand));
             capped++;
         } else {
             demands[flow] = unlimited;
@@ -1887,16 +1929,23 @@ std::unordered_map<RdmaRxQueuePair*, uint64_t> RdmaHw::ComputeGuardCapAwareTarge
     // side is absent, restore the ordinary remaining-aware allocation.
     if (capped == 0 || capped == m_rate_flow_ctl_set.size()) return base;
 
+    // Reclamation and remaining-size priority must not reinforce each other:
+    // after one flow donates capacity, inverse-remaining weights would give
+    // the recipient still more share and can starve the donor.  Use equal
+    // weights within the demand-capped water fill; the ordinary scheduler is
+    // restored as soon as the mixed-cap condition disappears.
+    std::unordered_map<RdmaRxQueuePair*, uint64_t> weights;
+    for (auto *flow : m_rate_flow_ctl_set) weights[flow] = 1;
     std::unordered_set<RdmaRxQueuePair*> unassigned = m_rate_flow_ctl_set;
     uint64_t remaining = line_rate_bps;
     while (!unassigned.empty()) {
         long double weight_sum = 0.0;
-        for (auto *flow : unassigned) weight_sum += std::max<uint64_t>(1, base[flow]);
+        for (auto *flow : unassigned) weight_sum += weights[flow];
 
         std::vector<RdmaRxQueuePair*> newly_capped;
         for (auto *flow : unassigned) {
             uint64_t tentative = (uint64_t)(
-                (long double)remaining * std::max<uint64_t>(1, base[flow]) /
+                (long double)remaining * weights[flow] /
                 std::max<long double>(weight_sum, 1.0));
             if (demands[flow] != unlimited && demands[flow] < tentative) {
                 targets[flow] = demands[flow];
@@ -1906,7 +1955,7 @@ std::unordered_map<RdmaRxQueuePair*, uint64_t> RdmaHw::ComputeGuardCapAwareTarge
         if (newly_capped.empty()) {
             for (auto *flow : unassigned) {
                 targets[flow] = (uint64_t)(
-                    (long double)remaining * std::max<uint64_t>(1, base[flow]) /
+                    (long double)remaining * weights[flow] /
                     std::max<long double>(weight_sum, 1.0));
             }
             break;

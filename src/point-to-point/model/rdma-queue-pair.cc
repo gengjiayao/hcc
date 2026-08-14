@@ -213,7 +213,9 @@ RdmaRxQueuePair::RdmaRxQueuePair() {
     m_guard_pg = 0;
     m_guard_demand_limited = false;
     m_guard_reported_rate_bps = 0;
+    m_guard_cap_report_samples = 0;
     m_guard_fabric_bound_reports = 0;
+    m_guard_unbound_reports = 0;
     m_guard_report_fabric_bound = false;
     m_guard_cap_limited = false;
     m_guard_last_cap_report_time = Time(0);
