@@ -165,7 +165,7 @@ bool var_win = false, fast_react = true;
 bool multi_rate = true;
 bool sample_feedback = false;
 double u_target = 0.95;
-double guard_lambda = 1.0;
+double guard_lambda = 1.8;
 double guard_ewma_beta = 0.125;
 double guard_release_gamma = 1.0;
 bool guard_selective_registration = true;
@@ -174,11 +174,14 @@ bool guard_keep_last_hop_int = false;
 bool guard_size_priority = true;
 bool guard_sender_srpt = true;
 bool guard_one_rtt_bypass = true;
+bool guard_tail_bypass = true;
+double guard_tail_bypass_bdps = 8.0;
 uint32_t guard_ack_interval_packets = 8;
 bool guard_fixed_window = true;
 bool guard_remaining_aware = true;
-double guard_min_share_fraction = 0.25;
-double guard_remaining_exponent = 0.5;
+double guard_min_share_fraction = 0.0;
+double guard_remaining_exponent = 1.0;
+double guard_grant_refresh_bdps = 1.0;
 uint32_t guard_srpt_quantum_packets = 64;
 bool guard_work_conserving = true;
 uint64_t guard_rebalance_interval_us = 200;
@@ -1273,6 +1276,12 @@ int main(int argc, char *argv[]) {
             } else if (key.compare("GUARD_ONE_RTT_BYPASS") == 0) {
                 conf >> guard_one_rtt_bypass;
                 std::cerr << "GUARD_ONE_RTT_BYPASS\t" << guard_one_rtt_bypass << '\n';
+            } else if (key.compare("GUARD_TAIL_BYPASS") == 0) {
+                conf >> guard_tail_bypass;
+                std::cerr << "GUARD_TAIL_BYPASS\t" << guard_tail_bypass << '\n';
+            } else if (key.compare("GUARD_TAIL_BYPASS_BDPS") == 0) {
+                conf >> guard_tail_bypass_bdps;
+                std::cerr << "GUARD_TAIL_BYPASS_BDPS\t" << guard_tail_bypass_bdps << '\n';
             } else if (key.compare("GUARD_ACK_INTERVAL_PACKETS") == 0) {
                 conf >> guard_ack_interval_packets;
                 std::cerr << "GUARD_ACK_INTERVAL_PACKETS\t"
@@ -1291,6 +1300,10 @@ int main(int argc, char *argv[]) {
                 conf >> guard_remaining_exponent;
                 std::cerr << "GUARD_REMAINING_EXPONENT\t"
                           << guard_remaining_exponent << '\n';
+            } else if (key.compare("GUARD_GRANT_REFRESH_BDPS") == 0) {
+                conf >> guard_grant_refresh_bdps;
+                std::cerr << "GUARD_GRANT_REFRESH_BDPS\t"
+                          << guard_grant_refresh_bdps << '\n';
             } else if (key.compare("GUARD_SRPT_QUANTUM_PACKETS") == 0) {
                 conf >> guard_srpt_quantum_packets;
                 std::cerr << "GUARD_SRPT_QUANTUM_PACKETS\t"
@@ -1983,6 +1996,8 @@ int main(int argc, char *argv[]) {
             rdmaHw->SetAttribute("GuardSizePriority", BooleanValue(guard_size_priority));
             rdmaHw->SetAttribute("GuardSenderSrpt", BooleanValue(guard_sender_srpt));
             rdmaHw->SetAttribute("GuardOneRttBypass", BooleanValue(guard_one_rtt_bypass));
+            rdmaHw->SetAttribute("GuardTailBypass", BooleanValue(guard_tail_bypass));
+            rdmaHw->SetAttribute("GuardTailBypassBdps", DoubleValue(guard_tail_bypass_bdps));
             rdmaHw->SetAttribute("GuardAckIntervalPackets",
                                  UintegerValue(guard_ack_interval_packets));
             rdmaHw->SetAttribute("GuardFixedWindow", BooleanValue(guard_fixed_window));
@@ -1991,6 +2006,8 @@ int main(int argc, char *argv[]) {
                                  DoubleValue(guard_min_share_fraction));
             rdmaHw->SetAttribute("GuardRemainingExponent",
                                  DoubleValue(guard_remaining_exponent));
+            rdmaHw->SetAttribute("GuardGrantRefreshBdps",
+                                 DoubleValue(guard_grant_refresh_bdps));
             rdmaHw->SetAttribute("GuardSrptQuantumPackets",
                                  UintegerValue(guard_srpt_quantum_packets));
             rdmaHw->SetAttribute("GuardWorkConserving", BooleanValue(guard_work_conserving));
@@ -2648,6 +2665,9 @@ int main(int argc, char *argv[]) {
     uint64_t total_guard_one_rtt_bypass_feedbacks = 0;
     uint64_t total_guard_one_rtt_acks_suppressed = 0;
     uint64_t total_guard_long_acks_suppressed = 0;
+    uint64_t total_guard_tail_bypass_flows = 0;
+    uint64_t total_guard_tail_bypass_feedbacks = 0;
+    uint64_t total_guard_remaining_refresh_events = 0;
     for (uint32_t i = 0; i < node_num; i++) {
         if (n.Get(i)->GetNodeType() != 0) continue;
         Ptr<RdmaDriver> driver = n.Get(i)->GetObject<RdmaDriver>();
@@ -2655,6 +2675,10 @@ int main(int argc, char *argv[]) {
         total_guard_one_rtt_bypass_feedbacks += driver->m_rdma->m_guardOneRttBypassFeedbacks;
         total_guard_one_rtt_acks_suppressed += driver->m_rdma->m_guardOneRttAcksSuppressed;
         total_guard_long_acks_suppressed += driver->m_rdma->m_guardLongAcksSuppressed;
+        total_guard_tail_bypass_flows += driver->m_rdma->m_guardTailBypassFlows;
+        total_guard_tail_bypass_feedbacks += driver->m_rdma->m_guardTailBypassFeedbacks;
+        total_guard_remaining_refresh_events +=
+            driver->m_rdma->m_guardRemainingRefreshEvents;
     }
     fprintf(guard_stats_output,
             "guard_one_rtt_bypass enabled %u flows %lu feedbacks_skipped %lu "
@@ -2665,10 +2689,16 @@ int main(int argc, char *argv[]) {
             total_guard_long_acks_suppressed, guard_ack_interval_packets,
             guard_fixed_window ? 1 : 0);
     fprintf(guard_stats_output,
+            "guard_tail_bypass enabled %u bdps %.6f flows %lu feedbacks_skipped %lu\n",
+            guard_tail_bypass ? 1 : 0, guard_tail_bypass_bdps,
+            total_guard_tail_bypass_flows,
+            total_guard_tail_bypass_feedbacks);
+    fprintf(guard_stats_output,
             "guard_receiver_scheduler remaining_aware %u min_share_fraction %.6f "
-            "remaining_exponent %.6f\n",
+            "remaining_exponent %.6f refresh_bdps %.6f refresh_events %lu\n",
             guard_remaining_aware ? 1 : 0, guard_min_share_fraction,
-            guard_remaining_exponent);
+            guard_remaining_exponent, guard_grant_refresh_bdps,
+            total_guard_remaining_refresh_events);
     fprintf(guard_stats_output, "switch_drops ingress %u egress %u total %u\n",
             Settings::dropped_pkt_sw_ingress, Settings::dropped_pkt_sw_egress,
             Settings::dropped_pkt_sw_ingress + Settings::dropped_pkt_sw_egress);

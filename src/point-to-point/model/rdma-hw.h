@@ -213,11 +213,14 @@ class RdmaHw : public Object {
     bool m_guardSizePriority;
     bool m_guardSenderSrpt;
     bool m_guardOneRttBypass;
+    bool m_guardTailBypass;
+    double m_guardTailBypassBdps;
     uint32_t m_guardAckIntervalPackets;
     bool m_guardFixedWindow;
     bool m_guardRemainingAware;
     double m_guardMinShareFraction;
     double m_guardRemainingExponent;
+    double m_guardGrantRefreshBdps;
     uint32_t m_guardSrptQuantumPackets;
     bool m_guardWorkConserving;
     Time m_guardRebalanceInterval;
@@ -253,10 +256,13 @@ class RdmaHw : public Object {
     uint64_t m_guardMaxActiveFlows;
     uint64_t m_guardRebalanceEvents;
     uint64_t m_guardAdaptiveGrantUpdates;
+    uint64_t m_guardRemainingRefreshEvents;
     uint64_t m_guardOneRttBypassFlows;
     uint64_t m_guardOneRttBypassFeedbacks;
     uint64_t m_guardOneRttAcksSuppressed;
     uint64_t m_guardLongAcksSuppressed;
+    uint64_t m_guardTailBypassFlows;
+    uint64_t m_guardTailBypassFeedbacks;
     uint32_t m_guardUnderutilizedSamples;
     uint64_t m_recoveryNacksGenerated;
     uint64_t m_recoveryNacksReceived;

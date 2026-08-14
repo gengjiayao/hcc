@@ -72,6 +72,7 @@ class RdmaQueuePair : public Object {
     bool m_var_win;       // variable window size
     bool m_guard_sender_srpt;  // GUARD sender selects the shortest ready flow
     bool m_guard_one_rtt_bypass;  // Ignore delayed fabric feedback for <=1-BDP flows
+    bool m_guard_tail_bypass;  // Final BDP is paced only by the receiver cap
     uint32_t m_guard_srpt_quantum_packets;
     Time m_nextAvail;     //< Soonest time of next send
     uint32_t wp;          // current window of packets
@@ -252,6 +253,7 @@ class RdmaRxQueuePair : public Object {  // Rx side queue pair
     uint32_t m_guard_demand_samples;
     uint32_t m_guard_below_threshold_samples;
     uint32_t m_guard_last_ack_seq;
+    uint64_t m_guard_last_schedule_seq;
     uint64_t m_guard_flow_size;
     uint16_t m_guard_pg;
     bool m_guard_demand_limited;

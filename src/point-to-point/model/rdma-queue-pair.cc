@@ -41,6 +41,7 @@ RdmaQueuePair::RdmaQueuePair(uint16_t pg, Ipv4Address _sip, Ipv4Address _dip, ui
     m_var_win = false;
     m_guard_sender_srpt = false;
     m_guard_one_rtt_bypass = false;
+    m_guard_tail_bypass = false;
     m_guard_srpt_quantum_packets = 64;
     m_rate = 0;
     m_nextAvail = Time(0);
@@ -204,6 +205,7 @@ RdmaRxQueuePair::RdmaRxQueuePair() {
     m_guard_demand_samples = 0;
     m_guard_below_threshold_samples = 0;
     m_guard_last_ack_seq = 0;
+    m_guard_last_schedule_seq = 0;
     m_guard_flow_size = 0;
     m_guard_pg = 0;
     m_guard_demand_limited = false;

@@ -96,11 +96,14 @@ GUARD_KEEP_LAST_HOP_INT {guard_keep_last_hop_int}
 GUARD_SIZE_PRIORITY {guard_size_priority}
 GUARD_SENDER_SRPT {guard_sender_srpt}
 GUARD_ONE_RTT_BYPASS {guard_one_rtt_bypass}
+GUARD_TAIL_BYPASS {guard_tail_bypass}
+GUARD_TAIL_BYPASS_BDPS {guard_tail_bypass_bdps}
 GUARD_ACK_INTERVAL_PACKETS {guard_ack_interval_packets}
 GUARD_FIXED_WINDOW {guard_fixed_window}
 GUARD_REMAINING_AWARE {guard_remaining_aware}
 GUARD_MIN_SHARE_FRACTION {guard_min_share_fraction}
 GUARD_REMAINING_EXPONENT {guard_remaining_exponent}
+GUARD_GRANT_REFRESH_BDPS {guard_grant_refresh_bdps}
 GUARD_SRPT_QUANTUM_PACKETS {guard_srpt_quantum_packets}
 GUARD_WORK_CONSERVING {guard_work_conserving}
 GUARD_REBALANCE_INTERVAL_US {guard_rebalance_interval_us}
@@ -370,8 +373,8 @@ def main():
                         help="GUARD EWMA historical-sample weight in [0,1] (default: 0.125)")
     parser.add_argument('--guard_gamma', type=float, default=1.0,
                         help="GUARD proactive-release threshold multiplier >= 0 (default: 1.0)")
-    parser.add_argument('--guard_lambda', type=float, default=1.0,
-                        help="GUARD HPCC-target multiplier >= 1 (default: 1.0)")
+    parser.add_argument('--guard_lambda', type=float, default=1.8,
+                        help="GUARD HPCC-target multiplier >= 1 (default: 1.8)")
     parser.add_argument('--guard_oflm', type=int, choices=(0, 1), default=None,
                         help="legacy alias; an explicit 0 disables both OFLM components")
     parser.add_argument('--guard_selective_registration', type=int, choices=(0, 1), default=1,
@@ -386,16 +389,22 @@ def main():
                         help="select shortest remaining ready GUARD flow at sender (default: 1)")
     parser.add_argument('--guard_one_rtt_bypass', type=int, choices=(0, 1), default=1,
                         help="keep <=1-BDP GUARD flows at line rate (default: 1)")
+    parser.add_argument('--guard_tail_bypass', type=int, choices=(0, 1), default=1,
+                        help="pace the final acknowledged BDP only by the receiver cap (default: 1)")
+    parser.add_argument('--guard_tail_bypass_bdps', type=float, default=8.0,
+                        help="acknowledged BDPs remaining at tail bypass, in [1,16] (default: 8)")
     parser.add_argument('--guard_ack_interval_packets', type=int, default=8,
                         help="cumulative ACK interval for registered GUARD flows (default: 8)")
     parser.add_argument('--guard_fixed_window', type=int, choices=(0, 1), default=1,
                         help="use a fixed BDP safety window under GUARD rate pacing (default: 1)")
     parser.add_argument('--guard_remaining_aware', type=int, choices=(0, 1), default=1,
                         help="weight receiver grants by remaining flow size (default: 1)")
-    parser.add_argument('--guard_min_share_fraction', type=float, default=0.25,
-                        help="guaranteed fraction of equal receiver share in [0,1] (default: 0.25)")
-    parser.add_argument('--guard_remaining_exponent', type=float, default=0.5,
-                        help="inverse-remaining-size exponent in [0,2] (default: 0.5)")
+    parser.add_argument('--guard_min_share_fraction', type=float, default=0.0,
+                        help="guaranteed fraction of equal receiver share in [0,1] (default: 0)")
+    parser.add_argument('--guard_remaining_exponent', type=float, default=1.0,
+                        help="inverse-remaining-size exponent in [0,2] (default: 1)")
+    parser.add_argument('--guard_grant_refresh_bdps', type=float, default=1.0,
+                        help="receiver progress between grant refreshes in BDPs; 0 disables (default: 1)")
     parser.add_argument('--guard_srpt_quantum_packets', type=int, default=64,
                         help="consecutive SRPT packet bound before RR service (default: 64)")
     parser.add_argument('--guard_work_conserving', type=int, choices=(0, 1), default=1,
@@ -486,10 +495,14 @@ def main():
         raise Exception("CONFIG ERROR: --guard_srpt_quantum_packets must be positive.")
     if args.guard_ack_interval_packets <= 0:
         raise Exception("CONFIG ERROR: --guard_ack_interval_packets must be positive.")
+    if not 1.0 <= args.guard_tail_bypass_bdps <= 16.0:
+        raise Exception("CONFIG ERROR: --guard_tail_bypass_bdps must be in [1, 16].")
     if not 0.0 <= args.guard_min_share_fraction <= 1.0:
         raise Exception("CONFIG ERROR: --guard_min_share_fraction must be in [0, 1].")
     if not 0.0 <= args.guard_remaining_exponent <= 2.0:
         raise Exception("CONFIG ERROR: --guard_remaining_exponent must be in [0, 2].")
+    if not 0.0 <= args.guard_grant_refresh_bdps <= 16.0:
+        raise Exception("CONFIG ERROR: --guard_grant_refresh_bdps must be in [0, 16].")
     if not 0.0 < args.guard_demand_threshold < 1.0:
         raise Exception("CONFIG ERROR: --guard_demand_threshold must be in (0, 1).")
     if not 0.0 < args.guard_receiver_util_threshold < 1.0:
@@ -853,11 +866,14 @@ def main():
                                         guard_size_priority=args.guard_size_priority,
                                         guard_sender_srpt=args.guard_sender_srpt,
                                         guard_one_rtt_bypass=args.guard_one_rtt_bypass,
+                                        guard_tail_bypass=args.guard_tail_bypass,
+                                        guard_tail_bypass_bdps=args.guard_tail_bypass_bdps,
                                         guard_ack_interval_packets=args.guard_ack_interval_packets,
                                         guard_fixed_window=args.guard_fixed_window,
                                         guard_remaining_aware=args.guard_remaining_aware,
                                         guard_min_share_fraction=args.guard_min_share_fraction,
                                         guard_remaining_exponent=args.guard_remaining_exponent,
+                                        guard_grant_refresh_bdps=args.guard_grant_refresh_bdps,
                                         guard_srpt_quantum_packets=args.guard_srpt_quantum_packets,
                                         guard_work_conserving=args.guard_work_conserving,
                                         guard_rebalance_interval_us=args.guard_rebalance_interval_us,

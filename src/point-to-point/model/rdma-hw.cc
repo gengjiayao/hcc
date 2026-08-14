@@ -139,6 +139,14 @@ TypeId RdmaHw::GetTypeId(void) {
                           BooleanValue(true),
                           MakeBooleanAccessor(&RdmaHw::m_guardOneRttBypass),
                           MakeBooleanChecker())
+            .AddAttribute("GuardTailBypass",
+                          "Pace a flow's final acknowledged BDP only by its receiver cap",
+                          BooleanValue(true), MakeBooleanAccessor(&RdmaHw::m_guardTailBypass),
+                          MakeBooleanChecker())
+            .AddAttribute("GuardTailBypassBdps",
+                          "Acknowledged BDPs remaining when GUARD enters tail bypass",
+                          DoubleValue(8.0), MakeDoubleAccessor(&RdmaHw::m_guardTailBypassBdps),
+                          MakeDoubleChecker<double>(1.0, 16.0))
             .AddAttribute("GuardAckIntervalPackets",
                           "Packets between useful cumulative ACKs for registered GUARD flows",
                           UintegerValue(8),
@@ -154,14 +162,20 @@ TypeId RdmaHw::GetTypeId(void) {
                           MakeBooleanChecker())
             .AddAttribute("GuardMinShareFraction",
                           "Fraction of equal share guaranteed before remaining-size weighting",
-                          DoubleValue(0.25),
+                          DoubleValue(0.0),
                           MakeDoubleAccessor(&RdmaHw::m_guardMinShareFraction),
                           MakeDoubleChecker<double>(0.0, 1.0))
             .AddAttribute("GuardRemainingExponent",
                           "Exponent of inverse remaining bytes in GUARD receiver weighting",
-                          DoubleValue(0.5),
+                          DoubleValue(1.0),
                           MakeDoubleAccessor(&RdmaHw::m_guardRemainingExponent),
                           MakeDoubleChecker<double>(0.0, 2.0))
+            .AddAttribute("GuardGrantRefreshBdps",
+                          "Receiver progress between remaining-aware grant refreshes in BDPs; "
+                          "zero disables progress refresh",
+                          DoubleValue(1.0),
+                          MakeDoubleAccessor(&RdmaHw::m_guardGrantRefreshBdps),
+                          MakeDoubleChecker<double>(0.0, 16.0))
             .AddAttribute("GuardSrptQuantumPackets",
                           "Maximum consecutive SRPT packets before one round-robin service",
                           UintegerValue(64),
@@ -264,10 +278,13 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardMaxActiveFlows = 0;
     m_guardRebalanceEvents = 0;
     m_guardAdaptiveGrantUpdates = 0;
+    m_guardRemainingRefreshEvents = 0;
     m_guardOneRttBypassFlows = 0;
     m_guardOneRttBypassFeedbacks = 0;
     m_guardOneRttAcksSuppressed = 0;
     m_guardLongAcksSuppressed = 0;
+    m_guardTailBypassFlows = 0;
+    m_guardTailBypassFeedbacks = 0;
     m_guardUnderutilizedSamples = 0;
     m_guardLastRebalanceTime = Time(0);
     m_guardLifecycleTraceSink = NULL;
@@ -397,6 +414,7 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
     qp->SetFlowId(flow_id);
     qp->SetTimeout(m_waitAckTimeout);
     qp->m_guard_sender_srpt = (m_cc_mode == CC_MODE_GUARD && m_guardSenderSrpt);
+    qp->m_guard_tail_bypass = false;
     qp->m_guard_srpt_quantum_packets = m_guardSrptQuantumPackets;
 
     if (m_irn) {
@@ -425,10 +443,13 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
         DataRate line_rate = m_nic[nic_idx].dev->GetDataRate();
         uint64_t bdp_bytes = baseRtt * line_rate.GetBitRate() / 8000000000lu;
         if (bdp_bytes == 0) bdp_bytes = 1;
-        if (size < bdp_bytes / 4)      qp_pg = 1;
-        else if (size < bdp_bytes / 2) qp_pg = 2;
-        else if (size < bdp_bytes)     qp_pg = 3;
-        else                           qp_pg = 4;
+        if (size < bdp_bytes / 4)           qp_pg = 1;
+        else if (size < bdp_bytes / 2)      qp_pg = 2;
+        else if (size < bdp_bytes)          qp_pg = 3;
+        else if (size < 2 * bdp_bytes)      qp_pg = 4;
+        else if (size < 4 * bdp_bytes)      qp_pg = 5;
+        else if (size < 8 * bdp_bytes)      qp_pg = 6;
+        else                                qp_pg = 7;
         qp->m_pg = qp_pg;
     }
 
@@ -733,6 +754,7 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
         }
 
         rxQp->m_guard_pg = ch.udp.pg;
+        uint64_t guard_bdp = 104000;
         FlowStatTag fst;
         if (p->PeekPacketTag(fst)) {
             uint8_t flow_tag = fst.GetType();
@@ -742,14 +764,14 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
             // instead of the hardcoded 104000 (which assumed leaf_spine 100G/
             // 8.32µs RTT). On other topologies (different RTT or rate) the
             // hardcoded value would mis-classify short vs. long flows.
-            uint64_t bdp = 104000;  // fallback if tag has no baseRtt
             if (fst.HasBaseRtt()) {
                 uint32_t nic_idx = GetNicIdxOfRxQp(rxQp);
                 DataRate rate = m_nic[nic_idx].dev->GetDataRate();
-                bdp = (uint64_t)(fst.GetBaseRttSeconds() * rate.GetBitRate() / 8.0);
-                if (bdp == 0) bdp = 104000;  // safety
+                guard_bdp =
+                    (uint64_t)(fst.GetBaseRttSeconds() * rate.GetBitRate() / 8.0);
+                if (guard_bdp == 0) guard_bdp = 104000;  // safety
             }
-            if (flow_start && (!m_guardSelectiveRegistration || flow_size > bdp)) {
+            if (flow_start && (!m_guardSelectiveRegistration || flow_size > guard_bdp)) {
                 HandleRccRequest(rxQp, p, ch);
             }
             if (rxQp->m_base_rtt_sec == 0 && fst.HasBaseRtt()) {
@@ -798,6 +820,17 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
                     m_guardProactiveReleases++;
                 }
                 rxQp->m_proactive_released = true;
+            }
+        }
+        if (v_remain > 0 && m_guardRemainingAware && m_guardGrantRefreshBdps > 0 &&
+            m_rate_flow_ctl_set.find(PeekPointer(rxQp)) != m_rate_flow_ctl_set.end()) {
+            uint64_t refresh_bytes =
+                std::max<uint64_t>(m_mtu,
+                                   (uint64_t)(m_guardGrantRefreshBdps * guard_bdp));
+            if (currentSeq >= rxQp->m_guard_last_schedule_seq + refresh_bytes) {
+                rxQp->m_guard_last_schedule_seq = currentSeq;
+                m_guardRemainingRefreshEvents++;
+                RedistributeGuardRates("progress");
             }
         }
     }
@@ -905,9 +938,11 @@ int RdmaHw::ReceiveRate(Ptr<Packet> p, CustomHeader &ch) {
     TraceGuardGrantReceive(qp, p, curRate.GetBitRate());
     DataRate old_rate = qp->m_rate;
     SyncHwRate(qp, qp->hp.m_curRate);
-    const char *binding = qp->hp.m_curRate < qp->hp.m_grantRate
-                              ? "reactive"
-                              : qp->hp.m_grantRate < qp->hp.m_curRate ? "grant" : "tie";
+    const char *binding = qp->m_guard_tail_bypass
+                              ? "grant"
+                              : qp->hp.m_curRate < qp->hp.m_grantRate
+                                    ? "reactive"
+                                    : qp->hp.m_grantRate < qp->hp.m_curRate ? "grant" : "tie";
     bool changed = qp->m_rate != old_rate;
     if (changed) m_guardGrantEventRateChanges++;
     TraceGuardControllerEvent(qp, "grant", qp->hp.m_curRate, binding,
@@ -1035,7 +1070,9 @@ int RdmaHw::ReceiveAck(Ptr<Packet> p, CustomHeader &ch) {
         }
     }
 
-    if (m_cc_mode == 3 || m_cc_mode == 11) {
+    if (m_cc_mode == 11 && qp->m_guard_tail_bypass) {
+        m_guardTailBypassFeedbacks++;
+    } else if (m_cc_mode == 3 || m_cc_mode == 11) {
         HandleAckHp(qp, p, ch);
     } else if (m_cc_mode == 7) {
         HandleAckTimely(qp, p, ch);
@@ -1215,9 +1252,11 @@ void RdmaHw::QpComplete(Ptr<RdmaQueuePair> qp) {
     }
     if (qp->m_retransmit.IsRunning()) qp->m_retransmit.Cancel();
 
-    const char *binding = qp->hp.m_curRate < qp->hp.m_grantRate
-                              ? "reactive"
-                              : qp->hp.m_grantRate < qp->hp.m_curRate ? "grant" : "tie";
+    const char *binding = qp->m_guard_tail_bypass
+                              ? "grant"
+                              : qp->hp.m_curRate < qp->hp.m_grantRate
+                                    ? "reactive"
+                                    : qp->hp.m_grantRate < qp->hp.m_curRate ? "grant" : "tie";
     TraceGuardControllerEvent(qp, "complete", qp->hp.m_curRate, binding, false, false,
                               0, qp->snd_nxt, -1.0, -1.0);
 
@@ -1256,6 +1295,24 @@ void RdmaHw::RedistributeQp() {
 }
 
 Ptr<Packet> RdmaHw::GetNxtPacket(Ptr<RdmaQueuePair> qp) {
+    // Once ACK progress proves that at most one BDP remains, another delayed
+    // fabric-rate sample cannot prevent that bounded tail from entering the
+    // network.  Keep the receiver cap, which still protects the destination,
+    // but stop letting a stale shared-fabric estimate stretch completion.
+    if (m_cc_mode == CC_MODE_GUARD && m_guardTailBypass &&
+        !qp->m_guard_tail_bypass) {
+        uint64_t bdp_bytes =
+            qp->m_baseRtt * qp->m_max_rate.GetBitRate() / 8000000000lu;
+        uint64_t acknowledged_remaining =
+            qp->m_size > qp->snd_una ? qp->m_size - qp->snd_una : 0;
+        uint64_t tail_bytes = (uint64_t)(m_guardTailBypassBdps * bdp_bytes);
+        if (bdp_bytes > 0 && qp->m_size > bdp_bytes &&
+            acknowledged_remaining > 0 && acknowledged_remaining <= tail_bytes) {
+            qp->m_guard_tail_bypass = true;
+            m_guardTailBypassFlows++;
+            SyncHwRate(qp, qp->hp.m_curRate);
+        }
+    }
     uint32_t payload_size = qp->GetBytesLeft();
     if (m_mtu < payload_size) {  // possibly last packet
         payload_size = m_mtu;
@@ -1570,7 +1627,9 @@ void RdmaHw::HyperIncreaseMlx(Ptr<RdmaQueuePair> q) {
 void RdmaHw::SyncHwRate(Ptr<RdmaQueuePair> qp, DataRate target_cc_rate) {
     DataRate final_rate = target_cc_rate;
 
-    if (qp->hp.m_grantRate < final_rate) {
+    if (m_cc_mode == CC_MODE_GUARD && qp->m_guard_tail_bypass) {
+        final_rate = qp->hp.m_grantRate;
+    } else if (qp->hp.m_grantRate < final_rate) {
         final_rate = qp->hp.m_grantRate;
     }
 
@@ -1588,6 +1647,7 @@ void RdmaHw::HandleRccRequest(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomH
     }
     uint64_t active_before = m_rate_flow_ctl_set.size();
     m_rate_flow_ctl_set.emplace(PeekPointer(rx_qp));
+    rx_qp->m_guard_last_schedule_seq = rx_qp->ReceiverNextExpectedSeq;
     m_guardRegistrations++;
     if (m_guardSelectiveRegistration) m_guardSelectedRegistrations++;
     m_guardMaxActiveFlows = std::max<uint64_t>(m_guardMaxActiveFlows,
