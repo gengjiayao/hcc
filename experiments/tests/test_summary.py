@@ -119,6 +119,21 @@ class SummaryTests(unittest.TestCase):
             self.assertEqual(stats["guard_rebalance_events"], 31)
             self.assertEqual(stats["guard_adaptive_grant_updates"], 32)
 
+    def test_guard_sender_scheduler_stats_are_bounded_counters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            path.write_text(
+                "total 0 0 0 0\n"
+                "guard_sender_scheduler enabled 1 quantum_packets 64 "
+                "selections 1000 non_rr 25 forced_rr 3\n",
+                encoding="utf-8",
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["guard_srpt_quantum_packets"], 64)
+            self.assertEqual(stats["guard_sender_srpt_selections"], 1000)
+            self.assertEqual(stats["guard_sender_srpt_non_rr"], 25)
+            self.assertEqual(stats["guard_sender_srpt_forced_rr"], 3)
+
     def test_queue_summary_is_preaggregated_and_includes_zero_samples(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "queue.txt"

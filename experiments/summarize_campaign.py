@@ -109,6 +109,11 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
         raise SummaryError(f"missing GUARD stats: {path}")
     total = None
     homa_total = None
+    guard_scheduler = {
+        "guard_sender_srpt_enabled": 0, "guard_srpt_quantum_packets": 0,
+        "guard_sender_srpt_selections": 0, "guard_sender_srpt_non_rr": 0,
+        "guard_sender_srpt_forced_rr": 0,
+    }
     switch_drops = {"ingress": 0, "egress": 0, "total": 0}
     priorities: Dict[int, Dict[str, int]] = {}
     homa_priorities: Dict[int, Dict[str, int]] = {}
@@ -149,6 +154,14 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
                     continue
             elif parts and parts[0] == "homa_total" and len(parts) == 13:
                 homa_total = dict(zip(HOMA_TOTAL_FIELDS, map(int, parts[1:])))
+            elif parts[:2] == ["guard_sender_scheduler", "enabled"] and len(parts) == 11:
+                guard_scheduler = {
+                    "guard_sender_srpt_enabled": int(parts[2]),
+                    "guard_srpt_quantum_packets": int(parts[4]),
+                    "guard_sender_srpt_selections": int(parts[6]),
+                    "guard_sender_srpt_non_rr": int(parts[8]),
+                    "guard_sender_srpt_forced_rr": int(parts[10]),
+                }
             elif parts and parts[0] == "homa_priority" and len(parts) == 4:
                 try:
                     priority = int(parts[1])
@@ -164,6 +177,7 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
     result.update({field: 0 for field in HOMA_TOTAL_FIELDS})
     if homa_total is not None:
         result.update(homa_total)
+    result.update(guard_scheduler)
     result.update({f"switch_drops_{key}": value for key, value in switch_drops.items()})
     result["pfc_priority"] = priorities
     result["homa_priority"] = homa_priorities
