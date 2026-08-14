@@ -259,6 +259,7 @@ class RdmaHw : public Object {
     uint64_t m_homaMessagesCompleted;
     uint64_t m_homaMaxPendingMessages;
     uint32_t m_homaOvercommitDegree;
+    Time m_homaResendTimeout;
 
     enum GuardReleaseReason {
         GUARD_RELEASE_PROACTIVE,
@@ -569,7 +570,6 @@ class RdmaHw : public Object {
         bool is_scheduled;
         bool is_stall_scheduled;
         uint64_t pacing_interval;
-        Time stall_rto;
         HomaPriorityQueue active;
         std::unordered_map<RdmaRxQueuePair*, std::unique_ptr<HomaFlow>> flow_hash;
     };

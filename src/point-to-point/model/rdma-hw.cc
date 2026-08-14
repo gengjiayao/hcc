@@ -133,6 +133,11 @@ TypeId RdmaHw::GetTypeId(void) {
                           UintegerValue(4),
                           MakeUintegerAccessor(&RdmaHw::m_homaOvercommitDegree),
                           MakeUintegerChecker<uint32_t>(1, 4))
+            .AddAttribute("HomaResendTimeout",
+                          "Homa receiver timeout for a granted byte-range with no progress",
+                          TimeValue(MilliSeconds(1)),
+                          MakeTimeAccessor(&RdmaHw::m_homaResendTimeout),
+                          MakeTimeChecker())
             .AddAttribute("TimelyAlpha", "Alpha of TIMELY", DoubleValue(0.875),
                           MakeDoubleAccessor(&RdmaHw::m_tmly_alpha), MakeDoubleChecker<double>())
             .AddAttribute("TimelyBeta", "Beta of TIMELY", DoubleValue(0.8),
@@ -2079,8 +2084,7 @@ RdmaHw::HomaScheduler::HomaScheduler(RdmaHw* hw)
     : rdma_hw(hw),
       is_scheduled(false),
       is_stall_scheduled(false),
-      pacing_interval(0),
-      stall_rto(MicroSeconds(15)) {}
+      pacing_interval(0) {}
 
 RdmaHw::HomaScheduler::~HomaScheduler() {}
 
@@ -2136,7 +2140,8 @@ void RdmaHw::HomaScheduler::OnDataArrival(Ptr<RdmaRxQueuePair> rx_qp,
         }
         if (!is_stall_scheduled) {
             is_stall_scheduled = true;
-            Simulator::Schedule(stall_rto, &RdmaHw::HomaScheduler::StallCheck, this);
+            Simulator::Schedule(rdma_hw->m_homaResendTimeout,
+                                &RdmaHw::HomaScheduler::StallCheck, this);
         }
     }
 
@@ -2269,9 +2274,10 @@ void RdmaHw::HomaScheduler::StallCheck() {
         // Skip flows that have nothing missing to RESEND for.
         if (flow->next_expected_offset >= flow->msg_total_length) continue;
         if (flow->next_expected_offset >= flow->granted_offset_sent) continue;
-        // Stalled means: no contiguous progress in the last stall_rto interval
+        // Stalled means: no contiguous progress for the configured Homa
+        // receiver timeout
         // even though the receiver has authorized more bytes than have arrived.
-        if ((now - flow->last_progress_time) < stall_rto) continue;
+        if ((now - flow->last_progress_time) < rdma_hw->m_homaResendTimeout) continue;
         uint64_t resend_off = flow->next_expected_offset;
         uint64_t resend_len = std::min(flow->granted_offset_sent - resend_off,
                                        (uint64_t)rdma_hw->m_mtu);
@@ -2280,7 +2286,8 @@ void RdmaHw::HomaScheduler::StallCheck() {
         flow->last_progress_time = now;
     }
     if (!flow_hash.empty()) {
-        Simulator::Schedule(stall_rto, &RdmaHw::HomaScheduler::StallCheck, this);
+        Simulator::Schedule(rdma_hw->m_homaResendTimeout,
+                            &RdmaHw::HomaScheduler::StallCheck, this);
     } else {
         is_stall_scheduled = false;
     }

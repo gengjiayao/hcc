@@ -101,6 +101,7 @@ GUARD_CONTROLLER_TRACE_MAX_LINES {guard_controller_max_lines}
 GUARD_GRANT_TRACE {guard_grant_trace}
 GUARD_GRANT_TRACE_MAX_LINES {guard_grant_max_lines}
 HOMA_OVERCOMMIT {homa_overcommit}
+HOMA_RESEND_TIMEOUT_US {homa_resend_timeout_us}
 MULTI_RATE 0
 SAMPLE_FEEDBACK 0
 
@@ -314,6 +315,8 @@ def main():
                         help="maximum grant audit rows (default: 1000; hard maximum: 10000)")
     parser.add_argument('--homa_overcommit', type=int, choices=range(1, 5), default=4,
                         help="Homa scheduled messages per receiver in [1,4] (default: 4)")
+    parser.add_argument('--homa_resend_timeout_us', type=int, default=1000,
+                        help="Homa receiver no-progress timeout in us (default: 1000)")
     parser.add_argument('--seed', type=int, default=1,
                         help="traffic-generator and ns-3 random seed (default: 1)")
 
@@ -365,6 +368,8 @@ def main():
         raise Exception("CONFIG ERROR: --guard_lambda must be at least 1.0.")
     if not 1 <= args.seed <= 2147483647:
         raise Exception("CONFIG ERROR: --seed must be in [1, 2147483647].")
+    if args.homa_resend_timeout_us <= 0:
+        raise Exception("CONFIG ERROR: --homa_resend_timeout_us must be positive.")
     if qlen_monitoring_interval <= 0:
         raise Exception("CONFIG ERROR: --qlen_monitoring_interval must be positive.")
     if not 0.0 <= args.error_rate_per_link < 1.0:
@@ -697,6 +702,7 @@ def main():
                                         guard_grant_output=guard_grant_output,
                                         guard_grant_max_lines=args.guard_grant_max_lines,
                                         homa_overcommit=args.homa_overcommit,
+                                        homa_resend_timeout_us=args.homa_resend_timeout_us,
                                         seed=args.seed,
                                         kmax_map=kmax_map, kmin_map=kmin_map, pmax_map=pmax_map)
     # else:
