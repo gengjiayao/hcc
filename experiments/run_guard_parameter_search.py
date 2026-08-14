@@ -51,7 +51,7 @@ def read_spec(path: Path) -> Mapping[str, object]:
         if defaults.get(field) != expected:
             raise CampaignError(f"{field}={defaults.get(field)}, expected {expected}")
     arms = dict(spec.get("arms", {}))
-    kind = spec.get("search_kind")
+    kind = spec.get("search_kind", "receiver_grid")
     if kind == "receiver_grid":
         if int(defaults.get("guard_srpt_quantum_packets", -1)) != 64:
             raise CampaignError("receiver grid must freeze SRPT quantum at 64 packets")
