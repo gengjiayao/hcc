@@ -177,6 +177,27 @@ class GeneralWorkloadRunnerTests(unittest.TestCase):
             self.assertEqual(spec["defaults"]["guard_lambda"], 1.8)
             self.assertEqual(spec["arms"]["guard"]["guard_work_conserving"], 0)
 
+    def test_elephant_holdout_freezes_selected_threshold_and_fresh_seeds(self):
+        spec = read_spec(
+            self.repo / "experiments/campaigns/guard_homa_elephant_holdout.json"
+        )
+        self.assertEqual(spec["seeds"], [66, 67, 68, 69, 70])
+        self.assertEqual(spec["defaults"]["guard_receiver_concurrency"], 1)
+        self.assertEqual(spec["defaults"]["guard_concurrency_min_bdps"], 12.0)
+        workload = {
+            "name": "AliStorage50", "cdf": "AliStorage2019",
+            "selected_profile": "primary",
+            "attempts": {"primary": {"profile": {
+                "topo": "leaf_spine_8_100G_OS2", "hosts": 8,
+                "oversubscription": 2, "simul_time": 0.01,
+                "netload": 50, "bw": 100,
+            }}},
+        }
+        trace = {"seed": 66, "path": "/tmp/holdout-flow.txt", "sha256": "same"}
+        command = run_command(self.repo, spec, workload, trace, "guard", True)
+        self.assertEqual(command[command.index("--guard_receiver_concurrency") + 1], "1")
+        self.assertEqual(command[command.index("--guard_concurrency_min_bdps") + 1], "12.0")
+
     def test_formal_plan_requires_passing_workload_and_excludes_seed1(self):
         selected = []
         for name in ("AliStorage2019", "WebSearch"):
