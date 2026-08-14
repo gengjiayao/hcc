@@ -248,6 +248,8 @@ class RdmaHw : public Object {
     // control activity from the repository's generic RDMA recovery counters.
     uint64_t m_homaDataPacketsSent;
     uint64_t m_homaDataBytesSent;
+    uint64_t m_homaDataPacketsByPriority[8];
+    uint64_t m_homaDataBytesByPriority[8];
     uint64_t m_homaRetransmitPacketsSent;
     uint64_t m_homaGrantsSent;
     uint64_t m_homaGrantsReceived;

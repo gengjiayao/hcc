@@ -216,6 +216,10 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_timeoutRecoveries = 0;
     m_homaDataPacketsSent = 0;
     m_homaDataBytesSent = 0;
+    for (uint32_t priority = 0; priority < 8; priority++) {
+        m_homaDataPacketsByPriority[priority] = 0;
+        m_homaDataBytesByPriority[priority] = 0;
+    }
     m_homaRetransmitPacketsSent = 0;
     m_homaGrantsSent = 0;
     m_homaGrantsReceived = 0;
@@ -1968,6 +1972,9 @@ Ptr<Packet> RdmaHw::GetNxtPacketHoma(Ptr<RdmaQueuePair> qp) {
     } else {
         pkt_priority = qp->homa.m_grant_priority;
     }
+    NS_ASSERT_MSG(pkt_priority < 8, "Homa DATA priority is outside the switch queue range");
+    m_homaDataPacketsByPriority[pkt_priority]++;
+    m_homaDataBytesByPriority[pkt_priority] += payload_size;
 
     HomaHeader hfh;
     hfh.SetType(HomaHeader::DATA);
