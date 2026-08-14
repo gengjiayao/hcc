@@ -1,0 +1,48 @@
+{
+  "arms": [
+    "guard",
+    "homa",
+    "hpcc"
+  ],
+  "description": "Validated five-seed GUARD/HPCC/Homa held-out summary",
+  "files": {
+    "admission.json": {
+      "bytes": 34120,
+      "sha256": "9f2fda9d88660e8a489e15224d3dc18927cbad1d0f2305c184857991225952c6"
+    },
+    "metrics.csv": {
+      "bytes": 326294,
+      "sha256": "5e3378317aa520bb2730d9f3b4777e25584a3d58ee075f384052d4e7302a53a1"
+    },
+    "preflight.json": {
+      "bytes": 30423,
+      "sha256": "4d4feb5bebc8fe42bd35d8e91119ff1febedc0056d0f47cbc5d5cae2808e0e17"
+    },
+    "run_registry.csv": {
+      "bytes": 53191,
+      "sha256": "cea5a2757f1d73a12751074e842fe933914ebda2e24cf2a240148cdf7f919ed8"
+    },
+    "spec.json": {
+      "bytes": 2805,
+      "sha256": "5406b7201757ab4642a73051d4b2c31a5dd5654cff01924fb513618052ce0e13"
+    }
+  },
+  "raw_locator_rule": "run_registry output_dir is relative to the guard repository",
+  "raw_outputs_in_git": false,
+  "schema_version": 1,
+  "seeds": [
+    16,
+    17,
+    18,
+    19,
+    20
+  ],
+  "simulator_git_shas": [
+    "6a069edc0fb7a5199ae580330cf6e06a0b30afea"
+  ],
+  "workloads": [
+    "AliStorage2019",
+    "FbHdp",
+    "WebSearch"
+  ]
+}
