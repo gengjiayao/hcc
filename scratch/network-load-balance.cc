@@ -2513,6 +2513,38 @@ int main(int argc, char *argv[]) {
             dcqcn_totals[8]);
     fclose(dcqcn_stats_output);
 
+    FILE *homa_stats_output = fopen(guard_stats_output_file.c_str(), "a");
+    fprintf(homa_stats_output,
+            "homa node_id data_packets data_bytes retransmit_packets grants_sent "
+            "grants_received resends_sent resends_received messages_tracked "
+            "messages_completed max_pending_messages\n");
+    uint64_t homa_totals[10] = {0};
+    uint64_t homa_max_active = 0;
+    for (uint32_t i = 0; i < node_num; i++) {
+        if (n.Get(i)->GetNodeType() != 0) continue;
+        Ptr<RdmaDriver> driver = n.Get(i)->GetObject<RdmaDriver>();
+        Ptr<RdmaHw> hw = driver->m_rdma;
+        uint64_t values[10] = {
+            hw->m_homaDataPacketsSent, hw->m_homaDataBytesSent,
+            hw->m_homaRetransmitPacketsSent, hw->m_homaGrantsSent,
+            hw->m_homaGrantsReceived, hw->m_homaResendsSent,
+            hw->m_homaResendsReceived, hw->m_homaMessagesTracked,
+            hw->m_homaMessagesCompleted, hw->m_homaMaxPendingMessages,
+        };
+        fprintf(homa_stats_output,
+                "homa %u %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu\n", i,
+                values[0], values[1], values[2], values[3], values[4],
+                values[5], values[6], values[7], values[8], values[9]);
+        for (uint32_t j = 0; j < 9; j++) homa_totals[j] += values[j];
+        homa_max_active = std::max(homa_max_active, values[9]);
+    }
+    fprintf(homa_stats_output,
+            "homa_total %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu\n",
+            homa_totals[0], homa_totals[1], homa_totals[2], homa_totals[3],
+            homa_totals[4], homa_totals[5], homa_totals[6], homa_totals[7],
+            homa_totals[8], homa_max_active);
+    fclose(homa_stats_output);
+
     /*-----------------------------------------------------------------------------*/
     /*----- we don't need below. Just we can enforce to close this simulation. -----*/
     /*-----------------------------------------------------------------------------*/

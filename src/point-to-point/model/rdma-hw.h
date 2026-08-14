@@ -244,6 +244,18 @@ class RdmaHw : public Object {
     uint64_t m_irnRetransmitPackets;
     uint64_t m_irnRetransmitBytes;
     uint64_t m_timeoutRecoveries;
+    // Constant-space Homa mode diagnostics. These distinguish native Homa
+    // control activity from the repository's generic RDMA recovery counters.
+    uint64_t m_homaDataPacketsSent;
+    uint64_t m_homaDataBytesSent;
+    uint64_t m_homaRetransmitPacketsSent;
+    uint64_t m_homaGrantsSent;
+    uint64_t m_homaGrantsReceived;
+    uint64_t m_homaResendsSent;
+    uint64_t m_homaResendsReceived;
+    uint64_t m_homaMessagesTracked;
+    uint64_t m_homaMessagesCompleted;
+    uint64_t m_homaMaxPendingMessages;
 
     enum GuardReleaseReason {
         GUARD_RELEASE_PROACTIVE,

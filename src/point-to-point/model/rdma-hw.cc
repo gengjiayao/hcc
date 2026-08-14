@@ -204,6 +204,16 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_irnRetransmitPackets = 0;
     m_irnRetransmitBytes = 0;
     m_timeoutRecoveries = 0;
+    m_homaDataPacketsSent = 0;
+    m_homaDataBytesSent = 0;
+    m_homaRetransmitPacketsSent = 0;
+    m_homaGrantsSent = 0;
+    m_homaGrantsReceived = 0;
+    m_homaResendsSent = 0;
+    m_homaResendsReceived = 0;
+    m_homaMessagesTracked = 0;
+    m_homaMessagesCompleted = 0;
+    m_homaMaxPendingMessages = 0;
 }
 
 void RdmaHw::SetNode(Ptr<Node> node) { m_node = node; }
@@ -1910,6 +1920,9 @@ Ptr<Packet> RdmaHw::GetNxtPacketHoma(Ptr<RdmaQueuePair> qp) {
     uint32_t seq = (uint32_t)pkt_offset;
     qp->stat.txTotalPkts += 1;
     qp->stat.txTotalBytes += payload_size;
+    m_homaDataPacketsSent++;
+    m_homaDataBytesSent += payload_size;
+    if (is_retransmit) m_homaRetransmitPacketsSent++;
 
     Ptr<Packet> p = Create<Packet>(payload_size);
 
@@ -2015,6 +2028,7 @@ int RdmaHw::ReceiveHomaControl(Ptr<Packet> /*p*/, CustomHeader &ch) {
                 qp->homa.m_granted_offset = ch.udp.homa_granted_offset;
             }
             qp->homa.m_grant_priority = ch.udp.homa_grant_priority;
+            m_homaGrantsReceived++;
             uint32_t nic_idx = GetNicIdxOfQp(qp);
             m_nic[nic_idx].dev->TriggerTransmit();
             return 0;
@@ -2026,6 +2040,7 @@ int RdmaHw::ReceiveHomaControl(Ptr<Packet> /*p*/, CustomHeader &ch) {
             qp->homa.m_retransmit_queue.push_back(
                 std::make_pair(ch.udp.homa_resend_offset,
                                (uint32_t)ch.udp.homa_resend_length));
+            m_homaResendsReceived++;
             uint32_t nic_idx = GetNicIdxOfQp(qp);
             m_nic[nic_idx].dev->TriggerTransmit();
             return 0;
@@ -2082,11 +2097,16 @@ void RdmaHw::HomaScheduler::OnDataArrival(Ptr<RdmaRxQueuePair> rx_qp,
         HomaFlow* p_flow = new_flow.get();
         flow_hash[hkey] = std::move(new_flow);
         it = flow_hash.find(hkey);
+        rdma_hw->m_homaMessagesTracked++;
 
         // Messages wholly covered by the unscheduled allowance need no
         // grants, but retain their receive state until all DATA arrives so a
         // late hole can still be detected.
-        if (!p_flow->fully_granted()) active.insert(p_flow);
+        if (!p_flow->fully_granted()) {
+            active.insert(p_flow);
+            rdma_hw->m_homaMaxPendingMessages = std::max(
+                rdma_hw->m_homaMaxPendingMessages, (uint64_t)active.size());
+        }
 
         if (!is_scheduled) {
             is_scheduled = true;
@@ -2137,6 +2157,7 @@ void RdmaHw::HomaScheduler::OnDataArrival(Ptr<RdmaRxQueuePair> rx_qp,
     }
 
     if (p_flow->fully_received()) {
+        rdma_hw->m_homaMessagesCompleted++;
         active.erase(hkey);
         flow_hash.erase(hkey);
         if (flow_hash.empty()) is_stall_scheduled = false;
@@ -2216,6 +2237,7 @@ void RdmaHw::HomaScheduler::SendGrant(HomaFlow* flow, uint8_t grant_priority) {
 
     uint32_t nic_idx = rdma_hw->GetNicIdxOfRxQp(flow->rx_qp);
     rdma_hw->m_nic[nic_idx].dev->RdmaEnqueueHighPrioQ(newp);
+    rdma_hw->m_homaGrantsSent++;
     rdma_hw->m_nic[nic_idx].dev->TriggerTransmit();
 }
 
@@ -2275,6 +2297,7 @@ void RdmaHw::HomaScheduler::SendResend(HomaFlow* flow, uint64_t offset, uint64_t
 
     uint32_t nic_idx = rdma_hw->GetNicIdxOfRxQp(flow->rx_qp);
     rdma_hw->m_nic[nic_idx].dev->RdmaEnqueueHighPrioQ(newp);
+    rdma_hw->m_homaResendsSent++;
     rdma_hw->m_nic[nic_idx].dev->TriggerTransmit();
 }
 
