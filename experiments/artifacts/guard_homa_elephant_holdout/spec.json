@@ -1,0 +1,121 @@
+{
+  "admission": {
+    "controller_trace_arm": "guard",
+    "full_controller_max_lines": 300000,
+    "full_controller_trace": true,
+    "guard": "grants, HPCC feedback, bounded elephant concurrency, remaining refresh, and sender SRPT are nonzero",
+    "homa": "native DATA, grants, completion, priorities, and message state are nonzero; generic recovery is zero",
+    "hpcc": "GUARD grants are zero and valid HPCC feedback/rate changes are nonzero",
+    "require_complete": true,
+    "require_zero_drop_recovery": true,
+    "seed": 66
+  },
+  "arms": {
+    "guard": {
+      "cc": "guard"
+    },
+    "homa": {
+      "cc": "homa"
+    },
+    "hpcc": {
+      "cc": "hpcc"
+    }
+  },
+  "comparisons": [
+    [
+      "guard",
+      "hpcc"
+    ],
+    [
+      "guard",
+      "homa"
+    ],
+    [
+      "homa",
+      "hpcc"
+    ]
+  ],
+  "defaults": {
+    "analysis_warmup": 0.005,
+    "buffer": 9,
+    "bw": 100,
+    "guard_ack_interval_packets": 8,
+    "guard_beta": 0.125,
+    "guard_concurrency_min_bdps": 12.0,
+    "guard_demand_threshold": 0.75,
+    "guard_fixed_window": 1,
+    "guard_gamma": 1.0,
+    "guard_grant_refresh_bdps": 1.0,
+    "guard_keep_last_hop_int": 0,
+    "guard_lambda": 1.8,
+    "guard_min_share_fraction": 0.0,
+    "guard_one_rtt_bypass": 1,
+    "guard_proactive_release": 1,
+    "guard_rebalance_interval_us": 200,
+    "guard_receiver_concurrency": 1,
+    "guard_receiver_util_threshold": 0.75,
+    "guard_remaining_aware": 1,
+    "guard_remaining_exponent": 1.0,
+    "guard_selective_registration": 1,
+    "guard_sender_srpt": 1,
+    "guard_size_priority": 1,
+    "guard_srpt_quantum_packets": 64,
+    "guard_tail_bypass": 1,
+    "guard_tail_bypass_bdps": 8.0,
+    "guard_work_conserving": 0,
+    "homa_resend_timeout_us": 1000,
+    "hosts": 8,
+    "irn": 0,
+    "lb": "fecmp",
+    "monitor_profile": "bulk",
+    "netload": 50,
+    "oversubscription": 2,
+    "pfc": 1,
+    "priority_group": 3,
+    "simul_time": 0.01,
+    "topo": "leaf_spine_8_100G_OS2"
+  },
+  "flow_size_buckets": [
+    {
+      "max_bytes": 8192,
+      "name": "le_8KB"
+    },
+    {
+      "max_bytes": 104000,
+      "min_exclusive_bytes": 8192,
+      "name": "8KB_to_1BDP"
+    },
+    {
+      "max_bytes": 1048576,
+      "min_exclusive_bytes": 104000,
+      "name": "1BDP_to_1MB"
+    },
+    {
+      "min_exclusive_bytes": 1048576,
+      "name": "gt_1MB"
+    }
+  ],
+  "limits": {
+    "campaign_bytes": 5368709120,
+    "max_flows": 10000,
+    "run_bytes": 104857600,
+    "run_timeout_seconds": 1800
+  },
+  "name": "guard-hpcc-homa-elephant-holdout",
+  "purpose": "Fresh five-seed validation of selected 12-BDP elephant concurrency against HPCC and Homa at 50% AliStorage load.",
+  "schema_version": 1,
+  "seeds": [
+    66,
+    67,
+    68,
+    69,
+    70
+  ],
+  "selection_policy": "The 12-BDP threshold was selected only on seeds 61-65. Freeze seeds 66-70 before simulation, admit seed 66 by mechanism and safety counters without inspecting performance, then expand all arms.",
+  "workloads": [
+    {
+      "cdf": "AliStorage2019",
+      "name": "AliStorage50"
+    }
+  ]
+}
