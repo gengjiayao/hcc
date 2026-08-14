@@ -26,6 +26,7 @@ TAIL_SAFE_RATIOS = (0.8, 0.9, 1.0)
 HIGH_LOAD_LAMBDAS = (1.8, 2.0, 2.2, 2.4)
 RECEIVER_CONCURRENCY_VALUES = (0, 1)
 ELEPHANT_THRESHOLD_BDPS = (4.0, 6.0, 8.0, 12.0)
+TAIL_BYPASS_BDPS = (1.0, 2.0, 4.0, 8.0)
 
 
 def read_spec(path: Path) -> Mapping[str, object]:
@@ -166,11 +167,29 @@ def read_spec(path: Path) -> Mapping[str, object]:
         if (baseline_count != 1 or observed != set(ELEPHANT_THRESHOLD_BDPS) or
                 len(arms) != 1 + len(ELEPHANT_THRESHOLD_BDPS)):
             raise CampaignError("arms must cover the baseline and frozen elephant thresholds")
+    elif kind == "tail_bypass_threshold":
+        if int(defaults.get("guard_receiver_concurrency", -1)) != 1:
+            raise CampaignError("tail threshold search must retain one-elephant service")
+        if float(defaults.get("guard_concurrency_min_bdps", -1)) != 12.0:
+            raise CampaignError("tail threshold search must retain the selected 12-BDP policy")
+        observed = set()
+        for name, raw in arms.items():
+            arm = dict(raw)
+            if arm.get("cc") != "guard":
+                raise CampaignError(f"{name} must select cc=guard")
+            if int(arm.get("guard_tail_bypass", -1)) != 1:
+                raise CampaignError(f"{name} must keep tail bypass enabled")
+            threshold = float(arm.get("guard_tail_bypass_bdps", -1))
+            if threshold not in TAIL_BYPASS_BDPS:
+                raise CampaignError(f"{name} is outside the frozen tail threshold grid")
+            observed.add(threshold)
+        if observed != set(TAIL_BYPASS_BDPS) or len(arms) != len(TAIL_BYPASS_BDPS):
+            raise CampaignError("arms must cover each frozen tail-bypass threshold")
     else:
         raise CampaignError(
             "search_kind must be receiver_grid, srpt_quantum, tail_gate, "
             "lambda_high_load, receiver_concurrency, elephant_concurrency, "
-            "or elephant_threshold")
+            "elephant_threshold, or tail_bypass_threshold")
     selection = dict(spec.get("selection", {}))
     if selection.get("baseline_arm") not in arms:
         raise CampaignError("selection baseline is not a grid arm")
