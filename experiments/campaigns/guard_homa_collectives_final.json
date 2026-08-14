@@ -54,7 +54,7 @@
       "hosts": 16,
       "flow_bytes": 524288,
       "jitter_us": 0.5,
-      "buffer_mb": 32,
+      "buffer_mb": 16,
       "expected_flows": 240,
       "completion_semantics": "communication_phase_cct"
     },
@@ -65,7 +65,7 @@
       "jitter_us": 0.5,
       "ring_span_ms": 2,
       "ring_placement": "alternating",
-      "buffer_mb": 16,
+      "buffer_mb": 32,
       "expected_flows": 480,
       "completion_semantics": "open_loop_trace_only"
     }
