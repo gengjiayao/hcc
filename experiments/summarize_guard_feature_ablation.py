@@ -237,7 +237,55 @@ def cohort_passes(
     return all(bool(indexed[(workload, seed, arm)]["passed"]) for seed in seeds)
 
 
-def analyze(campaign: Path, spec_path: Path) -> None:
+def export_portable(
+    export_dir: Path, spec: Mapping[str, object], preflight: Mapping[str, object],
+    report: Mapping[str, object], runs: Sequence[Mapping[str, object]],
+    per_seed_rows: Sequence[Mapping[str, object]], ci_rows: Sequence[Mapping[str, object]],
+    run_fields: Sequence[str], ci_fields: Sequence[str],
+) -> None:
+    """Write bounded feature-ablation evidence with repository-relative locators."""
+    export_dir.mkdir(parents=True, exist_ok=True)
+    registry = []
+    for row in runs:
+        portable = {
+            **{field: row[field] for field in run_fields if field != "failures"},
+            "failures": "; ".join(row["failures"]),
+        }
+        portable["output_dir"] = f"mix/output/{row['output_id']}"
+        registry.append(portable)
+    files = {
+        "spec.json": spec,
+        "preflight.json": preflight,
+        "admission.json": report,
+    }
+    for name, payload in files.items():
+        write_json(export_dir / name, payload)
+    write_csv(export_dir / "run_registry.csv", registry, run_fields)
+    write_csv(
+        export_dir / "per_seed.csv", per_seed_rows,
+        ("workload", "seed", "arm", "metric", "value"),
+    )
+    write_csv(export_dir / "ci.csv", ci_rows, ci_fields)
+    tracked = sorted(files) + ["ci.csv", "per_seed.csv", "run_registry.csv"]
+    manifest = {
+        "schema_version": 1,
+        "description": "Fresh-seed one-factor ablation of optimized GUARD",
+        "simulator_git_shas": sorted({str(row["git_sha"]) for row in runs}),
+        "seeds": list(map(int, spec["seeds"])),
+        "raw_outputs_in_git": False,
+        "raw_locator_rule": "run_registry output_dir is relative to the guard repository",
+        "files": {
+            name: {
+                "bytes": (export_dir / name).stat().st_size,
+                "sha256": sha256_file(export_dir / name),
+            }
+            for name in tracked
+        },
+    }
+    write_json(export_dir / "manifest.json", manifest)
+
+
+def analyze(campaign: Path, spec_path: Path, export_dir: Path | None = None) -> None:
     spec = read_spec(spec_path)
     preflight = read_json(campaign / "preflight.json")
     if preflight.get("spec_sha256") != sha256_file(spec_path):
@@ -343,6 +391,11 @@ def analyze(campaign: Path, spec_path: Path) -> None:
         ],
     }
     write_json(summary / "feature_ablation_admission.json", report)
+    if export_dir is not None:
+        export_portable(
+            export_dir, spec, preflight, report, runs, long_rows, ci_rows,
+            run_fields, ci_fields,
+        )
     print(
         f"admitted {len(admitted_runs)}/{len(runs)} runs at {report['simulator_sha']}; "
         f"rejected {len(rejected_cohorts)} workload/arm cohorts"
@@ -354,8 +407,12 @@ def main() -> None:
     parser.add_argument("campaign", type=Path)
     parser.add_argument("--spec", type=Path,
                         default=Path(__file__).parent / "campaigns/guard_feature_ablation.json")
+    parser.add_argument("--export-dir", type=Path)
     args = parser.parse_args()
-    analyze(args.campaign.resolve(), args.spec.resolve())
+    analyze(
+        args.campaign.resolve(), args.spec.resolve(),
+        args.export_dir.resolve() if args.export_dir else None,
+    )
 
 
 if __name__ == "__main__":
