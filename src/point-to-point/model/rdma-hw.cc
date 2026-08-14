@@ -2230,8 +2230,19 @@ void RdmaHw::HomaScheduler::Schedule() {
 
     for (size_t k = 0; k < tick.size(); k++) {
         HomaFlow* flow = tick[k];
-        uint64_t new_offset =
-            std::min(flow->granted_offset_sent + rdma_hw->m_mtu, flow->msg_total_length);
+        // Do not authorize an entire stalled message. Homa keeps roughly one
+        // RTT of granted-but-not-yet-received bytes outstanding for each
+        // selected sender; overcommitment exists specifically so another
+        // selected sender can fill the receiver downlink when one is blocked.
+        uint64_t outstanding = flow->granted_offset_sent > flow->bytes_received
+                                   ? flow->granted_offset_sent - flow->bytes_received
+                                   : 0;
+        uint64_t grant_bytes = 0;
+        if (outstanding < flow->bdp) {
+            grant_bytes = std::min<uint64_t>(rdma_hw->m_mtu, flow->bdp - outstanding);
+        }
+        uint64_t new_offset = std::min(flow->granted_offset_sent + grant_bytes,
+                                       flow->msg_total_length);
         if (new_offset > flow->granted_offset_sent) {
             flow->granted_offset_sent = new_offset;
             // With fewer than all scheduled slots active, assign the lowest
