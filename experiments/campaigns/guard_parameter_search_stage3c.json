@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "name": "guard-parameter-search-stage3c-adaptive-target-scope",
+  "search_kind": "adaptive_target_scope",
+  "seeds": [86, 87, 88, 89, 90],
+  "limits": {
+    "max_flows": 10000,
+    "run_timeout_seconds": 1800,
+    "run_bytes": 104857600,
+    "campaign_bytes": 5368709120
+  },
+  "defaults": {
+    "topo": "leaf_spine_8_100G_OS2",
+    "hosts": 8,
+    "oversubscription": 2,
+    "simul_time": 0.01,
+    "netload": 50,
+    "bw": 100,
+    "priority_group": 3,
+    "analysis_warmup": 0.005,
+    "buffer": 9,
+    "lb": "fecmp",
+    "pfc": 1,
+    "irn": 0,
+    "monitor_profile": "bulk",
+    "guard_lambda": 1.8,
+    "guard_beta": 0.125,
+    "guard_gamma": 1.0,
+    "guard_selective_registration": 1,
+    "guard_proactive_release": 1,
+    "guard_keep_last_hop_int": 0,
+    "guard_size_priority": 1,
+    "guard_sender_srpt": 1,
+    "guard_one_rtt_bypass": 1,
+    "guard_tail_bypass": 1,
+    "guard_tail_bypass_bdps": 8.0,
+    "guard_tail_congestion_gate": 0,
+    "guard_tail_safe_ratio": 0.9,
+    "guard_tail_safe_samples": 2,
+    "guard_adaptive_fabric_target": 0,
+    "guard_target_floor": 0.95,
+    "guard_queue_budget_bdps": 0.5,
+    "guard_adaptive_target_max_bdps": 0.0,
+    "guard_ack_interval_packets": 8,
+    "guard_fixed_window": 1,
+    "guard_remaining_aware": 1,
+    "guard_min_share_fraction": 0.0,
+    "guard_remaining_exponent": 1.0,
+    "guard_receiver_concurrency": 1,
+    "guard_concurrency_min_bdps": 12.0,
+    "guard_grant_refresh_bdps": 1.0,
+    "guard_srpt_quantum_packets": 64,
+    "guard_work_conserving": 0,
+    "guard_cap_aware_reclaim": 0,
+    "guard_cap_headroom": 1.1,
+    "guard_cap_min_share_fraction": 0.25,
+    "guard_rebalance_interval_us": 200,
+    "guard_demand_threshold": 0.75,
+    "guard_receiver_util_threshold": 0.75
+  },
+  "admission": {
+    "seed": 86,
+    "require_complete": true,
+    "require_zero_drop_recovery": true,
+    "require_grants": true,
+    "require_shared_fabric_updates": true,
+    "require_remaining_refresh": true,
+    "require_adaptive_target_updates": true
+  },
+  "selection": {
+    "baseline_arm": "adaptive_off",
+    "primary_metric": "queue_bytes_mean",
+    "require_primary_paired_percent_ci95_high_below": 0.0,
+    "constraints": {
+      "overall_fct_us_mean": 0.5,
+      "gt_1MB_fct_us_mean": 0.5,
+      "overall_slowdown_p99": 0.5,
+      "le_8KB_slowdown_p95": 0.5
+    },
+    "tie_break_metrics": [
+      "queue_bytes_mean",
+      "overall_fct_us_mean",
+      "gt_1MB_fct_us_mean"
+    ]
+  },
+  "arms": {
+    "adaptive_off": {"cc": "guard", "guard_adaptive_fabric_target": 0, "guard_adaptive_target_max_bdps": 0.0},
+    "scope4": {"cc": "guard", "guard_adaptive_fabric_target": 1, "guard_adaptive_target_max_bdps": 4.0},
+    "scope8": {"cc": "guard", "guard_adaptive_fabric_target": 1, "guard_adaptive_target_max_bdps": 8.0},
+    "scope12": {"cc": "guard", "guard_adaptive_fabric_target": 1, "guard_adaptive_target_max_bdps": 12.0}
+  },
+  "workloads": [
+    {"name": "AliStorage50", "cdf": "AliStorage2019"}
+  ],
+  "flow_size_buckets": [
+    {"name": "le_8KB", "max_bytes": 8192},
+    {"name": "8KB_to_1BDP", "min_exclusive_bytes": 8192, "max_bytes": 104000},
+    {"name": "1BDP_to_1MB", "min_exclusive_bytes": 104000, "max_bytes": 1048576},
+    {"name": "gt_1MB", "min_exclusive_bytes": 1048576}
+  ]
+}
