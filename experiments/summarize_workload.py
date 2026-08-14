@@ -23,6 +23,7 @@ from typing import Dict, Iterable, List, Mapping, MutableMapping, Sequence, Tupl
 try:
     from experiments.summarize_campaign import (
         GUARD_TOTAL_FIELDS,
+        HOMA_TOTAL_FIELDS,
         PFC_PRIORITY_FIELDS,
         SummaryError,
         parse_guard_stats,
@@ -34,6 +35,7 @@ try:
 except ModuleNotFoundError:  # Direct execution from experiments/.
     from summarize_campaign import (
         GUARD_TOTAL_FIELDS,
+        HOMA_TOTAL_FIELDS,
         PFC_PRIORITY_FIELDS,
         SummaryError,
         parse_guard_stats,
@@ -430,6 +432,21 @@ def instrumentation_metrics(
     for name in GUARD_TOTAL_FIELDS:
         unit = "bytes" if name == "irn_retransmit_bytes" else "count"
         result.append(metric(workload, semantics, name, float(stats[name]), unit, 1))
+    for name in HOMA_TOTAL_FIELDS:
+        unit = "bytes" if name == "homa_data_bytes" else "count"
+        result.append(metric(workload, semantics, name, float(stats[name]), unit, 1))
+    for priority in sorted(stats["homa_priority"]):
+        values = stats["homa_priority"][priority]
+        result.append(metric(
+            workload, semantics, "homa_data_packets",
+            float(values["data_packets"]), "packets", 1,
+            f"priority:{priority}",
+        ))
+        result.append(metric(
+            workload, semantics, "homa_data_bytes",
+            float(values["data_bytes"]), "bytes", 1,
+            f"priority:{priority}",
+        ))
     for name in ("switch_drops_ingress", "switch_drops_egress", "switch_drops_total"):
         result.append(metric(workload, semantics, name, float(stats[name]), "packets", 1))
     result.extend([

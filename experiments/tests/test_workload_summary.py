@@ -95,6 +95,7 @@ class WorkloadSummaryTests(unittest.TestCase):
             self.assertIn(("fct_us_p99", "all"), metrics)
             self.assertNotIn(("fct_us_p999", "all"), metrics)
             self.assertIn(("aggregate_goodput_gbps", "all"), metrics)
+            self.assertEqual(metrics[("homa_messages_completed", "all")], 0.0)
             self.assertIn(("receiver_incast_goodput_gbps", "receiver:0"), metrics)
             self.assertIn(("receiver_incast_flow_goodput_jain", "receiver:0"), metrics)
             self.assertIn(("receiver_incast_flow_goodput_min_gbps", "receiver:0"), metrics)
