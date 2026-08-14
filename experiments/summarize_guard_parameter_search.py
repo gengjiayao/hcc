@@ -67,9 +67,29 @@ def select_candidate(
     }
     tie_break = tuple(map(str, selection["tie_break_metrics"]))
     candidates = []
+    baseline_rows = [indexed[(seed, baseline)] for seed in seeds]
+    if any(row.get("passed", True) is not True for row in baseline_rows):
+        raise AnalysisError("frozen baseline failed a formal admission check")
     for arm in spec["arms"]:
         arm = str(arm)
         if arm == baseline:
+            continue
+        arm_rows = [indexed[(seed, arm)] for seed in seeds]
+        if any(row.get("passed", True) is not True for row in arm_rows):
+            candidates.append({
+                "arm": arm,
+                "eligible": False,
+                "gates": {"five_seed_mechanism_admission": False},
+                "paired_percent_vs_baseline": {},
+                "tie_break_key": [],
+                "rejected_seeds": [
+                    int(row["seed"]) for row in arm_rows
+                    if row.get("passed", True) is not True
+                ],
+                "rejection_reasons": sorted({
+                    reason for row in arm_rows for reason in row.get("failures", [])
+                }),
+            })
             continue
         metric_stats = {
             metric: paired_percent(indexed, seeds, arm, baseline, metric)
@@ -143,19 +163,17 @@ def formal(
     for trace in workload["traces"]:
         for arm in spec["arms"]:
             row = analyze_run(campaign, spec, preflight, workload, trace, str(arm))
-            if row["passed"] is not True:
-                raise AnalysisError(
-                    f"formal validation failed for seed{trace['seed']}/{arm}: {row['failures']}")
             runs.append(row)
     if len({row["git_sha"] for row in runs}) != 1:
         raise AnalysisError("formal grid spans multiple simulator revisions")
     seeds = tuple(map(int, spec["seeds"]))
     indexed = {(int(row["seed"]), str(row["arm"])): row for row in runs}
     baseline = str(dict(spec["selection"])["baseline_arm"])
-    metric_names = sorted(set.intersection(*(set(row["metrics"]) for row in runs)))
+    admitted_runs = [row for row in runs if row["passed"] is True]
+    metric_names = sorted(set.intersection(*(set(row["metrics"]) for row in admitted_runs)))
     metrics = []
     per_seed = []
-    for row in runs:
+    for row in admitted_runs:
         for metric in metric_names:
             per_seed.append({
                 "seed": row["seed"], "arm": row["arm"], "metric": metric,
@@ -163,6 +181,8 @@ def formal(
             })
     for arm in spec["arms"]:
         arm = str(arm)
+        if any(indexed[(seed, arm)]["passed"] is not True for seed in seeds):
+            continue
         for metric in metric_names:
             values = [float(indexed[(seed, arm)]["metrics"][metric]) for seed in seeds]
             metrics.append({
