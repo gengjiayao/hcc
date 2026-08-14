@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "name": "guard-hpcc-homa-directed-hybrid",
+  "purpose": "Separate a shared source-ToR fabric bottleneck from a destination-downlink fan-in with a bounded trace.",
+  "selection_policy": "The endpoint geometry, 2 MiB flow size, 0.5 us seeded jitter, and all five seeds are frozen before simulation. Seed 1 admits mechanisms and safety without inspecting comparative performance; no parameter or seed is selected by outcome.",
+  "seeds": [1, 2, 3, 4, 5],
+  "topology": "leaf_spine_16_100G_OS4",
+  "simulation_time_seconds": 0.01,
+  "priority_group": 4,
+  "flow_bytes": 2097152,
+  "flow_count": 15,
+  "jitter_us": 0.5,
+  "limits": {
+    "max_flows": 1000,
+    "run_bytes": 104857600,
+    "run_timeout_seconds": 1800
+  },
+  "arms": {
+    "guard": {
+      "cc": "guard",
+      "guard_lambda": 1.4,
+      "guard_beta": 0.125,
+      "guard_gamma": 1.0,
+      "guard_size_priority": 1,
+      "guard_sender_srpt": 1,
+      "guard_srpt_quantum_packets": 64,
+      "guard_work_conserving": 1
+    },
+    "hpcc": {"cc": "hpcc"},
+    "homa": {"cc": "homa"}
+  },
+  "admission": {
+    "all_15_flows_complete": true,
+    "same_seed_flow_hash_matches_all_arms": true,
+    "switch_drop_and_generic_recovery_zero": true,
+    "guard_requires_grants_and_actual_hpcc_rate_changes": true,
+    "hpcc_requires_actual_rate_changes_and_zero_grants": true,
+    "homa_requires_native_data_grants_completion_and_multiple_priorities": true
+  }
+}
