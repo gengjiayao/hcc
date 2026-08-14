@@ -198,6 +198,18 @@ class GeneralWorkloadRunnerTests(unittest.TestCase):
         self.assertEqual(command[command.index("--guard_receiver_concurrency") + 1], "1")
         self.assertEqual(command[command.index("--guard_concurrency_min_bdps") + 1], "12.0")
 
+    def test_elephant_generalization_freezes_three_workloads(self):
+        spec = read_spec(
+            self.repo / "experiments/campaigns/guard_homa_elephant_generalization.json"
+        )
+        self.assertEqual(spec["seeds"], [71, 72, 73, 74, 75])
+        self.assertEqual(
+            [workload["name"] for workload in spec["workloads"]],
+            ["AliStorage2019", "WebSearch", "FbHdp"],
+        )
+        self.assertEqual(spec["defaults"]["guard_receiver_concurrency"], 1)
+        self.assertEqual(spec["defaults"]["guard_concurrency_min_bdps"], 12.0)
+
     def test_formal_plan_requires_passing_workload_and_excludes_seed1(self):
         selected = []
         for name in ("AliStorage2019", "WebSearch"):
