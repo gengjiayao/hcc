@@ -100,6 +100,7 @@ GUARD_CONTROLLER_TRACE {guard_controller_trace}
 GUARD_CONTROLLER_TRACE_MAX_LINES {guard_controller_max_lines}
 GUARD_GRANT_TRACE {guard_grant_trace}
 GUARD_GRANT_TRACE_MAX_LINES {guard_grant_max_lines}
+HOMA_OVERCOMMIT {homa_overcommit}
 MULTI_RATE 0
 SAMPLE_FEEDBACK 0
 
@@ -125,7 +126,7 @@ cc_modes = {
     "dctcp": 8,
     "homa-simple": 10,  # legacy simplified Homa
     "guard": 11,
-    "homa": 12,         # standard Homa (SRPT + 8-priority + RESEND)
+    "homa": 12,         # Homa ns-3 mode (receiver grants + SRPT priorities)
     "guard-active-only": 13,  # receiver-rate-only GUARD component ablation
 }
 
@@ -311,6 +312,8 @@ def main():
     parser.add_argument('--guard_grant_max_lines', type=int,
                         default=DEFAULT_GUARD_GRANT_MAX_LINES,
                         help="maximum grant audit rows (default: 1000; hard maximum: 10000)")
+    parser.add_argument('--homa_overcommit', type=int, choices=range(1, 5), default=4,
+                        help="Homa scheduled messages per receiver in [1,4] (default: 4)")
     parser.add_argument('--seed', type=int, default=1,
                         help="traffic-generator and ns-3 random seed (default: 1)")
 
@@ -693,6 +696,7 @@ def main():
                                         guard_grant_trace=args.guard_grant_trace,
                                         guard_grant_output=guard_grant_output,
                                         guard_grant_max_lines=args.guard_grant_max_lines,
+                                        homa_overcommit=args.homa_overcommit,
                                         seed=args.seed,
                                         kmax_map=kmax_map, kmin_map=kmin_map, pmax_map=pmax_map)
     # else:

@@ -128,6 +128,11 @@ TypeId RdmaHw::GetTypeId(void) {
                           "Remap GUARD flows to size-based priority groups",
                           BooleanValue(true), MakeBooleanAccessor(&RdmaHw::m_guardSizePriority),
                           MakeBooleanChecker())
+            .AddAttribute("HomaOvercommitDegree",
+                          "Maximum Homa messages granted concurrently at a receiver",
+                          UintegerValue(4),
+                          MakeUintegerAccessor(&RdmaHw::m_homaOvercommitDegree),
+                          MakeUintegerChecker<uint32_t>(1, 4))
             .AddAttribute("TimelyAlpha", "Alpha of TIMELY", DoubleValue(0.875),
                           MakeDoubleAccessor(&RdmaHw::m_tmly_alpha), MakeDoubleChecker<double>())
             .AddAttribute("TimelyBeta", "Beta of TIMELY", DoubleValue(0.8),
@@ -2075,7 +2080,6 @@ RdmaHw::HomaScheduler::HomaScheduler(RdmaHw* hw)
       is_scheduled(false),
       is_stall_scheduled(false),
       pacing_interval(0),
-      overcommit_degree(1),
       stall_rto(MicroSeconds(15)) {}
 
 RdmaHw::HomaScheduler::~HomaScheduler() {}
@@ -2191,7 +2195,7 @@ void RdmaHw::HomaScheduler::Schedule() {
 
     // Pop up to overcommit_degree flows in SRPT order, grant each by 1 MTU.
     std::vector<HomaFlow*> tick;
-    uint32_t N = overcommit_degree;
+    uint32_t N = rdma_hw->m_homaOvercommitDegree;
     while (tick.size() < N && !active.empty()) {
         tick.push_back(active.pop());
     }

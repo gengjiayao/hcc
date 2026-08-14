@@ -172,6 +172,7 @@ bool guard_selective_registration = true;
 bool guard_proactive_release = true;
 bool guard_keep_last_hop_int = false;
 bool guard_size_priority = true;
+uint32_t homa_overcommit = 4;
 bool guard_lifecycle_trace = false;
 uint64_t guard_lifecycle_trace_max_lines = 1024;
 const uint64_t guard_lifecycle_trace_hard_max_lines = 10000;
@@ -1272,6 +1273,9 @@ int main(int argc, char *argv[]) {
                 conf >> guard_grant_trace_max_lines;
                 std::cerr << "GUARD_GRANT_TRACE_MAX_LINES\t"
                           << guard_grant_trace_max_lines << '\n';
+            } else if (key.compare("HOMA_OVERCOMMIT") == 0) {
+                conf >> homa_overcommit;
+                std::cerr << "HOMA_OVERCOMMIT\t\t" << homa_overcommit << '\n';
             } else if (key.compare("INT_MULTI") == 0) {
                 conf >> int_multi;
                 std::cerr << "INT_MULTI\t\t\t\t" << int_multi << '\n';
@@ -1412,6 +1416,10 @@ int main(int argc, char *argv[]) {
 
     if (guard_lambda < 1.0) {
         std::cerr << "GUARD_LAMBDA must be at least 1.0\n";
+        return 1;
+    }
+    if (homa_overcommit < 1 || homa_overcommit > 4) {
+        std::cerr << "HOMA_OVERCOMMIT must be in [1, 4]\n";
         return 1;
     }
     if (guard_lifecycle_trace && cc_mode != 11 && cc_mode != 13) {
@@ -1844,6 +1852,7 @@ int main(int argc, char *argv[]) {
                                  BooleanValue(guard_proactive_release));
             rdmaHw->SetAttribute("GuardKeepLastHopInt", BooleanValue(guard_keep_last_hop_int));
             rdmaHw->SetAttribute("GuardSizePriority", BooleanValue(guard_size_priority));
+            rdmaHw->SetAttribute("HomaOvercommitDegree", UintegerValue(homa_overcommit));
             if (guard_lifecycle_trace) {
                 rdmaHw->ConfigureGuardLifecycleTrace(&guard_lifecycle_trace_sink);
             }
@@ -2519,6 +2528,7 @@ int main(int argc, char *argv[]) {
             "grants_received resends_sent resends_received completion_notices_sent "
             "completion_notices_received messages_tracked "
             "messages_completed max_pending_messages\n");
+    fprintf(homa_stats_output, "homa_config overcommit_degree %u\n", homa_overcommit);
     uint64_t homa_totals[12] = {0};
     uint64_t homa_max_active = 0;
     for (uint32_t i = 0; i < node_num; i++) {
