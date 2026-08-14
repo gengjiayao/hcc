@@ -133,6 +133,7 @@ def admission(
 
 def formal(
     campaign: Path, spec: Mapping[str, object], preflight: Mapping[str, object],
+    export_dir: Path | None = None,
 ) -> None:
     admission_row = read_json(campaign / "summary" / "admission.json")
     if admission_row.get("all_arms_passed") is not True:
@@ -187,6 +188,47 @@ def formal(
     write_csv(summary / "parameter_per_seed.csv", per_seed)
     write_csv(summary / "parameter_ci.csv", metrics)
     write_json(summary / "selection.json", decision)
+    if export_dir is not None:
+        export_dir.mkdir(parents=True, exist_ok=True)
+        portable_runs = [{
+            "seed": row["seed"], "arm": row["arm"], "git_sha": row["git_sha"],
+            "flow_sha256": row["flow_sha256"], "flow_count": row["flow_count"],
+            "output_id": row["output_id"],
+            "output_dir": f"mix/output/{row['output_id']}",
+            "output_bytes": row["output_bytes"], "elapsed_seconds": row["elapsed_seconds"],
+            "passed": row["passed"],
+        } for row in runs]
+        write_json(export_dir / "spec.json", spec)
+        write_json(export_dir / "admission.json", admission_row)
+        write_json(export_dir / "selection.json", decision)
+        write_csv(export_dir / "run_registry.csv", portable_runs)
+        write_csv(export_dir / "per_seed.csv", per_seed)
+        write_csv(export_dir / "ci.csv", metrics)
+        (export_dir / "README.md").write_text(
+            "# GUARD development parameter search\n\n"
+            "This directory preserves a frozen development-stage search. It is not a "
+            "held-out performance claim. `selection.json` applies the preregistered "
+            "paired-CI gates; raw outputs remain under the repository-relative locators "
+            "in `run_registry.csv`.\n",
+            encoding="utf-8",
+        )
+        tracked = (
+            "README.md", "admission.json", "ci.csv", "per_seed.csv",
+            "run_registry.csv", "selection.json", "spec.json",
+        )
+        write_json(export_dir / "manifest.json", {
+            "schema_version": 1,
+            "development_only": True,
+            "simulator_git_shas": sorted({str(row["git_sha"]) for row in runs}),
+            "seeds": list(map(int, spec["seeds"])),
+            "raw_outputs_in_git": False,
+            "raw_locator_rule": "run_registry output_dir is relative to the guard repository",
+            "files": {
+                name: {"bytes": (export_dir / name).stat().st_size,
+                       "sha256": sha256_file(export_dir / name)}
+                for name in tracked
+            },
+        })
     print(
         f"validated {len(runs)} runs; selection={decision['selected_arm']} "
         f"status={decision['status']}")
@@ -197,6 +239,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("campaign", type=Path)
     parser.add_argument("--spec", type=Path, required=True)
     parser.add_argument("--admission-only", action="store_true")
+    parser.add_argument("--export-dir", type=Path)
     args = parser.parse_args(argv)
     campaign = args.campaign.resolve()
     spec_path = args.spec.resolve()
@@ -211,7 +254,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.admission_only:
         print(f"admission all_arms_passed={admitted['all_arms_passed']}")
         return 0 if admitted["all_arms_passed"] else 1
-    formal(campaign, spec, preflight)
+    formal(
+        campaign, spec, preflight,
+        args.export_dir.resolve() if args.export_dir else None,
+    )
     return 0
 
 
