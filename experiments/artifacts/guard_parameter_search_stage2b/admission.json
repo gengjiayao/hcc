@@ -1,0 +1,27 @@
+{
+  "all_arms_passed": true,
+  "arms": [
+    {
+      "arm": "concurrency_all",
+      "failures": [],
+      "flow_sha256": "ff772b5bbcf194b169dc2e0f072037a77d7ce364abec88499a510c3758c5f2ee",
+      "output_id": "414122611",
+      "passed": true,
+      "seed": 56
+    },
+    {
+      "arm": "elephant_one",
+      "failures": [],
+      "flow_sha256": "ff772b5bbcf194b169dc2e0f072037a77d7ce364abec88499a510c3758c5f2ee",
+      "output_id": "541370781",
+      "passed": true,
+      "seed": 56
+    }
+  ],
+  "decision": "extend_all_grid_points",
+  "flow_hash_matched": true,
+  "gate": "first seed mechanism and safety only; no performance metric inspected",
+  "preflight_sha256": "baf109c02f2dc54251d1cd36e0f483a0dffefd1151aae11e22a790169fe19b4f",
+  "schema_version": 1,
+  "seed": 56
+}

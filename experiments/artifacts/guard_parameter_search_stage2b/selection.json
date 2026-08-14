@@ -1,0 +1,55 @@
+{
+  "baseline_arm": "concurrency_all",
+  "candidates": [
+    {
+      "arm": "elephant_one",
+      "eligible": false,
+      "gates": {
+        "gt_1MB_fct_us_mean_ci95_high_below_0.0": false,
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_0.0": true,
+        "queue_bytes_mean_ci95_high_at_most_25.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "gt_1MB_fct_us_mean": {
+          "ci95_half_width": 1.9390832160082174,
+          "ci95_high": 0.09458224685115746,
+          "ci95_low": -3.783584185165277,
+          "mean": -1.84450096915706,
+          "n": 5
+        },
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.06194507340378936,
+          "ci95_high": 0.03824288206286438,
+          "ci95_low": -0.08564726474471435,
+          "mean": -0.02370219134092498,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.7648966609063285,
+          "ci95_high": -0.34003084958116603,
+          "ci95_low": -1.869824171393823,
+          "mean": -1.1049275104874945,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 5.206450920862026,
+          "ci95_high": -10.521288884440292,
+          "ci95_low": -20.934190726164342,
+          "mean": -15.727739805302317,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        -1.84450096915706,
+        -1.1049275104874945,
+        -15.727739805302317
+      ]
+    }
+  ],
+  "requires_fresh_holdout_before_claim": true,
+  "schema_version": 1,
+  "selected_arm": "concurrency_all",
+  "selection_used_performance_direction": true,
+  "status": "no_candidate_beats_frozen_gates"
+}
