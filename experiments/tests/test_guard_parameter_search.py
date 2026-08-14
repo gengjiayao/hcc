@@ -19,6 +19,7 @@ CONCURRENCY_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_se
 ELEPHANT_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage2b.json"
 THRESHOLD_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage2c.json"
 TAIL_THRESHOLD_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage3a.json"
+ADAPTIVE_TARGET_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage3b.json"
 
 
 class GuardParameterSearchTest(unittest.TestCase):
@@ -163,6 +164,27 @@ class GuardParameterSearchTest(unittest.TestCase):
         self.assertIn("--guard_tail_bypass_bdps 2.0", joined)
         self.assertIn("--guard_receiver_concurrency 1", joined)
         self.assertIn("--guard_concurrency_min_bdps 12.0", joined)
+
+    def test_adaptive_target_grid_uses_fresh_seeds_and_fixed_floor(self):
+        spec = read_spec(ADAPTIVE_TARGET_SPEC_PATH)
+        self.assertEqual(spec["search_kind"], "adaptive_fabric_target")
+        self.assertEqual(spec["seeds"], [81, 82, 83, 84, 85])
+        self.assertEqual(spec["defaults"]["guard_target_floor"], 0.95)
+        enabled = [
+            arm for arm in spec["arms"].values()
+            if arm["guard_adaptive_fabric_target"] == 1
+        ]
+        self.assertEqual(
+            {arm["guard_queue_budget_bdps"] for arm in enabled},
+            {0.25, 0.5, 1.0},
+        )
+        command = run_command(
+            REPO, spec, {"name": "AliStorage50", "cdf": "AliStorage2019"},
+            {"seed": 81, "path": "/tmp/frozen-flow.txt"}, "budget050")
+        joined = " ".join(command)
+        self.assertIn("--guard_adaptive_fabric_target 1", joined)
+        self.assertIn("--guard_target_floor 0.95", joined)
+        self.assertIn("--guard_queue_budget_bdps 0.5", joined)
 
     def test_selection_applies_primary_and_constraint_gates(self):
         result = select_candidate(self.spec, self.rows())
