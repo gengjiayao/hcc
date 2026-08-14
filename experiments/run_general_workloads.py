@@ -60,8 +60,13 @@ def read_spec(path: Path) -> Mapping[str, object]:
             raise CampaignError(f"general workload spec is missing {field}")
     if spec["seeds"] != [1, 2, 3, 4, 5]:
         raise CampaignError("formal general workload comparison requires seeds 1..5")
-    if set(spec["arms"]) != {"full", "hpcc", "receiver"}:
-        raise CampaignError("formal general workload comparison requires exactly three arms")
+    arm_names = set(spec["arms"])
+    supported = ({"full", "hpcc", "receiver"}, {"guard", "hpcc", "homa"})
+    if arm_names not in supported:
+        raise CampaignError(
+            "formal general workload comparison requires full/hpcc/receiver "
+            "or guard/hpcc/homa"
+        )
     limits = dict(spec["limits"])
     if int(limits["max_flows"]) != 10_000:
         raise CampaignError("frozen general workload flow cap must be 10000")
@@ -70,9 +75,20 @@ def read_spec(path: Path) -> Mapping[str, object]:
         raise CampaignError("frozen general workload inputs must use PG3")
     if defaults.get("monitor_profile") != "bulk":
         raise CampaignError("formal general workload runs must use bulk monitoring")
-    for arm in ("full", "receiver"):
-        if int(dict(spec["arms"])[arm].get("guard_size_priority", -1)) != 0:
-            raise CampaignError(f"{arm} must explicitly disable size-priority remapping")
+    if arm_names == {"full", "hpcc", "receiver"}:
+        for arm in ("full", "receiver"):
+            if int(dict(spec["arms"])[arm].get("guard_size_priority", -1)) != 0:
+                raise CampaignError(f"{arm} must explicitly disable size-priority remapping")
+    else:
+        guard = dict(dict(spec["arms"])["guard"])
+        if guard.get("cc") != "guard" or dict(spec["arms"])["homa"].get("cc") != "homa":
+            raise CampaignError("guard/hpcc/homa arm names must map to their matching cc modes")
+        for field in (
+            "guard_size_priority", "guard_sender_srpt",
+            "guard_srpt_quantum_packets", "guard_work_conserving",
+        ):
+            if field not in guard:
+                raise CampaignError(f"optimized guard arm must freeze {field}")
     return spec
 
 
@@ -307,6 +323,8 @@ def run_command(
     profile_name = str(workload["selected_profile"])
     profile = dict(workload["attempts"][profile_name]["profile"])
     arm = dict(spec["arms"][arm_name])
+    control = dict(defaults)
+    control.update(arm)
     # run.py itself is Python 3, while this ns-3 tree's waf launcher is pinned
     # to Python 2.7.  Export the pin through the driver so its child ./waf sees
     # the same interpreter used for the optimized build.
@@ -327,16 +345,26 @@ def run_command(
         "--analysis_warmup", str(defaults["analysis_warmup"]),
         "--buffer", str(defaults["buffer"]),
         "--monitor_profile", str(defaults["monitor_profile"]),
-        "--guard_lambda", str(defaults["guard_lambda"]),
-        "--guard_beta", str(defaults["guard_beta"]),
-        "--guard_gamma", str(defaults["guard_gamma"]),
-        "--guard_selective_registration", str(defaults["guard_selective_registration"]),
-        "--guard_proactive_release", str(defaults["guard_proactive_release"]),
-        "--guard_keep_last_hop_int", str(defaults["guard_keep_last_hop_int"]),
     ]
-    if "guard_size_priority" in arm:
-        command.extend(["--guard_size_priority", str(arm["guard_size_priority"])])
-    if admission and arm_name == "full":
+    guard_options = (
+        "guard_lambda", "guard_beta", "guard_gamma",
+        "guard_selective_registration", "guard_proactive_release",
+        "guard_keep_last_hop_int", "guard_size_priority", "guard_sender_srpt",
+        "guard_srpt_quantum_packets", "guard_work_conserving",
+        "guard_rebalance_interval_us", "guard_demand_threshold",
+        "guard_receiver_util_threshold",
+    )
+    homa_options = ("homa_overcommit", "homa_resend_timeout_us")
+    selected_options: Sequence[str] = ()
+    if str(arm["cc"]) in ("guard", "guard-active-only"):
+        selected_options = guard_options
+    elif str(arm["cc"]) == "homa":
+        selected_options = homa_options
+    for option in selected_options:
+        if option in control:
+            command.extend([f"--{option}", str(control[option])])
+    trace_arm = str(dict(spec["admission"]).get("controller_trace_arm", "full"))
+    if admission and arm_name == trace_arm:
         command.extend([
             "--guard_controller_trace", "1",
             "--guard_controller_max_lines",
@@ -363,7 +391,7 @@ def planned_runs(
         for trace in workload["selected_traces"]:
             if int(trace["seed"]) not in allowed_seeds:
                 continue
-            for arm in ("full", "hpcc", "receiver"):
+            for arm in spec["arms"]:
                 plans.append((workload, trace, arm))
     return plans
 

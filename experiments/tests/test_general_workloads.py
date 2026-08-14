@@ -94,6 +94,33 @@ class GeneralWorkloadRunnerTests(unittest.TestCase):
         self.assertNotIn("--guard_controller_trace", commands["hpcc"])
         self.assertNotIn("--guard_controller_trace", commands["receiver"])
 
+    def test_guard_homa_spec_freezes_protocol_native_schedulers(self):
+        spec = read_spec(
+            self.repo / "experiments/campaigns/guard_homa_general_formal.json"
+        )
+        workload = {
+            "name": "AliStorage2019", "cdf": "AliStorage2019",
+            "selected_profile": "primary",
+            "attempts": {"primary": {"profile": {
+                "topo": "leaf_spine_16_100G_OS4", "hosts": 16,
+                "oversubscription": 4, "simul_time": 0.02,
+                "netload": 40, "bw": 100,
+            }}},
+        }
+        trace = {"seed": 1, "path": "/tmp/frozen-flow.txt", "sha256": "same"}
+        commands = {
+            arm: run_command(self.repo, spec, workload, trace, arm, True)
+            for arm in ("guard", "hpcc", "homa")
+        }
+        guard = commands["guard"]
+        self.assertEqual(guard[guard.index("--guard_lambda") + 1], "1.4")
+        self.assertEqual(guard[guard.index("--guard_size_priority") + 1], "1")
+        self.assertEqual(guard[guard.index("--guard_sender_srpt") + 1], "1")
+        self.assertEqual(guard[guard.index("--guard_srpt_quantum_packets") + 1], "64")
+        self.assertIn("--guard_controller_trace", guard)
+        self.assertEqual(commands["homa"][commands["homa"].index("--cc") + 1], "homa")
+        self.assertNotIn("--guard_controller_trace", commands["homa"])
+
     def test_formal_plan_requires_passing_workload_and_excludes_seed1(self):
         selected = []
         for name in ("AliStorage2019", "WebSearch"):
