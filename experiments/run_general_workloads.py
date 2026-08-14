@@ -96,7 +96,8 @@ def read_spec(path: Path) -> Mapping[str, object]:
                 raise CampaignError(f"guard arm must freeze {field}")
         optimized_fields = (
             "guard_one_rtt_bypass", "guard_tail_bypass",
-            "guard_tail_bypass_bdps", "guard_ack_interval_packets",
+            "guard_tail_bypass_bdps", "guard_adaptive_fabric_target",
+            "guard_target_floor", "guard_queue_budget_bdps", "guard_ack_interval_packets",
             "guard_fixed_window", "guard_remaining_aware",
             "guard_min_share_fraction", "guard_remaining_exponent",
             "guard_grant_refresh_bdps",
@@ -380,6 +381,7 @@ def run_command(
         "guard_selective_registration", "guard_proactive_release",
         "guard_keep_last_hop_int", "guard_size_priority", "guard_sender_srpt",
         "guard_one_rtt_bypass", "guard_tail_bypass", "guard_tail_bypass_bdps",
+        "guard_adaptive_fabric_target", "guard_target_floor", "guard_queue_budget_bdps",
         "guard_ack_interval_packets", "guard_fixed_window", "guard_remaining_aware",
         "guard_min_share_fraction", "guard_remaining_exponent",
         "guard_receiver_concurrency", "guard_concurrency_min_bdps",
