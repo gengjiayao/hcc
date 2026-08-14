@@ -14,13 +14,14 @@ SPEC = ROOT / "experiments" / "campaigns" / "guard_homa_collectives.json"
 class CollectiveRunnerTest(unittest.TestCase):
     def test_frozen_spec_and_arm_commands(self):
         spec = read_spec(SPEC)
-        trace = {"seed": 3, "flow_file": "/tmp/frozen-flow.txt"}
+        trace = {"seed": 3, "flow_file": "/tmp/frozen-flow.txt", "buffer_mb": 16}
         guard = run_command(ROOT, spec, trace, "guard")
         hpcc = run_command(ROOT, spec, trace, "hpcc")
         homa = run_command(ROOT, spec, trace, "homa")
         self.assertIn("guard", guard)
         self.assertIn("--guard_lambda", guard)
         self.assertIn("1.4", guard)
+        self.assertEqual(guard[guard.index("--buffer") + 1], "16")
         self.assertNotIn("--guard_lambda", hpcc)
         self.assertIn("homa", homa)
         self.assertIn("--homa_resend_timeout_us", homa)
