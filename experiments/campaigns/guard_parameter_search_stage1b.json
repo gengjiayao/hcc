@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "search_kind": "srpt_quantum",
+  "name": "guard-parameter-search-stage1b",
+  "purpose": "Test whether more frequent bounded round-robin service improves GUARD's high-load elephant latency after the eta/rho grid retained eta=0 and rho=1.",
+  "selection_policy": "The four SRPT quanta, constraints, metric order, and seeds are frozen before preflight. Seed 31 is inspected only for mechanism admission. All admitted seeds 31-35 enter the paired analysis; no seed or quantum may be removed because of its performance direction.",
+  "seeds": [31, 32, 33, 34, 35],
+  "limits": {
+    "max_flows": 10000,
+    "run_bytes": 104857600,
+    "campaign_bytes": 536870912,
+    "run_timeout_seconds": 1800
+  },
+  "defaults": {
+    "topo": "leaf_spine_8_100G_OS2",
+    "hosts": 8,
+    "oversubscription": 2,
+    "simul_time": 0.01,
+    "netload": 50,
+    "bw": 100,
+    "priority_group": 3,
+    "analysis_warmup": 0.005,
+    "buffer": 9,
+    "lb": "fecmp",
+    "pfc": 1,
+    "irn": 0,
+    "monitor_profile": "bulk",
+    "guard_lambda": 1.8,
+    "guard_beta": 0.125,
+    "guard_gamma": 1.0,
+    "guard_selective_registration": 1,
+    "guard_proactive_release": 1,
+    "guard_keep_last_hop_int": 0,
+    "guard_size_priority": 1,
+    "guard_sender_srpt": 1,
+    "guard_one_rtt_bypass": 1,
+    "guard_tail_bypass": 1,
+    "guard_tail_bypass_bdps": 8.0,
+    "guard_ack_interval_packets": 8,
+    "guard_fixed_window": 1,
+    "guard_remaining_aware": 1,
+    "guard_min_share_fraction": 0.0,
+    "guard_remaining_exponent": 1.0,
+    "guard_grant_refresh_bdps": 1.0,
+    "guard_work_conserving": 0,
+    "guard_rebalance_interval_us": 200,
+    "guard_demand_threshold": 0.75,
+    "guard_receiver_util_threshold": 0.75
+  },
+  "admission": {
+    "seed": 31,
+    "require_complete": true,
+    "require_zero_drop_recovery": true,
+    "require_grants": true,
+    "require_shared_fabric_updates": true,
+    "require_remaining_refresh": true
+  },
+  "selection": {
+    "baseline_arm": "q64",
+    "primary_metric": "gt_1MB_fct_us_mean",
+    "require_primary_paired_percent_ci95_high_below": 0.0,
+    "constraints": {
+      "overall_fct_us_mean": 1.0,
+      "le_8KB_slowdown_p95": 1.0,
+      "queue_bytes_mean": 10.0
+    },
+    "tie_break_metrics": [
+      "gt_1MB_fct_us_mean",
+      "overall_fct_us_mean",
+      "queue_bytes_mean"
+    ]
+  },
+  "arms": {
+    "q16": {"cc": "guard", "guard_srpt_quantum_packets": 16},
+    "q32": {"cc": "guard", "guard_srpt_quantum_packets": 32},
+    "q64": {"cc": "guard", "guard_srpt_quantum_packets": 64},
+    "q128": {"cc": "guard", "guard_srpt_quantum_packets": 128}
+  },
+  "workloads": [
+    {"name": "AliStorage50", "cdf": "AliStorage2019"}
+  ],
+  "flow_size_buckets": [
+    {"name": "le_8KB", "max_bytes": 8192},
+    {"name": "8KB_to_1BDP", "min_exclusive_bytes": 8192, "max_bytes": 104000},
+    {"name": "1BDP_to_1MB", "min_exclusive_bytes": 104000, "max_bytes": 1048576},
+    {"name": "gt_1MB", "min_exclusive_bytes": 1048576}
+  ]
+}
