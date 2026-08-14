@@ -1,0 +1,5 @@
+arm,min_share_fraction,output_id,flows_completed,cross_target_fct_us,local_target_fct_us,all_flow_mean_fct_us,cross_delta_pct,local_delta_pct,mean_delta_pct,reports_sent,rebalance_events,grant_updates,max_reclaimed_bps,switch_drops,decision
+baseline,0.25,458106336,23,6055.987,558.139,6283.891,0.000000,0.000000,0.000000,0,0,0,0,0,reference
+cap-aware,0.25,370772912,23,7539.441,535.559,6338.097,24.495660,-4.045587,0.862618,5114,140,223,21636000000,0,reject-donor-regression
+cap-aware,0.50,69870043,23,5041.676,568.623,6328.111,-16.748897,1.878385,0.703704,5079,149,225,9136000000,0,advance-only-to-multiseed-gate
+cap-aware,0.75,702909520,23,6488.374,615.139,6203.592,7.139827,10.212510,-1.277855,4939,125,192,5035000000,0,reject-both-targets-regress
