@@ -1,0 +1,25 @@
+{
+  "all_seeds_admitted": true,
+  "claim": "The same target flow records an actual receiver-grant pacing change before actual shared-fabric-cap pacing changes.",
+  "flow_sha256": {
+    "1": "15c27d778c36b5f3f7f63235f8cd2d73fe86f90e20924bd8bc51b1333fb5ba3f",
+    "2": "29157a24cb9f2cf4c08c9ecfba09f44f461fce459672032d915edc961f1bb266",
+    "3": "3d67eac31716bf0dfcf6e398e7d419a2af9ee9d171e8e5a74a891c6b5b7b9163",
+    "4": "672f201df4f62a933c82ea66693a593a7eea1fd470f0cd0ab4ee39636c44552d",
+    "5": "02a9e275072409105d4a63344fafb36725c148671b76f2bf60138eab612a3065"
+  },
+  "per_flow_csv_sha256": "f2dcdba7d96a8d179174c004910d84e48d6f99b0a249dfe1427d5f2fabe5a818",
+  "per_seed_csv_sha256": "f2813010c60072fcb1a1f1c2de5d23189616616571029ec0b9aa6a7eb83e7a54",
+  "run_ids": {
+    "1": "317975444",
+    "2": "164953307",
+    "3": "380423054",
+    "4": "410950524",
+    "5": "25586685"
+  },
+  "schema_version": 1,
+  "seeds": 5,
+  "simulator_sha": "88f9a76b7dc0e76241d2a785586969cd93e221ec",
+  "status": "admitted",
+  "target_flow_id": 0
+}

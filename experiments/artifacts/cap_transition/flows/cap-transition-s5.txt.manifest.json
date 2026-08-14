@@ -1,0 +1,18 @@
+{
+  "fabric_phase_delay_us": 100.0,
+  "fabric_phase_flows_including_target": 8,
+  "flow_bytes": 4194304,
+  "flow_count": 11,
+  "jitter_us": 0.5,
+  "priority_group": 4,
+  "purpose": "Exercise receiver-grant then shared-fabric pacing changes on flow 0->8.",
+  "receiver_phase_flows": 4,
+  "schema_version": 1,
+  "seed": 5,
+  "sha256": "02a9e275072409105d4a63344fafb36725c148671b76f2bf60138eab612a3065",
+  "target": {
+    "destination": 8,
+    "file_row": 1,
+    "source": 0
+  }
+}
