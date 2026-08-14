@@ -370,16 +370,18 @@ the expected maximum active set and stable interval, equal sent/received event
 multisets, zero truncation/drop/recovery, and equality among raw grant bytes,
 the grant packet count, and `grant_bytes_sent`.
 
-Grant size is controller-dependent in the current simulator.  Full GUARD uses
-INT mode 0, so `qbbHeader` serializes its static five-hop INT area even though
-the grant itself does not need INT: the simulated serialized grant is 94 B.
-Receiver-only uses mode 5 and its shorter grant is padded to 60 B.  The extra
-34 B in the full arm is therefore an implementation artifact and a possible
-optimization target, not unavoidable protocol payload.  The audit reports
-these actual simulated sizes first.  It also records an explicitly labeled
-Ethernet-equivalent accounting value (an additional 24 B for preamble/SFD,
-FCS, and inter-packet gap), but that conversion is not the primary simulator
-measurement.
+The original formal receiver-share runs used the legacy full `qbbHeader` for
+GUARD grants.  It serialized an unused five-hop INT area, producing 94-B
+simulated frames versus 60 B for receiver-only.  Current GUARD instead uses a
+dedicated 10-B `GuardGrantHeader` under protocol `0xF9`; both arms now pad to a
+60-B simulated frame.  The paired audit in
+`artifacts/compact_grant_microbenchmark` holds the flow trace and controller
+configuration fixed.  Four grants shrink from 376 to 240 serialized bytes
+(36.17%) while their semantic sequence, every non-byte GUARD counter, and the
+two FCT rows remain identical.  It reports simulated bytes first and labels
+the optional Ethernet-equivalent value separately (24 additional bytes for
+preamble/SFD, FCS, and inter-packet gap).  This removes per-grant padding but
+does not change the measured N-squared grant count.
 
 The heterogeneous case adds source-0 background flows to local destinations
 2--7 while sources 0 and 1 send 16 MiB target flows to host 15.  Local

@@ -28,16 +28,24 @@
   "homogeneous": {
     "active_flow_counts": [2, 4, 8, 15],
     "flow_bytes": 8388608,
-    "simulated_serialized_grant_bytes_per_packet": {
+    "legacy_simulated_serialized_grant_bytes_per_packet_at_formal_run": {
       "guard": 94,
       "guard-active-only": 60
     },
-    "ethernet_equivalent_bytes_per_packet": {
+    "legacy_ethernet_equivalent_bytes_per_packet_at_formal_run": {
       "guard": 118,
       "guard-active-only": 84
     },
+    "current_compact_simulated_serialized_grant_bytes_per_packet": {
+      "guard": 60,
+      "guard-active-only": 60
+    },
+    "current_compact_ethernet_equivalent_bytes_per_packet": {
+      "guard": 84,
+      "guard-active-only": 84
+    },
     "ethernet_equivalent_accounting": "simulated serialized frame plus 8-byte preamble/SFD, 4-byte FCS, and 12-byte inter-packet gap",
-    "controller_size_explanation": "Full GUARD runs IntHeader mode 0, so qbbHeader serializes its five-hop INT area even in a grant; receiver-only runs mode 5 and pads the shorter PPP/IPv4/qbb frame to 60 bytes.",
+    "controller_size_explanation": "The formal receiver-share runs predate the compact grant header: legacy GUARD serialized the unused five-hop INT area into a 94-byte grant, while receiver-only used a 60-byte frame. Current GUARD uses protocol 0xF9 and a 10-byte GuardGrantHeader, so both arms serialize 60-byte simulated frames. The paired compact-grant audit preserves the legacy and current evidence separately.",
     "grant_target_absolute_error_bps_max": 1000000,
     "stable_max_active_window_ns_min": 100000
   },
