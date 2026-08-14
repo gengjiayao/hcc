@@ -283,7 +283,11 @@ def generate(args):
         raise ValueError("--all-to-all-jitter-us exceeds the workload duration")
     if not math.isfinite(args.ring_jitter_us) or args.ring_jitter_us < 0:
         raise ValueError("--ring-jitter-us must be finite and non-negative")
-    ring_step_s = duration_s / float(2 * (args.hosts - 1) + 1)
+    ring_span_s = (args.ring_span_ms / 1000.0
+                   if args.ring_span_ms is not None else duration_s)
+    if not math.isfinite(ring_span_s) or ring_span_s <= 0 or ring_span_s > duration_s:
+        raise ValueError("--ring-span-ms must be positive and no larger than --duration-ms")
+    ring_step_s = ring_span_s / float(2 * (args.hosts - 1) + 1)
     if args.ring_jitter_us * 1e-6 >= ring_step_s:
         raise ValueError("--ring-jitter-us must be below the open-loop step interval")
     if not 1 <= args.max_flows <= HARD_MAX_FLOWS:
@@ -311,7 +315,7 @@ def generate(args):
     elif args.workload == "ring-allreduce":
         flows = make_ring_allreduce(
             args.hosts, args.tensor_bytes, args.priority_group,
-            args.base_time, duration_s, args.seed, args.ring_jitter_us,
+            args.base_time, ring_span_s, args.seed, args.ring_jitter_us,
             args.ring_placement)
     elif args.workload == "all-to-all":
         flows = make_all_to_all(
@@ -440,6 +444,9 @@ def parse_args(argv=None):
         "--ring-placement", choices=("numeric", "alternating"), default="numeric",
         help="map logical neighbors numerically or alternate between host halves")
     parser.add_argument(
+        "--ring-span-ms", type=float,
+        help="schedule open-loop ring steps inside this prefix of the run duration")
+    parser.add_argument(
         "--all-to-all-jitter-us", type=float, default=0.0,
         help="seeded per-flow uniform start jitter for all-to-all (default: legacy spread)")
     parser.add_argument("--oflm-bdp-bytes", type=positive_int,
@@ -510,6 +517,7 @@ def main(argv=None):
             "tensor_bytes": args.tensor_bytes,
             "ring_jitter_us": args.ring_jitter_us,
             "ring_placement": args.ring_placement,
+            "ring_span_ms": args.ring_span_ms,
             "all_to_all_jitter_us": args.all_to_all_jitter_us,
             "oflm_bdp_bytes": args.oflm_bdp_bytes,
             "oflm_elephant_flows": args.oflm_elephant_flows,
