@@ -1,0 +1,63 @@
+{
+  "baseline_arm": "adaptive_off",
+  "candidates": [
+    {
+      "arm": "scope20",
+      "eligible": false,
+      "gates": {
+        "gt_1MB_fct_us_mean_ci95_high_at_most_0.5": false,
+        "le_8KB_slowdown_p95_ci95_high_at_most_0.5": true,
+        "overall_fct_us_mean_ci95_high_at_most_0.5": true,
+        "overall_slowdown_p99_ci95_high_at_most_0.5": false,
+        "queue_bytes_mean_ci95_high_below_0.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "gt_1MB_fct_us_mean": {
+          "ci95_half_width": 0.8184768191124189,
+          "ci95_high": 0.8773708466305454,
+          "ci95_low": -0.7595827915942923,
+          "mean": 0.05889402751812659,
+          "n": 5
+        },
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.07820834560577428,
+          "ci95_high": 0.0982526565381883,
+          "ci95_low": -0.05816403467336025,
+          "mean": 0.020044310932414024,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.34476258135240695,
+          "ci95_high": 0.29361399213003253,
+          "ci95_low": -0.39591117057478137,
+          "mean": -0.05114858922237442,
+          "n": 5
+        },
+        "overall_slowdown_p99": {
+          "ci95_half_width": 1.752847318574314,
+          "ci95_high": 1.0933353879670757,
+          "ci95_low": -2.412359249181552,
+          "mean": -0.6595119306072383,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 4.251674997781527,
+          "ci95_high": -3.160944969562977,
+          "ci95_low": -11.664294965126032,
+          "mean": -7.412619967344504,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        -7.412619967344504,
+        -0.05114858922237442,
+        0.05889402751812659
+      ]
+    }
+  ],
+  "requires_fresh_holdout_before_claim": true,
+  "schema_version": 1,
+  "selected_arm": "adaptive_off",
+  "selection_used_performance_direction": true,
+  "status": "no_candidate_beats_frozen_gates"
+}

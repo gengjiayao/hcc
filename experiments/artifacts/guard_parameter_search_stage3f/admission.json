@@ -1,0 +1,27 @@
+{
+  "all_arms_passed": true,
+  "arms": [
+    {
+      "arm": "adaptive_off",
+      "failures": [],
+      "flow_sha256": "aa2c7bcc21c9f689370b8902baa019b4ac2aa150350ef7c73a191fa9e53affee",
+      "output_id": "652892667",
+      "passed": true,
+      "seed": 101
+    },
+    {
+      "arm": "scope20",
+      "failures": [],
+      "flow_sha256": "aa2c7bcc21c9f689370b8902baa019b4ac2aa150350ef7c73a191fa9e53affee",
+      "output_id": "348084992",
+      "passed": true,
+      "seed": 101
+    }
+  ],
+  "decision": "extend_all_grid_points",
+  "flow_hash_matched": true,
+  "gate": "first seed mechanism and safety only; no performance metric inspected",
+  "preflight_sha256": "ab65f10fd7256655dfc6b58171e86db7bcc9eb66dcec1025e95fe338fccf34dd",
+  "schema_version": 1,
+  "seed": 101
+}
