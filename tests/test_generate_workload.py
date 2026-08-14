@@ -165,6 +165,22 @@ class GenerateWorkloadTest(unittest.TestCase):
                 flow.start_s < nominal + min(0.5e-6, step_interval)
                 for flow in step_flows))
 
+    def test_alternating_ring_places_every_edge_across_host_halves(self):
+        args = generate_workload.parse_args([
+            "--workload", "ring-allreduce", "--output", "unused",
+            "--hosts", "16", "--duration-ms", "10", "--ring-span-ms", "2",
+            "--ring-placement", "alternating", "--ring-jitter-us", "0.5",
+        ])
+        flows = generate_workload.generate(args)
+        self.assertEqual(len(flows), 480)
+        self.assertTrue(all((flow.src < 8) != (flow.dst < 8) for flow in flows))
+        self.assertEqual(
+            {(flow.src, flow.dst) for flow in flows[:16]},
+            {(0, 8), (8, 1), (1, 9), (9, 2), (2, 10), (10, 3),
+             (3, 11), (11, 4), (4, 12), (12, 5), (5, 13), (13, 6),
+             (6, 14), (14, 7), (7, 15), (15, 0)},
+        )
+
     def test_oflm_churn_has_fixed_rate_bdp_mix_behind_active_elephants(self):
         args = generate_workload.parse_args([
             "--workload", "oflm-churn", "--output", "unused",
