@@ -1,0 +1,370 @@
+{
+  "baseline_arm": "eta000_rho100_q64",
+  "candidates": [
+    {
+      "arm": "eta000_rho075_q64",
+      "eligible": false,
+      "gates": {
+        "gt_1MB_fct_us_mean_ci95_high_below_0.0": false,
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_1.0": true,
+        "queue_bytes_mean_ci95_high_at_most_10.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "gt_1MB_fct_us_mean": {
+          "ci95_half_width": 0.5989056722137017,
+          "ci95_high": 0.9697612169990423,
+          "ci95_low": -0.22805012742836117,
+          "mean": 0.37085554478534055,
+          "n": 5
+        },
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.06935537716845584,
+          "ci95_high": 0.12035715920820365,
+          "ci95_low": -0.01835359512870803,
+          "mean": 0.05100178203974781,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.18156127283772247,
+          "ci95_high": 0.35594111517324556,
+          "ci95_low": -0.007181430502199382,
+          "mean": 0.1743798423355231,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 1.2928399253955625,
+          "ci95_high": 3.7937877799772215,
+          "ci95_low": 1.2081079291860963,
+          "mean": 2.500947854581659,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        0.37085554478534055,
+        0.1743798423355231,
+        2.500947854581659
+      ]
+    },
+    {
+      "arm": "eta000_rho050_q64",
+      "eligible": false,
+      "gates": {
+        "gt_1MB_fct_us_mean_ci95_high_below_0.0": false,
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_1.0": true,
+        "queue_bytes_mean_ci95_high_at_most_10.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "gt_1MB_fct_us_mean": {
+          "ci95_half_width": 0.8387480618567288,
+          "ci95_high": 1.5541727597691464,
+          "ci95_low": -0.1233233639443112,
+          "mean": 0.7154246979124176,
+          "n": 5
+        },
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.01477963685645606,
+          "ci95_high": 0.022657302755309063,
+          "ci95_low": -0.0069019709576030545,
+          "mean": 0.007877665898853005,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.30255528945609556,
+          "ci95_high": 0.711945792921852,
+          "ci95_low": 0.1068352140096609,
+          "mean": 0.40939050346575645,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 2.692219999323154,
+          "ci95_high": 7.634862056926103,
+          "ci95_low": 2.2504220582797942,
+          "mean": 4.942642057602948,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        0.7154246979124176,
+        0.40939050346575645,
+        4.942642057602948
+      ]
+    },
+    {
+      "arm": "eta010_rho100_q64",
+      "eligible": false,
+      "gates": {
+        "gt_1MB_fct_us_mean_ci95_high_below_0.0": false,
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_1.0": true,
+        "queue_bytes_mean_ci95_high_at_most_10.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "gt_1MB_fct_us_mean": {
+          "ci95_half_width": 0.19993129063641152,
+          "ci95_high": 0.29592262300477085,
+          "ci95_low": -0.10393995826805218,
+          "mean": 0.09599133236835934,
+          "n": 5
+        },
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.0850548987005766,
+          "ci95_high": 0.12914392641053318,
+          "ci95_low": -0.04096587099062002,
+          "mean": 0.04408902770995658,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.05476536737754478,
+          "ci95_high": 0.12111607674981346,
+          "ci95_low": 0.0115853419947239,
+          "mean": 0.06635070937226868,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 0.7313622887963375,
+          "ci95_high": 1.9737300434447138,
+          "ci95_low": 0.511005465852039,
+          "mean": 1.2423677546483765,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        0.09599133236835934,
+        0.06635070937226868,
+        1.2423677546483765
+      ]
+    },
+    {
+      "arm": "eta010_rho075_q64",
+      "eligible": false,
+      "gates": {
+        "gt_1MB_fct_us_mean_ci95_high_below_0.0": false,
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_1.0": true,
+        "queue_bytes_mean_ci95_high_at_most_10.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "gt_1MB_fct_us_mean": {
+          "ci95_half_width": 0.7265522598347728,
+          "ci95_high": 1.2267184264117095,
+          "ci95_low": -0.2263860932578361,
+          "mean": 0.5001661665769367,
+          "n": 5
+        },
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.060617559331421926,
+          "ci95_high": 0.1071479330663831,
+          "ci95_low": -0.014087185596460765,
+          "mean": 0.04653037373496116,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.20579443736148814,
+          "ci95_high": 0.4642507947713591,
+          "ci95_low": 0.0526619200483828,
+          "mean": 0.25845635740987094,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 1.7883551647866318,
+          "ci95_high": 4.953608102083737,
+          "ci95_low": 1.3768977725104736,
+          "mean": 3.1652529372971054,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        0.5001661665769367,
+        0.25845635740987094,
+        3.1652529372971054
+      ]
+    },
+    {
+      "arm": "eta010_rho050_q64",
+      "eligible": false,
+      "gates": {
+        "gt_1MB_fct_us_mean_ci95_high_below_0.0": false,
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_1.0": true,
+        "queue_bytes_mean_ci95_high_at_most_10.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "gt_1MB_fct_us_mean": {
+          "ci95_half_width": 1.009619076097564,
+          "ci95_high": 1.8478953238978815,
+          "ci95_low": -0.17134282829724667,
+          "mean": 0.8382762478003174,
+          "n": 5
+        },
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.06117321476451598,
+          "ci95_high": 0.06000829710111521,
+          "ci95_low": -0.062338132427916755,
+          "mean": -0.0011649176634007709,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.43318753630722473,
+          "ci95_high": 0.9385045688157416,
+          "ci95_low": 0.07212949620129216,
+          "mean": 0.5053170325085169,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 2.755837934232472,
+          "ci95_high": 8.117316668252354,
+          "ci95_low": 2.6056407997874103,
+          "mean": 5.361478734019882,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        0.8382762478003174,
+        0.5053170325085169,
+        5.361478734019882
+      ]
+    },
+    {
+      "arm": "eta020_rho100_q64",
+      "eligible": false,
+      "gates": {
+        "gt_1MB_fct_us_mean_ci95_high_below_0.0": false,
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_1.0": true,
+        "queue_bytes_mean_ci95_high_at_most_10.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "gt_1MB_fct_us_mean": {
+          "ci95_half_width": 0.6033689107173762,
+          "ci95_high": 0.9532726276137635,
+          "ci95_low": -0.2534651938209889,
+          "mean": 0.3499037168963873,
+          "n": 5
+        },
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.08180490485096695,
+          "ci95_high": 0.0963244271050204,
+          "ci95_low": -0.0672853825969135,
+          "mean": 0.014519522254053457,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.18484091787403573,
+          "ci95_high": 0.3534338962238248,
+          "ci95_low": -0.016247939524246635,
+          "mean": 0.1685929783497891,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 0.9021059136139306,
+          "ci95_high": 3.190636433214262,
+          "ci95_low": 1.386424605986401,
+          "mean": 2.2885305196003314,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        0.3499037168963873,
+        0.1685929783497891,
+        2.2885305196003314
+      ]
+    },
+    {
+      "arm": "eta020_rho075_q64",
+      "eligible": false,
+      "gates": {
+        "gt_1MB_fct_us_mean_ci95_high_below_0.0": false,
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_1.0": true,
+        "queue_bytes_mean_ci95_high_at_most_10.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "gt_1MB_fct_us_mean": {
+          "ci95_half_width": 0.7142228619189738,
+          "ci95_high": 1.2551754847881287,
+          "ci95_low": -0.17327023904981886,
+          "mean": 0.5409526228691549,
+          "n": 5
+        },
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.07637030087548363,
+          "ci95_high": 0.08890289925499387,
+          "ci95_low": -0.0638377024959734,
+          "mean": 0.01253259837951024,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.233068825348002,
+          "ci95_high": 0.5430987529329581,
+          "ci95_low": 0.07696110223695407,
+          "mean": 0.31002992758495607,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 1.8159666313932477,
+          "ci95_high": 5.62753311127207,
+          "ci95_low": 1.9955998484855748,
+          "mean": 3.8115664798788225,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        0.5409526228691549,
+        0.31002992758495607,
+        3.8115664798788225
+      ]
+    },
+    {
+      "arm": "eta020_rho050_q64",
+      "eligible": false,
+      "gates": {
+        "gt_1MB_fct_us_mean_ci95_high_below_0.0": false,
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_1.0": true,
+        "queue_bytes_mean_ci95_high_at_most_10.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "gt_1MB_fct_us_mean": {
+          "ci95_half_width": 1.1080962827334118,
+          "ci95_high": 1.9283859233703553,
+          "ci95_low": -0.2878066420964682,
+          "mean": 0.8202896406369435,
+          "n": 5
+        },
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.07299160748794079,
+          "ci95_high": 0.1285900806215087,
+          "ci95_low": -0.01739313435437287,
+          "mean": 0.055598473133567916,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.45569190284601785,
+          "ci95_high": 0.9870972503059876,
+          "ci95_low": 0.07571344461395196,
+          "mean": 0.5314053474599698,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 2.608296510125084,
+          "ci95_high": 7.982749621507022,
+          "ci95_low": 2.7661566012568533,
+          "mean": 5.374453111381937,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        0.8202896406369435,
+        0.5314053474599698,
+        5.374453111381937
+      ]
+    }
+  ],
+  "requires_fresh_holdout_before_claim": true,
+  "schema_version": 1,
+  "selected_arm": "eta000_rho100_q64",
+  "selection_used_performance_direction": true,
+  "status": "no_candidate_beats_frozen_gates"
+}

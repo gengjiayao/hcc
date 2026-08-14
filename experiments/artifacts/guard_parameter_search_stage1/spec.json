@@ -1,0 +1,150 @@
+{
+  "admission": {
+    "require_complete": true,
+    "require_grants": true,
+    "require_remaining_refresh": true,
+    "require_shared_fabric_updates": true,
+    "require_zero_drop_recovery": true,
+    "seed": 26
+  },
+  "arms": {
+    "eta000_rho050_q64": {
+      "cc": "guard",
+      "guard_min_share_fraction": 0.0,
+      "guard_remaining_exponent": 0.5
+    },
+    "eta000_rho075_q64": {
+      "cc": "guard",
+      "guard_min_share_fraction": 0.0,
+      "guard_remaining_exponent": 0.75
+    },
+    "eta000_rho100_q64": {
+      "cc": "guard",
+      "guard_min_share_fraction": 0.0,
+      "guard_remaining_exponent": 1.0
+    },
+    "eta010_rho050_q64": {
+      "cc": "guard",
+      "guard_min_share_fraction": 0.1,
+      "guard_remaining_exponent": 0.5
+    },
+    "eta010_rho075_q64": {
+      "cc": "guard",
+      "guard_min_share_fraction": 0.1,
+      "guard_remaining_exponent": 0.75
+    },
+    "eta010_rho100_q64": {
+      "cc": "guard",
+      "guard_min_share_fraction": 0.1,
+      "guard_remaining_exponent": 1.0
+    },
+    "eta020_rho050_q64": {
+      "cc": "guard",
+      "guard_min_share_fraction": 0.2,
+      "guard_remaining_exponent": 0.5
+    },
+    "eta020_rho075_q64": {
+      "cc": "guard",
+      "guard_min_share_fraction": 0.2,
+      "guard_remaining_exponent": 0.75
+    },
+    "eta020_rho100_q64": {
+      "cc": "guard",
+      "guard_min_share_fraction": 0.2,
+      "guard_remaining_exponent": 1.0
+    }
+  },
+  "defaults": {
+    "analysis_warmup": 0.005,
+    "buffer": 9,
+    "bw": 100,
+    "guard_ack_interval_packets": 8,
+    "guard_beta": 0.125,
+    "guard_demand_threshold": 0.75,
+    "guard_fixed_window": 1,
+    "guard_gamma": 1.0,
+    "guard_grant_refresh_bdps": 1.0,
+    "guard_keep_last_hop_int": 0,
+    "guard_lambda": 1.8,
+    "guard_one_rtt_bypass": 1,
+    "guard_proactive_release": 1,
+    "guard_rebalance_interval_us": 200,
+    "guard_receiver_util_threshold": 0.75,
+    "guard_remaining_aware": 1,
+    "guard_selective_registration": 1,
+    "guard_sender_srpt": 1,
+    "guard_size_priority": 1,
+    "guard_srpt_quantum_packets": 64,
+    "guard_tail_bypass": 1,
+    "guard_tail_bypass_bdps": 8.0,
+    "guard_work_conserving": 0,
+    "hosts": 8,
+    "irn": 0,
+    "lb": "fecmp",
+    "monitor_profile": "bulk",
+    "netload": 50,
+    "oversubscription": 2,
+    "pfc": 1,
+    "priority_group": 3,
+    "simul_time": 0.01,
+    "topo": "leaf_spine_8_100G_OS2"
+  },
+  "flow_size_buckets": [
+    {
+      "max_bytes": 8192,
+      "name": "le_8KB"
+    },
+    {
+      "max_bytes": 104000,
+      "min_exclusive_bytes": 8192,
+      "name": "8KB_to_1BDP"
+    },
+    {
+      "max_bytes": 1048576,
+      "min_exclusive_bytes": 104000,
+      "name": "1BDP_to_1MB"
+    },
+    {
+      "min_exclusive_bytes": 1048576,
+      "name": "gt_1MB"
+    }
+  ],
+  "limits": {
+    "campaign_bytes": 1073741824,
+    "max_flows": 10000,
+    "run_bytes": 104857600,
+    "run_timeout_seconds": 1800
+  },
+  "name": "guard-parameter-search-stage1",
+  "purpose": "Improve GUARD's high-load elephant latency by tuning the receiver minimum share and remaining-size exponent before changing the algorithm.",
+  "schema_version": 1,
+  "seeds": [
+    26,
+    27,
+    28,
+    29,
+    30
+  ],
+  "selection": {
+    "baseline_arm": "eta000_rho100_q64",
+    "constraints": {
+      "le_8KB_slowdown_p95": 1.0,
+      "overall_fct_us_mean": 1.0,
+      "queue_bytes_mean": 10.0
+    },
+    "primary_metric": "gt_1MB_fct_us_mean",
+    "require_primary_paired_percent_ci95_high_below": 0.0,
+    "tie_break_metrics": [
+      "gt_1MB_fct_us_mean",
+      "overall_fct_us_mean",
+      "queue_bytes_mean"
+    ]
+  },
+  "selection_policy": "The complete 3x3 eta/rho grid, constraints, metric order, and seeds are frozen before preflight. Seed 26 is inspected only for mechanism admission. All admitted seeds 26-30 enter the paired analysis; no seed or grid point may be removed because of its performance direction.",
+  "workloads": [
+    {
+      "cdf": "AliStorage2019",
+      "name": "AliStorage50"
+    }
+  ]
+}

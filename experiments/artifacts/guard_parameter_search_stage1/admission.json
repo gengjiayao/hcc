@@ -1,0 +1,83 @@
+{
+  "all_arms_passed": true,
+  "arms": [
+    {
+      "arm": "eta000_rho100_q64",
+      "failures": [],
+      "flow_sha256": "9d7bb1864114ae8cac16fd80778288046107ef3556f4de0c7e72cc23c63ea04f",
+      "output_id": "234455590",
+      "passed": true,
+      "seed": 26
+    },
+    {
+      "arm": "eta000_rho075_q64",
+      "failures": [],
+      "flow_sha256": "9d7bb1864114ae8cac16fd80778288046107ef3556f4de0c7e72cc23c63ea04f",
+      "output_id": "118760174",
+      "passed": true,
+      "seed": 26
+    },
+    {
+      "arm": "eta000_rho050_q64",
+      "failures": [],
+      "flow_sha256": "9d7bb1864114ae8cac16fd80778288046107ef3556f4de0c7e72cc23c63ea04f",
+      "output_id": "890919244",
+      "passed": true,
+      "seed": 26
+    },
+    {
+      "arm": "eta010_rho100_q64",
+      "failures": [],
+      "flow_sha256": "9d7bb1864114ae8cac16fd80778288046107ef3556f4de0c7e72cc23c63ea04f",
+      "output_id": "237968793",
+      "passed": true,
+      "seed": 26
+    },
+    {
+      "arm": "eta010_rho075_q64",
+      "failures": [],
+      "flow_sha256": "9d7bb1864114ae8cac16fd80778288046107ef3556f4de0c7e72cc23c63ea04f",
+      "output_id": "311527826",
+      "passed": true,
+      "seed": 26
+    },
+    {
+      "arm": "eta010_rho050_q64",
+      "failures": [],
+      "flow_sha256": "9d7bb1864114ae8cac16fd80778288046107ef3556f4de0c7e72cc23c63ea04f",
+      "output_id": "558129035",
+      "passed": true,
+      "seed": 26
+    },
+    {
+      "arm": "eta020_rho100_q64",
+      "failures": [],
+      "flow_sha256": "9d7bb1864114ae8cac16fd80778288046107ef3556f4de0c7e72cc23c63ea04f",
+      "output_id": "230800732",
+      "passed": true,
+      "seed": 26
+    },
+    {
+      "arm": "eta020_rho075_q64",
+      "failures": [],
+      "flow_sha256": "9d7bb1864114ae8cac16fd80778288046107ef3556f4de0c7e72cc23c63ea04f",
+      "output_id": "988852220",
+      "passed": true,
+      "seed": 26
+    },
+    {
+      "arm": "eta020_rho050_q64",
+      "failures": [],
+      "flow_sha256": "9d7bb1864114ae8cac16fd80778288046107ef3556f4de0c7e72cc23c63ea04f",
+      "output_id": "45730874",
+      "passed": true,
+      "seed": 26
+    }
+  ],
+  "decision": "extend_all_grid_points",
+  "flow_hash_matched": true,
+  "gate": "first seed mechanism and safety only; no performance metric inspected",
+  "preflight_sha256": "1ccbacf4d682a842ae9d6f42b09250f4a231e4fecdf8ed9b93e1d2108a7f2807",
+  "schema_version": 1,
+  "seed": 26
+}
