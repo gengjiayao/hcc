@@ -1,0 +1,116 @@
+{
+  "admission": {
+    "controller_trace_arm": "guard",
+    "full_controller_max_lines": 300000,
+    "full_controller_trace": true,
+    "require_complete": true,
+    "require_zero_drop_recovery": true,
+    "seed": 21
+  },
+  "arms": {
+    "guard": {
+      "cc": "guard",
+      "guard_sender_srpt": 1,
+      "guard_size_priority": 1,
+      "guard_srpt_quantum_packets": 64,
+      "guard_work_conserving": 0
+    },
+    "homa": {
+      "cc": "homa"
+    },
+    "hpcc": {
+      "cc": "hpcc"
+    }
+  },
+  "comparisons": [
+    [
+      "guard",
+      "hpcc"
+    ],
+    [
+      "guard",
+      "homa"
+    ],
+    [
+      "homa",
+      "hpcc"
+    ]
+  ],
+  "defaults": {
+    "analysis_warmup": 0.005,
+    "buffer": 9,
+    "bw": 100,
+    "guard_ack_interval_packets": 8,
+    "guard_beta": 0.125,
+    "guard_demand_threshold": 0.75,
+    "guard_fixed_window": 1,
+    "guard_gamma": 1.0,
+    "guard_grant_refresh_bdps": 1.0,
+    "guard_keep_last_hop_int": 0,
+    "guard_lambda": 1.8,
+    "guard_min_share_fraction": 0.0,
+    "guard_one_rtt_bypass": 1,
+    "guard_proactive_release": 1,
+    "guard_rebalance_interval_us": 200,
+    "guard_receiver_util_threshold": 0.75,
+    "guard_remaining_aware": 1,
+    "guard_remaining_exponent": 1.0,
+    "guard_selective_registration": 1,
+    "guard_tail_bypass": 1,
+    "guard_tail_bypass_bdps": 8.0,
+    "homa_resend_timeout_us": 1000,
+    "hosts": 8,
+    "irn": 0,
+    "lb": "fecmp",
+    "monitor_profile": "bulk",
+    "netload": 30,
+    "oversubscription": 2,
+    "pfc": 1,
+    "priority_group": 3,
+    "simul_time": 0.01,
+    "topo": "leaf_spine_8_100G_OS2"
+  },
+  "flow_size_buckets": [
+    {
+      "max_bytes": 8192,
+      "name": "le_8KB"
+    },
+    {
+      "max_bytes": 104000,
+      "min_exclusive_bytes": 8192,
+      "name": "8KB_to_1BDP"
+    },
+    {
+      "max_bytes": 1048576,
+      "min_exclusive_bytes": 104000,
+      "name": "1BDP_to_1MB"
+    },
+    {
+      "min_exclusive_bytes": 1048576,
+      "name": "gt_1MB"
+    }
+  ],
+  "limits": {
+    "campaign_bytes": 1073741824,
+    "max_flows": 10000,
+    "run_bytes": 104857600,
+    "run_timeout_seconds": 1800
+  },
+  "name": "ali-load30-final-guard-hpcc-homa",
+  "purpose": "Regenerate the initial 30-percent AliStorage panels with final GUARD, HPCC, and Homa.",
+  "schema_version": 1,
+  "seeds": [
+    21,
+    22,
+    23,
+    24,
+    25
+  ],
+  "selection_policy": "All controls were frozen before seeds 21-25; seed 21 gates mechanisms without performance inspection.",
+  "workloads": [
+    {
+      "cdf": "AliStorage2019",
+      "name": "AliStorage30"
+    }
+  ]
+}
