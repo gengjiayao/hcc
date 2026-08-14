@@ -117,6 +117,18 @@ class GuardParameterSearchTest(unittest.TestCase):
         self.assertEqual(result["selected_arm"], self.spec["selection"]["baseline_arm"])
         self.assertEqual(result["status"], "no_candidate_beats_frozen_gates")
 
+    def test_selection_rejects_candidate_with_failed_seed(self):
+        rows = self.rows()
+        rejected_arm = "eta010_rho075_q64"
+        for row in rows:
+            row["passed"] = not (
+                row["arm"] == rejected_arm and row["seed"] == self.spec["seeds"][-1])
+            row["failures"] = [] if row["passed"] else ["controller path inactive"]
+        result = select_candidate(self.spec, rows)
+        rejected = next(row for row in result["candidates"] if row["arm"] == rejected_arm)
+        self.assertFalse(rejected["eligible"])
+        self.assertEqual(rejected["rejected_seeds"], [self.spec["seeds"][-1]])
+
     def test_run_command_includes_candidate_parameters(self):
         workload = {"name": "AliStorage50", "cdf": "AliStorage2019"}
         trace = {"seed": 26, "path": "/tmp/frozen-flow.txt"}
