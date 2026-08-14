@@ -23,6 +23,7 @@ from typing import Dict, Iterable, List, Mapping, MutableMapping, Sequence, Tupl
 try:
     from experiments.summarize_campaign import (
         GUARD_TOTAL_FIELDS,
+        HOMA_TOMBSTONE_FIELDS,
         HOMA_TOTAL_FIELDS,
         PFC_PRIORITY_FIELDS,
         SummaryError,
@@ -35,6 +36,7 @@ try:
 except ModuleNotFoundError:  # Direct execution from experiments/.
     from summarize_campaign import (
         GUARD_TOTAL_FIELDS,
+        HOMA_TOMBSTONE_FIELDS,
         HOMA_TOTAL_FIELDS,
         PFC_PRIORITY_FIELDS,
         SummaryError,
@@ -435,6 +437,8 @@ def instrumentation_metrics(
     for name in HOMA_TOTAL_FIELDS:
         unit = "bytes" if name == "homa_data_bytes" else "count"
         result.append(metric(workload, semantics, name, float(stats[name]), unit, 1))
+    for name in HOMA_TOMBSTONE_FIELDS:
+        result.append(metric(workload, semantics, name, float(stats[name]), "count", 1))
     for priority in sorted(stats["homa_priority"]):
         values = stats["homa_priority"][priority]
         result.append(metric(

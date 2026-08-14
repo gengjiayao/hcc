@@ -98,6 +98,10 @@ HOMA_TOTAL_FIELDS = (
     "homa_completion_notices_received", "homa_messages_tracked",
     "homa_messages_completed", "homa_max_pending_messages",
 )
+HOMA_TOMBSTONE_FIELDS = (
+    "homa_completed_message_ids", "homa_duplicate_data_after_completion",
+    "homa_completion_notices_replayed",
+)
 PFC_PRIORITY_FIELDS = (
     "pause_count", "resume_count", "matched_intervals", "cumulative_pause_ns",
     "max_pause_ns", "unmatched_pauses", "unmatched_resumes",
@@ -109,6 +113,7 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
         raise SummaryError(f"missing GUARD stats: {path}")
     total = None
     homa_total = None
+    homa_tombstone_total = None
     guard_scheduler = {
         "guard_sender_srpt_enabled": 0, "guard_srpt_quantum_packets": 0,
         "guard_sender_srpt_selections": 0, "guard_sender_srpt_non_rr": 0,
@@ -154,6 +159,9 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
                     continue
             elif parts and parts[0] == "homa_total" and len(parts) == 13:
                 homa_total = dict(zip(HOMA_TOTAL_FIELDS, map(int, parts[1:])))
+            elif parts and parts[0] == "homa_tombstone_total" and len(parts) == 4:
+                homa_tombstone_total = dict(
+                    zip(HOMA_TOMBSTONE_FIELDS, map(int, parts[1:])))
             elif parts[:2] == ["guard_sender_scheduler", "enabled"] and len(parts) == 11:
                 guard_scheduler = {
                     "guard_sender_srpt_enabled": int(parts[2]),
@@ -177,6 +185,9 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
     result.update({field: 0 for field in HOMA_TOTAL_FIELDS})
     if homa_total is not None:
         result.update(homa_total)
+    result.update({field: 0 for field in HOMA_TOMBSTONE_FIELDS})
+    if homa_tombstone_total is not None:
+        result.update(homa_tombstone_total)
     result.update(guard_scheduler)
     result.update({f"switch_drops_{key}": value for key, value in switch_drops.items()})
     result["pfc_priority"] = priorities

@@ -39,6 +39,8 @@ METRICS = (
     "homa_retransmit_packets", "homa_resends_sent", "homa_resends_received",
     "homa_completion_notices_sent", "homa_completion_notices_received",
     "homa_messages_tracked", "homa_messages_completed", "homa_max_pending_messages",
+    "homa_completed_message_ids", "homa_duplicate_data_after_completion",
+    "homa_completion_notices_replayed",
     *ZERO_GENERIC_RECOVERY,
 )
 
@@ -94,6 +96,10 @@ def validate_mechanism(
             failures.append("homa_guard_or_hpcc_activity_nonzero")
         if values["homa_messages_completed"] != expected_flows:
             failures.append("homa_completed_message_count_mismatch")
+        if values["homa_messages_tracked"] != expected_flows:
+            failures.append("homa_tracked_message_count_mismatch")
+        if values["homa_completed_message_ids"] != expected_flows:
+            failures.append("homa_completed_tombstone_count_mismatch")
         if values["homa_data_packets"] <= 0 or values["homa_grants_sent"] <= 0:
             failures.append("homa_native_data_or_grants_zero")
         if values["homa_completion_notices_sent"] != expected_flows:
