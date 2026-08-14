@@ -55,6 +55,7 @@ GUARD_OPTIONS = (
     "guard_tail_congestion_gate", "guard_tail_safe_ratio", "guard_tail_safe_samples",
     "guard_ack_interval_packets", "guard_fixed_window", "guard_remaining_aware",
     "guard_min_share_fraction", "guard_remaining_exponent",
+    "guard_receiver_concurrency",
     "guard_grant_refresh_bdps",
     "guard_srpt_quantum_packets", "guard_work_conserving",
     "guard_cap_aware_reclaim", "guard_cap_headroom", "guard_cap_min_share_fraction",

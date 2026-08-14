@@ -129,6 +129,7 @@ def analyze_run(
             "guard_remaining_aware": "GUARD_REMAINING_AWARE",
             "guard_min_share_fraction": "GUARD_MIN_SHARE_FRACTION",
             "guard_remaining_exponent": "GUARD_REMAINING_EXPONENT",
+            "guard_receiver_concurrency": "GUARD_RECEIVER_CONCURRENCY",
             "guard_grant_refresh_bdps": "GUARD_GRANT_REFRESH_BDPS",
         }
         expected_config.update({
