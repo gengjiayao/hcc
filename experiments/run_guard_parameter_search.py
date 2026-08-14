@@ -237,12 +237,29 @@ def read_spec(path: Path) -> Mapping[str, object]:
         if (disabled != 1 or observed != set(ADAPTIVE_TARGET_MAX_BDPS) or
                 len(arms) != 1 + len(ADAPTIVE_TARGET_MAX_BDPS)):
             raise CampaignError("arms must cover disabled and each adaptive flow-size scope")
+    elif kind == "adaptive_scope_refinement":
+        if int(defaults.get("guard_receiver_concurrency", -1)) != 1:
+            raise CampaignError("adaptive refinement must retain one-elephant service")
+        if float(defaults.get("guard_concurrency_min_bdps", -1)) != 12.0:
+            raise CampaignError("adaptive refinement must retain the selected 12-BDP policy")
+        expected = {(0, 0.0), (1, 12.0)}
+        observed = set()
+        for name, raw in arms.items():
+            arm = dict(raw)
+            if arm.get("cc") != "guard":
+                raise CampaignError(f"{name} must select cc=guard")
+            observed.add((
+                int(arm.get("guard_adaptive_fabric_target", -1)),
+                float(arm.get("guard_adaptive_target_max_bdps", -1)),
+            ))
+        if observed != expected or len(arms) != 2:
+            raise CampaignError("adaptive refinement must compare disabled with 12-BDP scope")
     else:
         raise CampaignError(
             "search_kind must be receiver_grid, srpt_quantum, tail_gate, "
             "lambda_high_load, receiver_concurrency, elephant_concurrency, "
             "elephant_threshold, tail_bypass_threshold, adaptive_fabric_target, "
-            "or adaptive_target_scope")
+            "adaptive_target_scope, or adaptive_scope_refinement")
     selection = dict(spec.get("selection", {}))
     if selection.get("baseline_arm") not in arms:
         raise CampaignError("selection baseline is not a grid arm")
