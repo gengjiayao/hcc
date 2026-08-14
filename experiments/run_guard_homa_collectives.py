@@ -87,6 +87,10 @@ def preflight(spec_path: Path, spec: Mapping[str, object], repo: Path, results: 
                     "--tensor-bytes", str(workload["tensor_bytes"]),
                     "--ring-jitter-us", str(workload["jitter_us"]),
                 ])
+                if "ring_placement" in workload:
+                    command.extend(["--ring-placement", str(workload["ring_placement"])])
+                if "ring_span_ms" in workload:
+                    command.extend(["--ring-span-ms", str(workload["ring_span_ms"])])
             completed = subprocess.run(
                 command, cwd=repo, text=True, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, timeout=120,
@@ -104,6 +108,7 @@ def preflight(spec_path: Path, spec: Mapping[str, object], repo: Path, results: 
                 "workload": workload_name, "seed": seed,
                 "flow_file": str(flow.resolve()), "manifest": str(manifest.resolve()),
                 "flow_sha256": flow_sha, "flow_count": count,
+                "buffer_mb": int(workload.get("buffer_mb", defaults["buffer"])),
                 "flow_bytes_on_disk": flow.stat().st_size,
                 "manifest_sha256": sha256_file(manifest), "generator_cli": command,
             })
@@ -156,7 +161,7 @@ def run_command(
         "--flow_file", str(trace["flow_file"]),
         "--max_flows", str(spec["limits"]["max_flows"]),
         "--analysis_warmup", str(defaults["analysis_warmup"]),
-        "--buffer", str(defaults["buffer"]),
+        "--buffer", str(trace.get("buffer_mb", defaults["buffer"])),
         "--monitor_profile", str(defaults["monitor_profile"]),
         "--qlen_monitoring_interval", "1000",
         "--guard_lifecycle_trace", "0", "--guard_controller_trace", "0",
