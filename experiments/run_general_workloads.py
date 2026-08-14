@@ -108,6 +108,16 @@ def read_spec(path: Path) -> Mapping[str, object]:
                 "optimized guard profile must freeze all new controls; missing "
                 + ", ".join(missing)
             )
+        concurrency_fields = (
+            "guard_receiver_concurrency", "guard_concurrency_min_bdps",
+        )
+        concurrency_present = [field for field in concurrency_fields if field in controls]
+        if concurrency_present and len(concurrency_present) != len(concurrency_fields):
+            missing = [field for field in concurrency_fields if field not in controls]
+            raise CampaignError(
+                "bounded receiver concurrency must freeze both controls; missing "
+                + ", ".join(missing)
+            )
     return spec
 
 
@@ -372,6 +382,7 @@ def run_command(
         "guard_one_rtt_bypass", "guard_tail_bypass", "guard_tail_bypass_bdps",
         "guard_ack_interval_packets", "guard_fixed_window", "guard_remaining_aware",
         "guard_min_share_fraction", "guard_remaining_exponent",
+        "guard_receiver_concurrency", "guard_concurrency_min_bdps",
         "guard_grant_refresh_bdps",
         "guard_srpt_quantum_packets", "guard_work_conserving",
         "guard_rebalance_interval_us", "guard_demand_threshold",

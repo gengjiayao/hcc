@@ -71,7 +71,9 @@ GUARD_OPTIMIZATION_FIELDS = (
     "guard_tail_bypass_enabled", "guard_tail_bypass_bdps",
     "guard_tail_bypass_flows", "guard_tail_bypass_feedbacks",
     "guard_remaining_aware", "guard_min_share_fraction",
-    "guard_remaining_exponent", "guard_grant_refresh_bdps",
+    "guard_remaining_exponent", "guard_receiver_concurrency",
+    "guard_concurrency_min_bdps", "guard_concurrency_limited_allocations",
+    "guard_concurrency_max_deferred_flows", "guard_grant_refresh_bdps",
     "guard_remaining_refresh_events",
 )
 
@@ -247,6 +249,8 @@ def validate_config(
             "guard_remaining_aware": "GUARD_REMAINING_AWARE",
             "guard_min_share_fraction": "GUARD_MIN_SHARE_FRACTION",
             "guard_remaining_exponent": "GUARD_REMAINING_EXPONENT",
+            "guard_receiver_concurrency": "GUARD_RECEIVER_CONCURRENCY",
+            "guard_concurrency_min_bdps": "GUARD_CONCURRENCY_MIN_BDPS",
             "guard_grant_refresh_bdps": "GUARD_GRANT_REFRESH_BDPS",
             "guard_srpt_quantum_packets": "GUARD_SRPT_QUANTUM_PACKETS",
             "guard_work_conserving": "GUARD_WORK_CONSERVING",
@@ -391,6 +395,13 @@ def analyze_run(
     }
     if admission:
         checks.update(mechanism_checks(arm, stats))
+        controls = dict(spec["defaults"])
+        controls.update(dict(spec["arms"])[arm])
+        if arm == "guard" and int(controls.get("guard_receiver_concurrency", 0)) > 0:
+            checks["guard_concurrency_limited"] = (
+                int(stats["guard_concurrency_limited_allocations"]) > 0
+                and int(stats["guard_concurrency_max_deferred_flows"]) > 0
+            )
     if arm == "homa":
         flow_count = int(trace["flow_count"])
         checks.update(homa_completion_checks(stats, flow_count))
