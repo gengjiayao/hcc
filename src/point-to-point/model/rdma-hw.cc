@@ -2066,24 +2066,12 @@ void RdmaHw::HomaScheduler::OnDataArrival(Ptr<RdmaRxQueuePair> rx_qp,
     auto it = flow_hash.find(hkey);
     if (it == flow_hash.end()) {
         // First DATA observed for this rx_qp.
-        // Tiny messages that fit entirely in unscheduled need no GRANTs — skip
-        // tracking them in the scheduler.
-        if (ch.udp.homa_msg_total_length <= ch.udp.homa_unscheduled_bytes) {
-            return;
-        }
-
         std::unique_ptr<HomaFlow> new_flow(new HomaFlow);
         new_flow->msg_total_length    = ch.udp.homa_msg_total_length;
-        new_flow->bytes_received      = ch.udp.homa_pkt_length;
+        new_flow->bytes_received      = 0;
         new_flow->granted_offset_sent = ch.udp.homa_unscheduled_bytes;
         new_flow->bdp                 = ch.udp.homa_unscheduled_bytes;
-        // PR5 hole tracking: if first packet starts at offset 0, advance the
-        // contiguous pointer; otherwise leave at 0 so a RESEND fires.
-        if (ch.udp.homa_pkt_offset == 0) {
-            new_flow->next_expected_offset = ch.udp.homa_pkt_length;
-        } else {
-            new_flow->next_expected_offset = 0;
-        }
+        new_flow->next_expected_offset = 0;
         new_flow->last_progress_time  = Simulator::Now();
         // cc_mode=12 pins QP-key pg to 0 (sender) and rxQp-key pg to 0
         // (receiver) so per-packet udp.pg variation can't break either lookup.
@@ -2093,7 +2081,12 @@ void RdmaHw::HomaScheduler::OnDataArrival(Ptr<RdmaRxQueuePair> rx_qp,
 
         HomaFlow* p_flow = new_flow.get();
         flow_hash[hkey] = std::move(new_flow);
-        active.insert(p_flow);
+        it = flow_hash.find(hkey);
+
+        // Messages wholly covered by the unscheduled allowance need no
+        // grants, but retain their receive state until all DATA arrives so a
+        // late hole can still be detected.
+        if (!p_flow->fully_granted()) active.insert(p_flow);
 
         if (!is_scheduled) {
             is_scheduled = true;
@@ -2105,19 +2098,51 @@ void RdmaHw::HomaScheduler::OnDataArrival(Ptr<RdmaRxQueuePair> rx_qp,
             is_stall_scheduled = true;
             Simulator::Schedule(stall_rto, &RdmaHw::HomaScheduler::StallCheck, this);
         }
+    }
+
+    // Record DATA as a byte interval, merging overlaps and adjacency. This is
+    // required because Homa explicitly permits per-packet reordering.
+    HomaFlow* p_flow = it->second.get();
+    uint64_t start = ch.udp.homa_pkt_offset;
+    uint64_t end = std::min(start + ch.udp.homa_pkt_length, p_flow->msg_total_length);
+    if (end > start) {
+        auto range = p_flow->received_ranges.lower_bound(start);
+        if (range != p_flow->received_ranges.begin()) {
+            auto previous = range;
+            --previous;
+            if (previous->second >= start) range = previous;
+        }
+        while (range != p_flow->received_ranges.end() && range->first <= end) {
+            if (range->second < start) {
+                ++range;
+                continue;
+            }
+            start = std::min(start, range->first);
+            end = std::max(end, range->second);
+            p_flow->bytes_received -= range->second - range->first;
+            range = p_flow->received_ranges.erase(range);
+        }
+        p_flow->received_ranges[start] = end;
+        p_flow->bytes_received += end - start;
+
+        uint64_t old_expected = p_flow->next_expected_offset;
+        auto first = p_flow->received_ranges.begin();
+        if (first != p_flow->received_ranges.end() && first->first == 0) {
+            p_flow->next_expected_offset = first->second;
+        }
+        rx_qp->ReceiverNextExpectedSeq = p_flow->next_expected_offset;
+        if (p_flow->next_expected_offset > old_expected) {
+            p_flow->last_progress_time = Simulator::Now();
+        }
+    }
+
+    if (p_flow->fully_received()) {
+        active.erase(hkey);
+        flow_hash.erase(hkey);
+        if (flow_hash.empty()) is_stall_scheduled = false;
         return;
     }
 
-    // Subsequent DATA — bump bytes_received and advance contiguous pointer
-    // if this packet fills the next expected offset. Out-of-order packets
-    // beyond the gap are not tracked individually in PR5 — the resulting
-    // RESEND for the gap may cause a redundant retransmit, which is OK.
-    HomaFlow* p_flow = it->second.get();
-    p_flow->bytes_received += ch.udp.homa_pkt_length;
-    if (ch.udp.homa_pkt_offset == p_flow->next_expected_offset) {
-        p_flow->next_expected_offset += ch.udp.homa_pkt_length;
-        p_flow->last_progress_time = Simulator::Now();
-    }
 }
 
 void RdmaHw::HomaScheduler::Schedule() {
@@ -2147,10 +2172,6 @@ void RdmaHw::HomaScheduler::Schedule() {
         }
         if (!flow->fully_granted()) {
             active.insert(flow);
-        } else {
-            // No more grants needed; receiver is done with this flow. Sender
-            // ACK path will close the QP.
-            flow_hash.erase(PeekPointer(flow->rx_qp));
         }
     }
 

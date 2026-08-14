@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <memory>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -441,6 +442,9 @@ class RdmaHw : public Object {
         uint64_t granted_offset_sent;    // cumulative bytes we've granted to sender
         uint64_t next_expected_offset;   // first byte not yet received contiguously
         Time     last_progress_time;     // last time next_expected_offset advanced
+        // Disjoint [start, end) DATA ranges. Homa permits packet reordering, so
+        // a single contiguous pointer is insufficient for native RESEND.
+        std::map<uint64_t, uint64_t> received_ranges;
         uint64_t bdp;
         uint16_t pg;                     // sender QP's m_pg (used for control routing)
         Ptr<RdmaRxQueuePair> rx_qp;
@@ -449,6 +453,7 @@ class RdmaHw : public Object {
             return msg_total_length > granted_offset_sent ? msg_total_length - granted_offset_sent : 0;
         }
         bool fully_granted() const { return granted_offset_sent >= msg_total_length; }
+        bool fully_received() const { return next_expected_offset >= msg_total_length; }
 
         // SRPT min-heap: smaller bytes_remaining_to_grant = "greater" so it bubbles up
         bool operator < (const HomaFlow &other) const {
@@ -497,6 +502,21 @@ class RdmaHw : public Object {
         bool empty() const { return heap.empty(); }
         int size() const { return (int)heap.size(); }
         bool find(RdmaRxQueuePair* key) const { return map.count(key); }
+
+        void erase(RdmaRxQueuePair* key) {
+            auto it = map.find(key);
+            if (it == map.end()) return;
+            int index = it->second;
+            _swap(index, heap.size() - 1);
+            heap.pop_back();
+            map.erase(key);
+            if (index < (int)heap.size()) {
+                RdmaRxQueuePair* moved_key = _getKey(heap[index]);
+                _shift_up(index);
+                auto moved = map.find(moved_key);
+                if (moved != map.end()) _shift_down(moved->second);
+            }
+        }
 
         void insert(HomaFlow* flow) {
             RdmaRxQueuePair* key = _getKey(flow);
