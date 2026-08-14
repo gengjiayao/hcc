@@ -495,6 +495,7 @@ def main(argv=None):
             "background_flows": args.background_flows,
             "background_flow_bytes": args.background_flow_bytes,
             "tensor_bytes": args.tensor_bytes,
+            "ring_jitter_us": args.ring_jitter_us,
             "all_to_all_jitter_us": args.all_to_all_jitter_us,
             "oflm_bdp_bytes": args.oflm_bdp_bytes,
             "oflm_elephant_flows": args.oflm_elephant_flows,
