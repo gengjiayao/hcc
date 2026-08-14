@@ -89,7 +89,14 @@ GUARD_TOTAL_FIELDS = (
     "tie_binding_updates", "reactive_binding_rate_changes", "grant_binding_rate_changes",
     "tie_binding_rate_changes",
     "int_hops_before_strip", "int_hops_after_strip", "int_records_stripped",
-    "grant_bytes_sent",
+    "grant_bytes_sent", "guard_rebalance_events", "guard_adaptive_grant_updates",
+)
+HOMA_TOTAL_FIELDS = (
+    "homa_data_packets", "homa_data_bytes", "homa_retransmit_packets",
+    "homa_grants_sent", "homa_grants_received", "homa_resends_sent",
+    "homa_resends_received", "homa_completion_notices_sent",
+    "homa_completion_notices_received", "homa_messages_tracked",
+    "homa_messages_completed", "homa_max_pending_messages",
 )
 PFC_PRIORITY_FIELDS = (
     "pause_count", "resume_count", "matched_intervals", "cumulative_pause_ns",
@@ -101,12 +108,16 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
     if not path.is_file():
         raise SummaryError(f"missing GUARD stats: {path}")
     total = None
+    homa_total = None
     switch_drops = {"ingress": 0, "egress": 0, "total": 0}
     priorities: Dict[int, Dict[str, int]] = {}
+    homa_priorities: Dict[int, Dict[str, int]] = {}
     with path.open(encoding="utf-8", errors="replace") as stream:
         for line in stream:
             parts = line.split()
-            if parts and parts[0] == "total" and len(parts) in (5, 12, 16, 18, 24, 27, 30, 31):
+            if parts and parts[0] == "total" and len(parts) in (
+                5, 12, 16, 18, 24, 27, 30, 31, 33
+            ):
                 values = tuple(map(int, parts[1:]))
                 if len(values) == 4:
                     total = dict(zip(
@@ -136,12 +147,26 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
                 except ValueError:
                     # Column header starts with the same pfc_priority token.
                     continue
+            elif parts and parts[0] == "homa_total" and len(parts) == 13:
+                homa_total = dict(zip(HOMA_TOTAL_FIELDS, map(int, parts[1:])))
+            elif parts and parts[0] == "homa_priority" and len(parts) == 4:
+                try:
+                    priority = int(parts[1])
+                    homa_priorities[priority] = {
+                        "data_packets": int(parts[2]), "data_bytes": int(parts[3])
+                    }
+                except ValueError:
+                    continue
     if total is None:
         raise SummaryError(f"missing total row in GUARD stats: {path}")
     result: Dict[str, object] = {field: 0 for field in GUARD_TOTAL_FIELDS}
     result.update(total)
+    result.update({field: 0 for field in HOMA_TOTAL_FIELDS})
+    if homa_total is not None:
+        result.update(homa_total)
     result.update({f"switch_drops_{key}": value for key, value in switch_drops.items()})
     result["pfc_priority"] = priorities
+    result["homa_priority"] = homa_priorities
     for field in PFC_PRIORITY_FIELDS:
         values = [priority[field] for priority in priorities.values()]
         result[f"pfc_{field}"] = max(values, default=0) if field == "max_pause_ns" else sum(values)

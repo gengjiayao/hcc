@@ -90,6 +90,35 @@ class SummaryTests(unittest.TestCase):
             self.assertEqual(stats["int_records_stripped"], 29)
             self.assertEqual(stats["grant_bytes_sent"], 30)
 
+    def test_homa_stats_preserve_lifecycle_and_priority_counters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            path.write_text(
+                "total 0 0 0 0\n"
+                "homa_total 100 90000 3 40 40 2 2 7 7 8 7 4\n"
+                "homa_priority priority data_packets data_bytes\n"
+                "homa_priority 1 20 18000\n"
+                "homa_priority 7 80 72000\n",
+                encoding="utf-8",
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["homa_data_packets"], 100)
+            self.assertEqual(stats["homa_messages_completed"], 7)
+            self.assertEqual(stats["homa_priority"][7]["data_bytes"], 72000)
+
+    def test_adaptive_guard_stats_preserve_rebalance_counters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            values = list(range(1, 33))
+            path.write_text(
+                "total " + " ".join(map(str, values)) + "\n",
+                encoding="utf-8",
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["grant_bytes_sent"], 30)
+            self.assertEqual(stats["guard_rebalance_events"], 31)
+            self.assertEqual(stats["guard_adaptive_grant_updates"], 32)
+
     def test_queue_summary_is_preaggregated_and_includes_zero_samples(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "queue.txt"
