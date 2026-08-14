@@ -184,6 +184,7 @@ bool guard_fixed_window = true;
 bool guard_remaining_aware = true;
 double guard_min_share_fraction = 0.0;
 double guard_remaining_exponent = 1.0;
+uint32_t guard_receiver_concurrency = 0;
 double guard_grant_refresh_bdps = 1.0;
 uint32_t guard_srpt_quantum_packets = 64;
 bool guard_work_conserving = false;
@@ -1316,6 +1317,10 @@ int main(int argc, char *argv[]) {
                 conf >> guard_remaining_exponent;
                 std::cerr << "GUARD_REMAINING_EXPONENT\t"
                           << guard_remaining_exponent << '\n';
+            } else if (key.compare("GUARD_RECEIVER_CONCURRENCY") == 0) {
+                conf >> guard_receiver_concurrency;
+                std::cerr << "GUARD_RECEIVER_CONCURRENCY\t"
+                          << guard_receiver_concurrency << '\n';
             } else if (key.compare("GUARD_GRANT_REFRESH_BDPS") == 0) {
                 conf >> guard_grant_refresh_bdps;
                 std::cerr << "GUARD_GRANT_REFRESH_BDPS\t"
@@ -2054,6 +2059,8 @@ int main(int argc, char *argv[]) {
                                  DoubleValue(guard_min_share_fraction));
             rdmaHw->SetAttribute("GuardRemainingExponent",
                                  DoubleValue(guard_remaining_exponent));
+            rdmaHw->SetAttribute("GuardReceiverConcurrency",
+                                 UintegerValue(guard_receiver_concurrency));
             rdmaHw->SetAttribute("GuardGrantRefreshBdps",
                                  DoubleValue(guard_grant_refresh_bdps));
             rdmaHw->SetAttribute("GuardSrptQuantumPackets",
@@ -2749,6 +2756,8 @@ int main(int argc, char *argv[]) {
     uint64_t total_guard_tail_gate_deferrals = 0;
     uint64_t total_guard_tail_gate_qualified_flows = 0;
     uint64_t total_guard_remaining_refresh_events = 0;
+    uint64_t total_guard_concurrency_limited_allocations = 0;
+    uint64_t max_guard_concurrency_deferred_flows = 0;
     for (uint32_t i = 0; i < node_num; i++) {
         if (n.Get(i)->GetNodeType() != 0) continue;
         Ptr<RdmaDriver> driver = n.Get(i)->GetObject<RdmaDriver>();
@@ -2763,6 +2772,11 @@ int main(int argc, char *argv[]) {
             driver->m_rdma->m_guardTailGateQualifiedFlows;
         total_guard_remaining_refresh_events +=
             driver->m_rdma->m_guardRemainingRefreshEvents;
+        total_guard_concurrency_limited_allocations +=
+            driver->m_rdma->m_guardConcurrencyLimitedAllocations;
+        max_guard_concurrency_deferred_flows = std::max<uint64_t>(
+            max_guard_concurrency_deferred_flows,
+            driver->m_rdma->m_guardConcurrencyMaxDeferredFlows);
     }
     fprintf(guard_stats_output,
             "guard_one_rtt_bypass enabled %u flows %lu feedbacks_skipped %lu "
@@ -2784,9 +2798,12 @@ int main(int argc, char *argv[]) {
             total_guard_tail_gate_qualified_flows);
     fprintf(guard_stats_output,
             "guard_receiver_scheduler remaining_aware %u min_share_fraction %.6f "
-            "remaining_exponent %.6f refresh_bdps %.6f refresh_events %lu\n",
+            "remaining_exponent %.6f concurrency %u limited_allocations %lu "
+            "max_deferred %lu refresh_bdps %.6f refresh_events %lu\n",
             guard_remaining_aware ? 1 : 0, guard_min_share_fraction,
-            guard_remaining_exponent, guard_grant_refresh_bdps,
+            guard_remaining_exponent, guard_receiver_concurrency,
+            total_guard_concurrency_limited_allocations,
+            max_guard_concurrency_deferred_flows, guard_grant_refresh_bdps,
             total_guard_remaining_refresh_events);
     fprintf(guard_stats_output, "switch_drops ingress %u egress %u total %u\n",
             Settings::dropped_pkt_sw_ingress, Settings::dropped_pkt_sw_egress,
