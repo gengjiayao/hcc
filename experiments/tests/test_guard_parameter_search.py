@@ -16,6 +16,7 @@ QUANTUM_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search
 TAIL_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage1c.json"
 LAMBDA_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage1d.json"
 CONCURRENCY_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage2a.json"
+ELEPHANT_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage2b.json"
 
 
 class GuardParameterSearchTest(unittest.TestCase):
@@ -117,6 +118,18 @@ class GuardParameterSearchTest(unittest.TestCase):
             REPO, spec, {"name": "AliStorage50", "cdf": "AliStorage2019"},
             {"seed": 51, "path": "/tmp/frozen-flow.txt"}, "concurrency_one")
         self.assertIn("--guard_receiver_concurrency 1", " ".join(command))
+
+    def test_elephant_concurrency_freezes_threshold_and_new_seeds(self):
+        spec = read_spec(ELEPHANT_SPEC_PATH)
+        self.assertEqual(spec["search_kind"], "elephant_concurrency")
+        self.assertEqual(spec["seeds"], [56, 57, 58, 59, 60])
+        self.assertEqual(spec["defaults"]["guard_concurrency_min_bdps"], 8.0)
+        command = run_command(
+            REPO, spec, {"name": "AliStorage50", "cdf": "AliStorage2019"},
+            {"seed": 56, "path": "/tmp/frozen-flow.txt"}, "elephant_one")
+        joined = " ".join(command)
+        self.assertIn("--guard_receiver_concurrency 1", joined)
+        self.assertIn("--guard_concurrency_min_bdps 8.0", joined)
 
     def test_selection_applies_primary_and_constraint_gates(self):
         result = select_candidate(self.spec, self.rows())
