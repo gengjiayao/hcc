@@ -159,8 +159,8 @@ def validate_manifest(
         raise SummaryError(f"unsupported workload manifest schema: {manifest.get('schema_version')}")
     workload = manifest.get("workload")
     allowed = {
-        "incast", "hybrid", "ring-allreduce", "all-to-all", "oflm-churn",
-        "receiver-share",
+        "incast", "hybrid", "directed-hybrid", "ring-allreduce", "all-to-all",
+        "oflm-churn", "receiver-share",
     }
     if workload not in allowed:
         raise SummaryError(f"unsupported workload: {workload!r}")

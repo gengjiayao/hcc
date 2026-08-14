@@ -163,6 +163,13 @@ class WorkloadSummaryTests(unittest.TestCase):
             self.assertGreater(len(rows), 20)
             self.assertEqual(rows[0]["workload"], "incast")
 
+    def test_directed_hybrid_manifest_is_supported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output, manifest = self.make_run(directory, workload="directed-hybrid")
+            result = summarize(output, manifest)
+            self.assertEqual(result["status"], "validated_complete")
+            self.assertEqual(result["workload"], "directed-hybrid")
+
 
 if __name__ == "__main__":
     unittest.main()
