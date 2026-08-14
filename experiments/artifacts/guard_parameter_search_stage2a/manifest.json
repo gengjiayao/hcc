@@ -1,0 +1,46 @@
+{
+  "development_only": true,
+  "files": {
+    "README.md": {
+      "bytes": 604,
+      "sha256": "d79027aa8576e91635055e969069dccfdd29889ff790df6a2b47eb758d815fa3"
+    },
+    "admission.json": {
+      "bytes": 779,
+      "sha256": "b59109206da6b24ebc14e969490b5bbc972b9715a240b2048d1464e99e2c30c9"
+    },
+    "ci.csv": {
+      "bytes": 31747,
+      "sha256": "4f7c21d6659771d39b811583c5a563b8c55b873c821b2363f24831ff68d13cf4"
+    },
+    "per_seed.csv": {
+      "bytes": 50556,
+      "sha256": "6a63b7b98826d1adc5bda51751a672cc6d08106ff80e896af6778368adbc2bee"
+    },
+    "run_registry.csv": {
+      "bytes": 1843,
+      "sha256": "555bab697f8ff65284f73cc687f3572f024c0e5b5f8176a32c598c7d0024f15a"
+    },
+    "selection.json": {
+      "bytes": 1687,
+      "sha256": "45ddaea8a4a014a9894b674c457d669c73b2fb82c66b070d6e155a5fc1d7a6ec"
+    },
+    "spec.json": {
+      "bytes": 2902,
+      "sha256": "be3cf9ac6b6cc896f29e89bea45d3fea131943256fb40178ed3c3b35b37c1b42"
+    }
+  },
+  "raw_locator_rule": "run_registry output_dir is relative to the guard repository",
+  "raw_outputs_in_git": false,
+  "schema_version": 1,
+  "seeds": [
+    51,
+    52,
+    53,
+    54,
+    55
+  ],
+  "simulator_git_shas": [
+    "a59d3503e9d54902f5e05bb4a82e2caeffbf993b"
+  ]
+}
