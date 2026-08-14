@@ -25,6 +25,7 @@ QUANTUM_VALUES = (16, 32, 64, 128)
 TAIL_SAFE_RATIOS = (0.8, 0.9, 1.0)
 HIGH_LOAD_LAMBDAS = (1.8, 2.0, 2.2, 2.4)
 RECEIVER_CONCURRENCY_VALUES = (0, 1)
+ELEPHANT_THRESHOLD_BDPS = (4.0, 6.0, 8.0, 12.0)
 
 
 def read_spec(path: Path) -> Mapping[str, object]:
@@ -147,10 +148,29 @@ def read_spec(path: Path) -> Mapping[str, object]:
             observed.add(value)
         if observed != set(RECEIVER_CONCURRENCY_VALUES) or len(arms) != 2:
             raise CampaignError("arms must cover unlimited and one-elephant service")
+    elif kind == "elephant_threshold":
+        observed = set()
+        baseline_count = 0
+        for name, raw in arms.items():
+            arm = dict(raw)
+            if arm.get("cc") != "guard":
+                raise CampaignError(f"{name} must select cc=guard")
+            concurrency = int(arm.get("guard_receiver_concurrency", -1))
+            threshold = float(arm.get("guard_concurrency_min_bdps", -1))
+            if concurrency == 0:
+                baseline_count += 1
+            elif concurrency == 1 and threshold in ELEPHANT_THRESHOLD_BDPS:
+                observed.add(threshold)
+            else:
+                raise CampaignError(f"{name} is outside the frozen elephant threshold grid")
+        if (baseline_count != 1 or observed != set(ELEPHANT_THRESHOLD_BDPS) or
+                len(arms) != 1 + len(ELEPHANT_THRESHOLD_BDPS)):
+            raise CampaignError("arms must cover the baseline and frozen elephant thresholds")
     else:
         raise CampaignError(
             "search_kind must be receiver_grid, srpt_quantum, tail_gate, "
-            "lambda_high_load, receiver_concurrency, or elephant_concurrency")
+            "lambda_high_load, receiver_concurrency, elephant_concurrency, "
+            "or elephant_threshold")
     selection = dict(spec.get("selection", {}))
     if selection.get("baseline_arm") not in arms:
         raise CampaignError("selection baseline is not a grid arm")
