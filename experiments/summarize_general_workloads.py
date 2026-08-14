@@ -594,10 +594,57 @@ def write_csv(path: Path, rows: Sequence[Mapping[str, object]]) -> None:
         writer.writerows(rows)
 
 
+def export_portable(
+    export_dir: Path,
+    spec: Mapping[str, object],
+    preflight: Mapping[str, object],
+    admission: Mapping[str, object],
+    formal_rows: Sequence[Mapping[str, object]],
+    metric_rows: Sequence[Mapping[str, object]],
+) -> None:
+    """Write a bounded, path-stable index of a validated campaign."""
+    export_dir.mkdir(parents=True, exist_ok=True)
+    registry = []
+    for row in formal_rows:
+        portable = dict(row)
+        portable["output_dir"] = f"mix/output/{row['output_id']}"
+        registry.append(portable)
+    files = {
+        "spec.json": spec,
+        "preflight.json": preflight,
+        "admission.json": admission,
+    }
+    for name, payload in files.items():
+        write_json(export_dir / name, payload)
+    write_csv(export_dir / "run_registry.csv", registry)
+    write_csv(export_dir / "metrics.csv", metric_rows)
+    tracked = sorted(files) + ["metrics.csv", "run_registry.csv"]
+    git_shas = sorted({str(row["git_sha"]) for row in formal_rows})
+    manifest = {
+        "schema_version": 1,
+        "description": "Validated five-seed GUARD/HPCC/Homa held-out summary",
+        "simulator_git_shas": git_shas,
+        "seeds": list(map(int, spec["seeds"])),
+        "workloads": sorted({str(row["workload"]) for row in formal_rows}),
+        "arms": list(map(str, spec["arms"])),
+        "raw_outputs_in_git": False,
+        "raw_locator_rule": "run_registry output_dir is relative to the guard repository",
+        "files": {
+            name: {
+                "bytes": (export_dir / name).stat().st_size,
+                "sha256": sha256_file(export_dir / name),
+            }
+            for name in tracked
+        },
+    }
+    write_json(export_dir / "manifest.json", manifest)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("campaign_dir", type=Path)
     parser.add_argument("--admission-only", action="store_true")
+    parser.add_argument("--export-dir", type=Path)
     args = parser.parse_args(argv)
     campaign_dir = args.campaign_dir.resolve()
     spec = read_json(campaign_dir / "campaign.json")
@@ -654,6 +701,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         },
     }
     write_json(output / "general_report.json", report)
+    if args.export_dir:
+        export_portable(
+            args.export_dir.resolve(), spec, preflight, admission,
+            formal_rows, metric_rows,
+        )
     print(f"validated {len(formal_rows)} formal runs across {len(aggregates)} workloads")
     return 0
 

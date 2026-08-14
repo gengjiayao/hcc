@@ -16,6 +16,7 @@ from experiments.run_general_workloads import (
 from experiments.summarize_general_workloads import (
     AnalysisError,
     aggregate_formal,
+    export_portable,
     fct_metrics,
     flow_scope,
     mechanism_checks,
@@ -324,6 +325,28 @@ class GeneralWorkloadSummaryTests(unittest.TestCase):
         paired = report["WebSearch"]["paired"]["guard_minus_homa"]
         self.assertEqual(paired["overall_slowdown_mean"]["difference"]["n"], 5)
         self.assertEqual(paired["overall_slowdown_mean"]["difference"]["mean"], -2.0)
+
+    def test_portable_export_rewrites_raw_output_locators_and_hashes_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            export = Path(directory) / "portable"
+            rows = [{
+                "workload": "WebSearch", "arm": "guard", "seed": 6,
+                "git_sha": "abc", "output_id": "123",
+                "output_dir": "/tmp/private/mix/output/123",
+            }]
+            export_portable(
+                export,
+                {"seeds": [6, 7, 8, 9, 10], "arms": {"guard": {}}},
+                {"schema_version": 1}, {"all_selected_passed": True},
+                rows, [{"analysis": "arm_mean", "value": 1.0}],
+            )
+            with (export / "run_registry.csv").open(encoding="utf-8") as stream:
+                registry = list(csv.DictReader(stream))
+            self.assertEqual(registry[0]["output_dir"], "mix/output/123")
+            manifest = json.loads((export / "manifest.json").read_text())
+            self.assertEqual(manifest["simulator_git_shas"], ["abc"])
+            self.assertFalse(manifest["raw_outputs_in_git"])
+            self.assertIn("metrics.csv", manifest["files"])
 
 
 if __name__ == "__main__":
