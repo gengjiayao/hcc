@@ -176,6 +176,12 @@ TypeId RdmaHw::GetTypeId(void) {
                           DoubleValue(0.5),
                           MakeDoubleAccessor(&RdmaHw::m_guardQueueBudgetBdps),
                           MakeDoubleChecker<double>(0.01, 4.0))
+            .AddAttribute("GuardAdaptiveTargetMaxBdps",
+                          "Apply adaptive fabric targets only to flows no larger than this many "
+                          "BDPs; zero applies to every flow",
+                          DoubleValue(0.0),
+                          MakeDoubleAccessor(&RdmaHw::m_guardAdaptiveTargetMaxBdps),
+                          MakeDoubleChecker<double>(0.0, 64.0))
             .AddAttribute("GuardAckIntervalPackets",
                           "Packets between useful cumulative ACKs for registered GUARD flows",
                           UintegerValue(8),
@@ -3305,7 +3311,11 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
             DataRate new_rate_per_hop[IntHeader::maxHop];
             int32_t new_incStage_per_hop[IntHeader::maxHop];
             double effective_target = m_targetUtil;
-            if (m_cc_mode == CC_MODE_GUARD && m_guardAdaptiveFabricTarget && updated_any) {
+            const bool adaptive_size_eligible =
+                m_guardAdaptiveTargetMaxBdps == 0.0 ||
+                qp->m_size <= m_guardAdaptiveTargetMaxBdps * qp->m_win;
+            if (m_cc_mode == CC_MODE_GUARD && m_guardAdaptiveFabricTarget &&
+                adaptive_size_eligible && updated_any) {
                 const double floor = std::min(m_guardTargetFloor, m_targetUtil);
                 const double queued_fraction =
                     std::min(1.0, max_queue_bdps / m_guardQueueBudgetBdps);

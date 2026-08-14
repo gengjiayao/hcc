@@ -222,6 +222,7 @@ class RdmaHw : public Object {
     bool m_guardAdaptiveFabricTarget;
     double m_guardTargetFloor;
     double m_guardQueueBudgetBdps;
+    double m_guardAdaptiveTargetMaxBdps;
     uint32_t m_guardAckIntervalPackets;
     bool m_guardFixedWindow;
     bool m_guardRemainingAware;
