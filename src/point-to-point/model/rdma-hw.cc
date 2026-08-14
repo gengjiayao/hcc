@@ -291,6 +291,9 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardCapReportBytesSent = 0;
     m_guardCapReportsReceived = 0;
     m_guardFabricBoundReportsReceived = 0;
+    m_guardCapRebalanceEvents = 0;
+    m_guardCapGrantUpdates = 0;
+    m_guardCapMaxReclaimedBps = 0;
     m_guardRemainingRefreshEvents = 0;
     m_guardOneRttBypassFlows = 0;
     m_guardOneRttBypassFeedbacks = 0;
@@ -998,6 +1001,7 @@ int RdmaHw::ReceiveGuardCapReport(Ptr<Packet> /*p*/, CustomHeader &ch) {
     rx_qp->m_guard_last_cap_report_time = now;
     m_guardCapReportsReceived++;
     if (fabric_bound) m_guardFabricBoundReportsReceived++;
+    ApplyGuardCapAwareRates();
     return 0;
 }
 
@@ -1848,6 +1852,103 @@ std::unordered_map<RdmaRxQueuePair*, uint64_t> RdmaHw::ComputeGuardBaseTargets(
             (uint64_t)(residual * weights[flow] / std::max(weight_sum, 1e-12));
     }
     return targets;
+}
+
+std::unordered_map<RdmaRxQueuePair*, uint64_t> RdmaHw::ComputeGuardCapAwareTargets(
+    uint64_t line_rate_bps) const {
+    std::unordered_map<RdmaRxQueuePair*, uint64_t> base =
+        ComputeGuardBaseTargets(line_rate_bps);
+    std::unordered_map<RdmaRxQueuePair*, uint64_t> targets;
+    if (base.empty()) return targets;
+
+    const uint64_t unlimited = std::numeric_limits<uint64_t>::max();
+    std::unordered_map<RdmaRxQueuePair*, uint64_t> demands;
+    size_t capped = 0;
+    Time now = Simulator::Now();
+    for (auto *flow : m_rate_flow_ctl_set) {
+        Time freshness = flow->m_base_rtt_sec > 0
+                             ? Seconds(4.0 * flow->m_base_rtt_sec)
+                             : MicroSeconds(100);
+        bool fresh = !flow->m_guard_last_cap_report_time.IsZero() &&
+                     now - flow->m_guard_last_cap_report_time <= freshness;
+        if (fresh && flow->m_guard_cap_limited &&
+            flow->m_guard_reported_rate_bps > 0) {
+            long double demand = m_guardCapHeadroom *
+                                 (long double)flow->m_guard_reported_rate_bps;
+            demands[flow] = std::max<uint64_t>(
+                1000000, std::min<uint64_t>(line_rate_bps, (uint64_t)demand));
+            capped++;
+        } else {
+            demands[flow] = unlimited;
+        }
+    }
+
+    // Reclamation needs both a constrained donor and a recipient.  If either
+    // side is absent, restore the ordinary remaining-aware allocation.
+    if (capped == 0 || capped == m_rate_flow_ctl_set.size()) return base;
+
+    std::unordered_set<RdmaRxQueuePair*> unassigned = m_rate_flow_ctl_set;
+    uint64_t remaining = line_rate_bps;
+    while (!unassigned.empty()) {
+        long double weight_sum = 0.0;
+        for (auto *flow : unassigned) weight_sum += std::max<uint64_t>(1, base[flow]);
+
+        std::vector<RdmaRxQueuePair*> newly_capped;
+        for (auto *flow : unassigned) {
+            uint64_t tentative = (uint64_t)(
+                (long double)remaining * std::max<uint64_t>(1, base[flow]) /
+                std::max<long double>(weight_sum, 1.0));
+            if (demands[flow] != unlimited && demands[flow] < tentative) {
+                targets[flow] = demands[flow];
+                newly_capped.push_back(flow);
+            }
+        }
+        if (newly_capped.empty()) {
+            for (auto *flow : unassigned) {
+                targets[flow] = (uint64_t)(
+                    (long double)remaining * std::max<uint64_t>(1, base[flow]) /
+                    std::max<long double>(weight_sum, 1.0));
+            }
+            break;
+        }
+        for (auto *flow : newly_capped) {
+            remaining = remaining > targets[flow] ? remaining - targets[flow] : 0;
+            unassigned.erase(flow);
+        }
+    }
+    return targets;
+}
+
+void RdmaHw::ApplyGuardCapAwareRates() {
+    if (!m_guardCapAwareReclaim || m_rate_flow_ctl_set.size() < 2) return;
+    RdmaRxQueuePair *sample = *m_rate_flow_ctl_set.begin();
+    uint32_t nic_idx = GetNicIdxOfRxQp(sample);
+    uint64_t line_rate_bps = m_nic[nic_idx].dev->GetDataRate().GetBitRate();
+    std::unordered_map<RdmaRxQueuePair*, uint64_t> targets =
+        ComputeGuardCapAwareTargets(line_rate_bps);
+
+    std::vector<std::pair<RdmaRxQueuePair*, uint32_t> > updates;
+    uint64_t reclaimed_bps = 0;
+    for (auto *flow : m_rate_flow_ctl_set) {
+        uint64_t target = std::max<uint64_t>(1000000, targets[flow]);
+        uint64_t current = flow->m_guard_grant_rate_bps;
+        uint64_t difference = target > current ? target - current : current - target;
+        uint64_t threshold = std::max<uint64_t>(100000000, current / 20);
+        if (difference < threshold) continue;
+        uint32_t rate_mbps = std::max<uint32_t>(1, target / 1000000);
+        uint64_t encoded = (uint64_t)rate_mbps * 1000000;
+        if (encoded > current) reclaimed_bps += encoded - current;
+        updates.push_back(std::make_pair(flow, rate_mbps));
+    }
+    if (updates.empty()) return;
+
+    m_guardCapRebalanceEvents++;
+    m_guardCapMaxReclaimedBps = std::max(m_guardCapMaxReclaimedBps, reclaimed_bps);
+    for (auto const &update : updates) {
+        update.first->m_guard_grant_rate_bps = (uint64_t)update.second * 1000000;
+        SendRateControlPacket(update.first, update.second, "cap_report");
+        m_guardCapGrantUpdates++;
+    }
 }
 
 void RdmaHw::ScheduleGuardRebalance() {

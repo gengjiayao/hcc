@@ -263,6 +263,9 @@ class RdmaHw : public Object {
     uint64_t m_guardCapReportBytesSent;
     uint64_t m_guardCapReportsReceived;
     uint64_t m_guardFabricBoundReportsReceived;
+    uint64_t m_guardCapRebalanceEvents;
+    uint64_t m_guardCapGrantUpdates;
+    uint64_t m_guardCapMaxReclaimedBps;
     uint64_t m_guardRemainingRefreshEvents;
     uint64_t m_guardOneRttBypassFlows;
     uint64_t m_guardOneRttBypassFeedbacks;
@@ -354,6 +357,9 @@ class RdmaHw : public Object {
     void RedistributeGuardRates(const char *set_change);
     std::unordered_map<RdmaRxQueuePair*, uint64_t> ComputeGuardBaseTargets(
         uint64_t line_rate_bps) const;
+    std::unordered_map<RdmaRxQueuePair*, uint64_t> ComputeGuardCapAwareTargets(
+        uint64_t line_rate_bps) const;
+    void ApplyGuardCapAwareRates();
     void ScheduleGuardRebalance();
     void RebalanceGuardRates();
     void SendRateControlPacket(Ptr<RdmaRxQueuePair> qp, uint32_t rate,
