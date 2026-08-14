@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "name": "guard-hpcc-homa-ring-intensity-ladder",
+  "purpose": "Find the first jointly safe cross-ToR open-loop ring intensity after the committed tensor/buffer ladder exhausted all levels.",
+  "selection_policy": "Evaluate levels in listed order with seed 1 and all three arms. Select the first level with 480/480 completion in every arm, zero switch drops and generic recovery, nonzero GUARD grants and actual HPCC rate changes, nonzero vanilla HPCC actual rate changes with zero grants, and native Homa DATA/grants/completion across at least two priorities with exact completed-message tombstone accounting. Performance metrics are sealed until a level passes; stop at the first passing level.",
+  "fixed": {
+    "topology": "leaf_spine_16_100G_OS4",
+    "hosts": 16,
+    "run_duration_ms": 20,
+    "priority_group": 4,
+    "jitter_us": 0.5,
+    "tensor_bytes": 8388608,
+    "ring_placement": "alternating",
+    "buffer_mb": 32,
+    "expected_flows": 480,
+    "max_flows": 1000,
+    "run_bytes": 104857600,
+    "run_timeout_seconds": 1800
+  },
+  "levels": [
+    {"level": "i0-span4ms", "ring_span_ms": 4},
+    {"level": "i1-span8ms", "ring_span_ms": 8},
+    {"level": "i2-span16ms", "ring_span_ms": 16}
+  ],
+  "failed_predecessor": {
+    "spec": "experiments/campaigns/guard_homa_collective_ladder.json",
+    "result": "r0/r1 failed for GUARD and HPCC switch drops; r2/r3 made GUARD and Homa safe but HPCC still recorded switch drops and generic recovery"
+  }
+}
