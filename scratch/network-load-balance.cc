@@ -1727,6 +1727,10 @@ int main(int argc, char *argv[]) {
             uint32_t shift = 3;  // by default 1/8
             for (uint32_t j = 1; j < sw->GetNDevices(); j++) {
                 Ptr<QbbNetDevice> dev = DynamicCast<QbbNetDevice>(sw->GetDevice(j));
+                // Homa's DATA priority field is meaningful only with strict
+                // priority service. Other transports retain the repository's
+                // historical round-robin service across queues 1..7.
+                if (cc_mode == 12) dev->GetQueue()->SetStrictPriority(true);
                 // set ecn
                 uint64_t rate = dev->GetDataRate().GetBitRate();
                 NS_ASSERT_MSG(rate2kmin.find(rate) != rate2kmin.end(),
@@ -2539,8 +2543,8 @@ int main(int argc, char *argv[]) {
             "completion_notices_received messages_tracked "
             "messages_completed max_pending_messages\n");
     fprintf(homa_stats_output,
-            "homa_config overcommit_degree %u resend_timeout_us %lu\n",
-            homa_overcommit, homa_resend_timeout_us);
+            "homa_config overcommit_degree %u resend_timeout_us %lu strict_priority %u\n",
+            homa_overcommit, homa_resend_timeout_us, cc_mode == 12 ? 1 : 0);
     uint64_t homa_totals[12] = {0};
     uint64_t homa_max_active = 0;
     for (uint32_t i = 0; i < node_num; i++) {

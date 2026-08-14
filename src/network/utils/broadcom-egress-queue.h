@@ -40,6 +40,7 @@ namespace ns3 {
 		virtual ~BEgressQueue();
 		bool Enqueue(Ptr<Packet> p, uint32_t qIndex);
 		Ptr<Packet> DequeueRR(bool paused[]);
+		void SetStrictPriority(bool enabled);
 		uint32_t GetNBytes(uint32_t qIndex) const;
 		uint32_t GetNBytesTotal() const;
 		uint32_t GetLastQueue();
@@ -61,6 +62,7 @@ namespace ns3 {
 		uint32_t m_bytesInQueueTotal;
 		uint32_t m_rrlast;
 		uint32_t m_qlast;
+		bool m_strictPriority;
 		std::vector<Ptr<Queue> > m_queues; // uc queues
 	};
 

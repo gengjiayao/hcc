@@ -24,6 +24,7 @@
 
 #include "drop-tail-queue.h"
 #include "ns3/double.h"
+#include "ns3/boolean.h"
 #include "ns3/enum.h"
 #include "ns3/flow-id-num-tag.h"
 #include "ns3/log.h"
@@ -49,6 +50,11 @@ TypeId BEgressQueue::GetTypeId(void) {
                                           DoubleValue(1000.0 * 1024 * 1024),
                                           MakeDoubleAccessor(&BEgressQueue::m_maxBytes),
                                           MakeDoubleChecker<double>())
+                            .AddAttribute("StrictPriority",
+                                          "Serve lower-numbered non-control queues first",
+                                          BooleanValue(false),
+                                          MakeBooleanAccessor(&BEgressQueue::m_strictPriority),
+                                          MakeBooleanChecker())
                             .AddTraceSource("BeqEnqueue", "Enqueue a packet in the BEgressQueue. Multiple queue",
                                             MakeTraceSourceAccessor(&BEgressQueue::m_traceBeqEnqueue))
                             .AddTraceSource("BeqDequeue", "Dequeue a packet in the BEgressQueue. Multiple queue",
@@ -61,11 +67,14 @@ BEgressQueue::BEgressQueue() : Queue() {
     NS_LOG_FUNCTION_NOARGS();
     m_bytesInQueueTotal = 0;
     m_rrlast = 0;
+    m_strictPriority = false;
     for (uint32_t i = 0; i < fCnt; i++) {
         m_bytesInQueue[i] = 0;
         m_queues.push_back(CreateObject<DropTailQueue>());
     }
 }
+
+void BEgressQueue::SetStrictPriority(bool enabled) { m_strictPriority = enabled; }
 
 BEgressQueue::~BEgressQueue() {
     NS_LOG_FUNCTION_NOARGS();
@@ -102,6 +111,23 @@ BEgressQueue::DoDequeueRR(bool paused[])  // this is for switch only
     {
         found = true;
         qIndex = 0;
+    } else if (m_strictPriority) {
+        for (qIndex = 1; qIndex < qCnt; qIndex++) {
+            bool has_packets = m_queues[qIndex]->GetNPackets() > 0;
+            if (has_packets && !paused[qIndex]) {
+                found = true;
+                break;
+            }
+            if (has_packets && paused[qIndex]) {
+                FlowIDNUMTag fit;
+                Ptr<Packet> p = ConstCast<Packet, const Packet>(m_queues[qIndex]->Peek());
+                if (p->PeekPacketTag(fit)) {
+                    unsigned flowid = static_cast<unsigned>(fit.GetId());
+                    if (!MAP_KEY_EXISTS(current_pause_time, flowid))
+                        current_pause_time[flowid] = Simulator::Now();
+                }
+            }
+        }
     } else {
         if (!found) {
             for (qIndex = 1; qIndex <= qCnt; qIndex++) {
