@@ -106,6 +106,8 @@ GUARD_REMAINING_EXPONENT {guard_remaining_exponent}
 GUARD_GRANT_REFRESH_BDPS {guard_grant_refresh_bdps}
 GUARD_SRPT_QUANTUM_PACKETS {guard_srpt_quantum_packets}
 GUARD_WORK_CONSERVING {guard_work_conserving}
+GUARD_CAP_AWARE_RECLAIM {guard_cap_aware_reclaim}
+GUARD_CAP_HEADROOM {guard_cap_headroom}
 GUARD_REBALANCE_INTERVAL_US {guard_rebalance_interval_us}
 GUARD_DEMAND_THRESHOLD {guard_demand_threshold}
 GUARD_RECEIVER_UTIL_THRESHOLD {guard_receiver_util_threshold}
@@ -409,6 +411,10 @@ def main():
                         help="consecutive SRPT packet bound before RR service (default: 64)")
     parser.add_argument('--guard_work_conserving', type=int, choices=(0, 1), default=0,
                         help="enable experimental unused-share reclamation (default: 0)")
+    parser.add_argument('--guard_cap_aware_reclaim', type=int, choices=(0, 1), default=0,
+                        help="reclaim shares using bounded sender cap reports (default: 0)")
+    parser.add_argument('--guard_cap_headroom', type=float, default=1.1,
+                        help="headroom above reported fabric caps in [1,2] (default: 1.1)")
     parser.add_argument('--guard_rebalance_interval_us', type=int, default=200,
                         help="GUARD receiver demand-sampling interval in us (default: 200)")
     parser.add_argument('--guard_demand_threshold', type=float, default=0.75,
@@ -491,6 +497,8 @@ def main():
         raise Exception("CONFIG ERROR: --guard_lambda must be at least 1.0.")
     if args.guard_rebalance_interval_us <= 0:
         raise Exception("CONFIG ERROR: --guard_rebalance_interval_us must be positive.")
+    if not 1.0 <= args.guard_cap_headroom <= 2.0:
+        raise Exception("CONFIG ERROR: --guard_cap_headroom must be in [1, 2].")
     if args.guard_srpt_quantum_packets <= 0:
         raise Exception("CONFIG ERROR: --guard_srpt_quantum_packets must be positive.")
     if args.guard_ack_interval_packets <= 0:
@@ -876,6 +884,8 @@ def main():
                                         guard_grant_refresh_bdps=args.guard_grant_refresh_bdps,
                                         guard_srpt_quantum_packets=args.guard_srpt_quantum_packets,
                                         guard_work_conserving=args.guard_work_conserving,
+                                        guard_cap_aware_reclaim=args.guard_cap_aware_reclaim,
+                                        guard_cap_headroom=args.guard_cap_headroom,
                                         guard_rebalance_interval_us=args.guard_rebalance_interval_us,
                                         guard_demand_threshold=args.guard_demand_threshold,
                                         guard_receiver_util_threshold=args.guard_receiver_util_threshold,

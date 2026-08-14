@@ -184,6 +184,8 @@ double guard_remaining_exponent = 1.0;
 double guard_grant_refresh_bdps = 1.0;
 uint32_t guard_srpt_quantum_packets = 64;
 bool guard_work_conserving = false;
+bool guard_cap_aware_reclaim = false;
+double guard_cap_headroom = 1.1;
 uint64_t guard_rebalance_interval_us = 200;
 double guard_demand_threshold = 0.75;
 double guard_receiver_util_threshold = 0.75;
@@ -1311,6 +1313,13 @@ int main(int argc, char *argv[]) {
             } else if (key.compare("GUARD_WORK_CONSERVING") == 0) {
                 conf >> guard_work_conserving;
                 std::cerr << "GUARD_WORK_CONSERVING\t" << guard_work_conserving << '\n';
+            } else if (key.compare("GUARD_CAP_AWARE_RECLAIM") == 0) {
+                conf >> guard_cap_aware_reclaim;
+                std::cerr << "GUARD_CAP_AWARE_RECLAIM\t"
+                          << guard_cap_aware_reclaim << '\n';
+            } else if (key.compare("GUARD_CAP_HEADROOM") == 0) {
+                conf >> guard_cap_headroom;
+                std::cerr << "GUARD_CAP_HEADROOM\t" << guard_cap_headroom << '\n';
             } else if (key.compare("GUARD_REBALANCE_INTERVAL_US") == 0) {
                 conf >> guard_rebalance_interval_us;
                 std::cerr << "GUARD_REBALANCE_INTERVAL_US\t"
@@ -1509,6 +1518,10 @@ int main(int argc, char *argv[]) {
     }
     if (guard_rebalance_interval_us == 0) {
         std::cerr << "GUARD_REBALANCE_INTERVAL_US must be positive\n";
+        return 1;
+    }
+    if (guard_cap_headroom < 1.0 || guard_cap_headroom > 2.0) {
+        std::cerr << "GUARD_CAP_HEADROOM must be in [1, 2]\n";
         return 1;
     }
     if (guard_demand_threshold <= 0.0 || guard_demand_threshold >= 1.0) {
@@ -2011,6 +2024,9 @@ int main(int argc, char *argv[]) {
             rdmaHw->SetAttribute("GuardSrptQuantumPackets",
                                  UintegerValue(guard_srpt_quantum_packets));
             rdmaHw->SetAttribute("GuardWorkConserving", BooleanValue(guard_work_conserving));
+            rdmaHw->SetAttribute("GuardCapAwareReclaim",
+                                 BooleanValue(guard_cap_aware_reclaim));
+            rdmaHw->SetAttribute("GuardCapHeadroom", DoubleValue(guard_cap_headroom));
             rdmaHw->SetAttribute("GuardRebalanceInterval",
                                  TimeValue(MicroSeconds(guard_rebalance_interval_us)));
             rdmaHw->SetAttribute("GuardDemandThreshold", DoubleValue(guard_demand_threshold));
