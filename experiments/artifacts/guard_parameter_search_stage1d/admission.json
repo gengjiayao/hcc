@@ -1,0 +1,43 @@
+{
+  "all_arms_passed": true,
+  "arms": [
+    {
+      "arm": "lambda180",
+      "failures": [],
+      "flow_sha256": "4ff759a221036bc8165e66016d01b043c21c6f9fac76f1714f91ef2afa35621c",
+      "output_id": "956300861",
+      "passed": true,
+      "seed": 46
+    },
+    {
+      "arm": "lambda200",
+      "failures": [],
+      "flow_sha256": "4ff759a221036bc8165e66016d01b043c21c6f9fac76f1714f91ef2afa35621c",
+      "output_id": "761718953",
+      "passed": true,
+      "seed": 46
+    },
+    {
+      "arm": "lambda220",
+      "failures": [],
+      "flow_sha256": "4ff759a221036bc8165e66016d01b043c21c6f9fac76f1714f91ef2afa35621c",
+      "output_id": "938644107",
+      "passed": true,
+      "seed": 46
+    },
+    {
+      "arm": "lambda240",
+      "failures": [],
+      "flow_sha256": "4ff759a221036bc8165e66016d01b043c21c6f9fac76f1714f91ef2afa35621c",
+      "output_id": "399333419",
+      "passed": true,
+      "seed": 46
+    }
+  ],
+  "decision": "extend_all_grid_points",
+  "flow_hash_matched": true,
+  "gate": "first seed mechanism and safety only; no performance metric inspected",
+  "preflight_sha256": "3b25c88ad9a42ef972a003f93772cd9bcbec9bd114a6fc6aa1941556c2bf250d",
+  "schema_version": 1,
+  "seed": 46
+}

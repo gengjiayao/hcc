@@ -1,0 +1,116 @@
+{
+  "baseline_arm": "lambda180",
+  "candidates": [
+    {
+      "arm": "lambda200",
+      "eligible": false,
+      "gates": {
+        "gt_1MB_fct_us_mean_ci95_high_below_0.0": false,
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_0.0": false,
+        "queue_bytes_mean_ci95_high_at_most_25.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "gt_1MB_fct_us_mean": {
+          "ci95_half_width": 0.07117968614024799,
+          "ci95_high": 0.035364023913620445,
+          "ci95_low": -0.10699534836687552,
+          "mean": -0.03581566222662754,
+          "n": 5
+        },
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.01736577693829846,
+          "ci95_high": 0.02481174617575084,
+          "ci95_low": -0.009919807700846077,
+          "mean": 0.007445969237452383,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.01809049505665096,
+          "ci95_high": 0.00837840057966599,
+          "ci95_low": -0.02780258953363593,
+          "mean": -0.00971209447698497,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 0.4020173314317435,
+          "ci95_high": 0.8616375054409429,
+          "ci95_low": 0.05760284257745579,
+          "mean": 0.4596201740091993,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        -0.03581566222662754,
+        -0.00971209447698497,
+        0.4596201740091993
+      ]
+    },
+    {
+      "arm": "lambda220",
+      "eligible": false,
+      "gates": {
+        "gt_1MB_fct_us_mean_ci95_high_below_0.0": false,
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_0.0": false,
+        "queue_bytes_mean_ci95_high_at_most_25.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "gt_1MB_fct_us_mean": {
+          "ci95_half_width": 0.12125356347216805,
+          "ci95_high": 0.049817619452050335,
+          "ci95_low": -0.19268950749228575,
+          "mean": -0.07143594402011771,
+          "n": 5
+        },
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.03404095903741081,
+          "ci95_high": 0.038979332240621445,
+          "ci95_low": -0.029102585834200185,
+          "mean": 0.004938373203210628,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.036294132711487084,
+          "ci95_high": 0.01937492463097689,
+          "ci95_low": -0.05321334079199728,
+          "mean": -0.016919208080510194,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 0.9065968211317084,
+          "ci95_high": 1.6876189774107204,
+          "ci95_low": -0.1255746648526962,
+          "mean": 0.7810221562790122,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        -0.07143594402011771,
+        -0.016919208080510194,
+        0.7810221562790122
+      ]
+    },
+    {
+      "arm": "lambda240",
+      "eligible": false,
+      "gates": {
+        "five_seed_mechanism_admission": false
+      },
+      "paired_percent_vs_baseline": {},
+      "rejected_seeds": [
+        49,
+        50
+      ],
+      "rejection_reasons": [
+        "a GUARD controller path was inactive"
+      ],
+      "tie_break_key": []
+    }
+  ],
+  "requires_fresh_holdout_before_claim": true,
+  "schema_version": 1,
+  "selected_arm": "lambda180",
+  "selection_used_performance_direction": true,
+  "status": "no_candidate_beats_frozen_gates"
+}
