@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 from experiments.run_guard_homa_collectives import _flow_count, read_spec, run_command
-from experiments.summarize_guard_homa_collectives import mean_ci, validate_mechanism
+from experiments.summarize_guard_homa_collectives import SEEDS, mean_ci, validate_mechanism
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -93,6 +93,7 @@ class CollectiveSummaryTest(unittest.TestCase):
         )
 
     def test_five_seed_interval(self):
+        self.assertEqual(SEEDS, (1, 2, 3, 4, 5))
         interval = mean_ci([1, 2, 3, 4, 5])
         self.assertEqual(interval["n"], 5)
         self.assertEqual(interval["mean"], 3)

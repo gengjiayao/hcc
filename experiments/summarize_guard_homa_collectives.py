@@ -21,6 +21,7 @@ except ModuleNotFoundError:
 
 
 ARMS = ("guard", "hpcc", "homa")
+SEEDS = (1, 2, 3, 4, 5)
 CC_MODES = {"guard": 11, "hpcc": 3, "homa": 12}
 T95_DF4 = 2.7764451051977987
 ZERO_GENERIC_RECOVERY = (
