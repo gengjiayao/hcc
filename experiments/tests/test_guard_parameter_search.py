@@ -17,6 +17,7 @@ TAIL_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_st
 LAMBDA_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage1d.json"
 CONCURRENCY_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage2a.json"
 ELEPHANT_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage2b.json"
+THRESHOLD_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage2c.json"
 
 
 class GuardParameterSearchTest(unittest.TestCase):
@@ -130,6 +131,19 @@ class GuardParameterSearchTest(unittest.TestCase):
         joined = " ".join(command)
         self.assertIn("--guard_receiver_concurrency 1", joined)
         self.assertIn("--guard_concurrency_min_bdps 8.0", joined)
+
+    def test_elephant_threshold_grid_is_complete(self):
+        spec = read_spec(THRESHOLD_SPEC_PATH)
+        self.assertEqual(spec["search_kind"], "elephant_threshold")
+        self.assertEqual(spec["seeds"], [61, 62, 63, 64, 65])
+        candidates = [
+            arm for arm in spec["arms"].values()
+            if arm["guard_receiver_concurrency"] == 1
+        ]
+        self.assertEqual(
+            {arm["guard_concurrency_min_bdps"] for arm in candidates},
+            {4.0, 6.0, 8.0, 12.0},
+        )
 
     def test_selection_applies_primary_and_constraint_gates(self):
         result = select_candidate(self.spec, self.rows())
