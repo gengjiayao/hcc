@@ -133,10 +133,24 @@ def read_spec(path: Path) -> Mapping[str, object]:
             observed.add(value)
         if observed != set(RECEIVER_CONCURRENCY_VALUES) or len(arms) != 2:
             raise CampaignError("arms must cover unlimited and one-flow receiver service")
+    elif kind == "elephant_concurrency":
+        if float(defaults.get("guard_concurrency_min_bdps", -1)) != 8.0:
+            raise CampaignError("elephant concurrency must freeze the threshold at 8 BDPs")
+        observed = set()
+        for name, raw in arms.items():
+            arm = dict(raw)
+            if arm.get("cc") != "guard":
+                raise CampaignError(f"{name} must select cc=guard")
+            value = int(arm.get("guard_receiver_concurrency", -1))
+            if value not in RECEIVER_CONCURRENCY_VALUES:
+                raise CampaignError(f"{name} has an unfrozen elephant concurrency")
+            observed.add(value)
+        if observed != set(RECEIVER_CONCURRENCY_VALUES) or len(arms) != 2:
+            raise CampaignError("arms must cover unlimited and one-elephant service")
     else:
         raise CampaignError(
             "search_kind must be receiver_grid, srpt_quantum, tail_gate, "
-            "lambda_high_load, or receiver_concurrency")
+            "lambda_high_load, receiver_concurrency, or elephant_concurrency")
     selection = dict(spec.get("selection", {}))
     if selection.get("baseline_arm") not in arms:
         raise CampaignError("selection baseline is not a grid arm")
