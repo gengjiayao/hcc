@@ -119,6 +119,15 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
         "guard_sender_srpt_selections": 0, "guard_sender_srpt_non_rr": 0,
         "guard_sender_srpt_forced_rr": 0,
     }
+    guard_short = {
+        "guard_one_rtt_bypass_enabled": 0,
+        "guard_one_rtt_bypass_flows": 0,
+        "guard_one_rtt_bypass_feedbacks": 0,
+        "guard_one_rtt_acks_suppressed": 0,
+        "guard_long_acks_suppressed": 0,
+        "guard_ack_interval_packets": 0,
+        "guard_fixed_window": 0,
+    }
     guard_tail = {
         "guard_tail_bypass_enabled": 0, "guard_tail_bypass_bdps": 0.0,
         "guard_tail_bypass_flows": 0, "guard_tail_bypass_feedbacks": 0,
@@ -183,6 +192,16 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
                     "guard_sender_srpt_non_rr": int(parts[8]),
                     "guard_sender_srpt_forced_rr": int(parts[10]),
                 }
+            elif parts[:2] == ["guard_one_rtt_bypass", "enabled"] and len(parts) == 15:
+                guard_short = {
+                    "guard_one_rtt_bypass_enabled": int(parts[2]),
+                    "guard_one_rtt_bypass_flows": int(parts[4]),
+                    "guard_one_rtt_bypass_feedbacks": int(parts[6]),
+                    "guard_one_rtt_acks_suppressed": int(parts[8]),
+                    "guard_long_acks_suppressed": int(parts[10]),
+                    "guard_ack_interval_packets": int(parts[12]),
+                    "guard_fixed_window": int(parts[14]),
+                }
             elif parts[:2] == ["guard_tail_bypass", "enabled"] and len(parts) == 9:
                 guard_tail = {
                     "guard_tail_bypass_enabled": int(parts[2]),
@@ -217,6 +236,7 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
     if homa_tombstone_total is not None:
         result.update(homa_tombstone_total)
     result.update(guard_scheduler)
+    result.update(guard_short)
     result.update(guard_tail)
     result.update(guard_receiver)
     result.update({f"switch_drops_{key}": value for key, value in switch_drops.items()})

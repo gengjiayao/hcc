@@ -175,6 +175,25 @@ class SummaryTests(unittest.TestCase):
             self.assertEqual(stats["guard_grant_refresh_bdps"], 1.0)
             self.assertEqual(stats["guard_remaining_refresh_events"], 56)
 
+    def test_guard_short_flow_and_ack_stats_preserve_frozen_controls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            path.write_text(
+                "total 0 0 0 0\n"
+                "guard_one_rtt_bypass enabled 1 flows 11 feedbacks_skipped 12 "
+                "acks_suppressed 13 long_acks_suppressed 14 "
+                "ack_interval_packets 8 fixed_window 1\n",
+                encoding="utf-8",
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["guard_one_rtt_bypass_enabled"], 1)
+            self.assertEqual(stats["guard_one_rtt_bypass_flows"], 11)
+            self.assertEqual(stats["guard_one_rtt_bypass_feedbacks"], 12)
+            self.assertEqual(stats["guard_one_rtt_acks_suppressed"], 13)
+            self.assertEqual(stats["guard_long_acks_suppressed"], 14)
+            self.assertEqual(stats["guard_ack_interval_packets"], 8)
+            self.assertEqual(stats["guard_fixed_window"], 1)
+
     def test_queue_summary_is_preaggregated_and_includes_zero_samples(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "queue.txt"
