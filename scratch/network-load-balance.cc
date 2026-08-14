@@ -182,6 +182,7 @@ uint32_t guard_tail_safe_samples = 2;
 bool guard_adaptive_fabric_target = false;
 double guard_target_floor = 0.95;
 double guard_queue_budget_bdps = 0.5;
+double guard_adaptive_target_max_bdps = 0.0;
 uint32_t guard_ack_interval_packets = 8;
 bool guard_fixed_window = true;
 bool guard_remaining_aware = true;
@@ -1314,6 +1315,10 @@ int main(int argc, char *argv[]) {
                 conf >> guard_queue_budget_bdps;
                 std::cerr << "GUARD_QUEUE_BUDGET_BDPS\t"
                           << guard_queue_budget_bdps << '\n';
+            } else if (key.compare("GUARD_ADAPTIVE_TARGET_MAX_BDPS") == 0) {
+                conf >> guard_adaptive_target_max_bdps;
+                std::cerr << "GUARD_ADAPTIVE_TARGET_MAX_BDPS\t"
+                          << guard_adaptive_target_max_bdps << '\n';
             } else if (key.compare("GUARD_ACK_INTERVAL_PACKETS") == 0) {
                 conf >> guard_ack_interval_packets;
                 std::cerr << "GUARD_ACK_INTERVAL_PACKETS\t"
@@ -1564,6 +1569,10 @@ int main(int argc, char *argv[]) {
     }
     if (guard_queue_budget_bdps < 0.01 || guard_queue_budget_bdps > 4.0) {
         std::cerr << "GUARD_QUEUE_BUDGET_BDPS must be in [0.01, 4]\n";
+        return 1;
+    }
+    if (guard_adaptive_target_max_bdps < 0.0 || guard_adaptive_target_max_bdps > 64.0) {
+        std::cerr << "GUARD_ADAPTIVE_TARGET_MAX_BDPS must be in [0, 64]\n";
         return 1;
     }
     if (guard_rebalance_interval_us == 0) {
@@ -2087,6 +2096,8 @@ int main(int argc, char *argv[]) {
             rdmaHw->SetAttribute("GuardTargetFloor", DoubleValue(guard_target_floor));
             rdmaHw->SetAttribute("GuardQueueBudgetBdps",
                                  DoubleValue(guard_queue_budget_bdps));
+            rdmaHw->SetAttribute("GuardAdaptiveTargetMaxBdps",
+                                 DoubleValue(guard_adaptive_target_max_bdps));
             rdmaHw->SetAttribute("GuardAckIntervalPackets",
                                  UintegerValue(guard_ack_interval_packets));
             rdmaHw->SetAttribute("GuardFixedWindow", BooleanValue(guard_fixed_window));
@@ -2849,9 +2860,10 @@ int main(int argc, char *argv[]) {
             total_guard_tail_gate_qualified_flows);
     fprintf(guard_stats_output,
             "guard_adaptive_target enabled %u floor %.6f queue_budget_bdps %.6f "
-            "updates %lu min_target %.9f max_queue_bdps %.9f\n",
+            "max_flow_bdps %.6f updates %lu min_target %.9f max_queue_bdps %.9f\n",
             guard_adaptive_fabric_target ? 1 : 0, guard_target_floor,
-            guard_queue_budget_bdps, total_guard_adaptive_target_updates,
+            guard_queue_budget_bdps, guard_adaptive_target_max_bdps,
+            total_guard_adaptive_target_updates,
             min_guard_adaptive_target, max_guard_adaptive_queue_bdps);
     fprintf(guard_stats_output,
             "guard_receiver_scheduler remaining_aware %u min_share_fraction %.6f "

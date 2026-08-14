@@ -138,6 +138,7 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
     guard_adaptive_target = {
         "guard_adaptive_target_enabled": 0, "guard_target_floor": 0.0,
         "guard_queue_budget_bdps": 0.0, "guard_adaptive_target_updates": 0,
+        "guard_adaptive_target_max_bdps": 0.0,
         "guard_adaptive_target_min_observed": 0.0,
         "guard_adaptive_target_max_queue_bdps": 0.0,
     }
@@ -259,6 +260,16 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
                     "guard_adaptive_target_updates": int(parts[8]),
                     "guard_adaptive_target_min_observed": float(parts[10]),
                     "guard_adaptive_target_max_queue_bdps": float(parts[12]),
+                }
+            elif parts[:2] == ["guard_adaptive_target", "enabled"] and len(parts) == 15:
+                guard_adaptive_target = {
+                    "guard_adaptive_target_enabled": int(parts[2]),
+                    "guard_target_floor": float(parts[4]),
+                    "guard_queue_budget_bdps": float(parts[6]),
+                    "guard_adaptive_target_max_bdps": float(parts[8]),
+                    "guard_adaptive_target_updates": int(parts[10]),
+                    "guard_adaptive_target_min_observed": float(parts[12]),
+                    "guard_adaptive_target_max_queue_bdps": float(parts[14]),
                 }
             elif parts[:2] == ["guard_receiver_scheduler", "remaining_aware"] and len(parts) == 11:
                 guard_receiver = {

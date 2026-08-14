@@ -104,6 +104,7 @@ GUARD_TAIL_SAFE_SAMPLES {guard_tail_safe_samples}
 GUARD_ADAPTIVE_FABRIC_TARGET {guard_adaptive_fabric_target}
 GUARD_TARGET_FLOOR {guard_target_floor}
 GUARD_QUEUE_BUDGET_BDPS {guard_queue_budget_bdps}
+GUARD_ADAPTIVE_TARGET_MAX_BDPS {guard_adaptive_target_max_bdps}
 GUARD_ACK_INTERVAL_PACKETS {guard_ack_interval_packets}
 GUARD_FIXED_WINDOW {guard_fixed_window}
 GUARD_REMAINING_AWARE {guard_remaining_aware}
@@ -416,6 +417,8 @@ def main():
                         help="minimum adaptive fabric target in [0.5,1] (default: 0.95)")
     parser.add_argument('--guard_queue_budget_bdps', type=float, default=0.5,
                         help="queued BDPs for full target rollback in [0.01,4] (default: 0.5)")
+    parser.add_argument('--guard_adaptive_target_max_bdps', type=float, default=0.0,
+                        help="largest flow using adaptive targets in BDPs; 0 means all")
     parser.add_argument('--guard_ack_interval_packets', type=int, default=8,
                         help="cumulative ACK interval for registered GUARD flows (default: 8)")
     parser.add_argument('--guard_fixed_window', type=int, choices=(0, 1), default=1,
@@ -542,6 +545,8 @@ def main():
         raise Exception("CONFIG ERROR: --guard_target_floor must be in [0.5, 1].")
     if not 0.01 <= args.guard_queue_budget_bdps <= 4.0:
         raise Exception("CONFIG ERROR: --guard_queue_budget_bdps must be in [0.01, 4].")
+    if not 0.0 <= args.guard_adaptive_target_max_bdps <= 64.0:
+        raise Exception("CONFIG ERROR: --guard_adaptive_target_max_bdps must be in [0, 64].")
     if not 0.0 <= args.guard_min_share_fraction <= 1.0:
         raise Exception("CONFIG ERROR: --guard_min_share_fraction must be in [0, 1].")
     if not 0.0 <= args.guard_remaining_exponent <= 2.0:
@@ -923,6 +928,7 @@ def main():
                                         guard_adaptive_fabric_target=args.guard_adaptive_fabric_target,
                                         guard_target_floor=args.guard_target_floor,
                                         guard_queue_budget_bdps=args.guard_queue_budget_bdps,
+                                        guard_adaptive_target_max_bdps=args.guard_adaptive_target_max_bdps,
                                         guard_ack_interval_packets=args.guard_ack_interval_packets,
                                         guard_fixed_window=args.guard_fixed_window,
                                         guard_remaining_aware=args.guard_remaining_aware,

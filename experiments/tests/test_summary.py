@@ -222,7 +222,8 @@ class SummaryTests(unittest.TestCase):
             path.write_text(
                 "total 0 0 0 0\n"
                 "guard_adaptive_target enabled 1 floor 0.950000 "
-                "queue_budget_bdps 0.500000 updates 123 min_target 0.950000000 "
+                "queue_budget_bdps 0.500000 max_flow_bdps 12.000000 "
+                "updates 123 min_target 0.950000000 "
                 "max_queue_bdps 1.750000000\n",
                 encoding="utf-8",
             )
@@ -230,6 +231,7 @@ class SummaryTests(unittest.TestCase):
             self.assertEqual(stats["guard_adaptive_target_enabled"], 1)
             self.assertEqual(stats["guard_target_floor"], 0.95)
             self.assertEqual(stats["guard_queue_budget_bdps"], 0.5)
+            self.assertEqual(stats["guard_adaptive_target_max_bdps"], 12.0)
             self.assertEqual(stats["guard_adaptive_target_updates"], 123)
             self.assertEqual(stats["guard_adaptive_target_min_observed"], 0.95)
             self.assertEqual(stats["guard_adaptive_target_max_queue_bdps"], 1.75)

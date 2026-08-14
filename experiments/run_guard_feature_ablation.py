@@ -54,6 +54,7 @@ GUARD_OPTIONS = (
     "guard_one_rtt_bypass", "guard_tail_bypass", "guard_tail_bypass_bdps",
     "guard_tail_congestion_gate", "guard_tail_safe_ratio", "guard_tail_safe_samples",
     "guard_adaptive_fabric_target", "guard_target_floor", "guard_queue_budget_bdps",
+    "guard_adaptive_target_max_bdps",
     "guard_ack_interval_packets", "guard_fixed_window", "guard_remaining_aware",
     "guard_min_share_fraction", "guard_remaining_exponent",
     "guard_receiver_concurrency",
