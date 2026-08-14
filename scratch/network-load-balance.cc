@@ -1841,10 +1841,13 @@ int main(int argc, char *argv[]) {
             uint32_t shift = 3;  // by default 1/8
             for (uint32_t j = 1; j < sw->GetNDevices(); j++) {
                 Ptr<QbbNetDevice> dev = DynamicCast<QbbNetDevice>(sw->GetDevice(j));
-                // Homa's DATA priority field is meaningful only with strict
-                // priority service. Other transports retain the repository's
-                // historical round-robin service across queues 1..7.
-                if (cc_mode == 12) dev->GetQueue()->SetStrictPriority(true);
+                // Size classes are meaningful only with strict-priority
+                // service.  Homa already used it; GUARD previously assigned
+                // PGs but accidentally left the switch in round-robin mode.
+                if (cc_mode == 12 ||
+                    ((cc_mode == 11 || cc_mode == 13) && guard_size_priority)) {
+                    dev->GetQueue()->SetStrictPriority(true);
+                }
                 // set ecn
                 uint64_t rate = dev->GetDataRate().GetBitRate();
                 NS_ASSERT_MSG(rate2kmin.find(rate) != rate2kmin.end(),
