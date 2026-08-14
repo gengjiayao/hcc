@@ -189,6 +189,11 @@ TypeId RdmaHw::GetTypeId(void) {
                           UintegerValue(0),
                           MakeUintegerAccessor(&RdmaHw::m_guardReceiverConcurrency),
                           MakeUintegerChecker<uint32_t>())
+            .AddAttribute("GuardConcurrencyMinBdps",
+                          "Apply the receiver concurrency bound only above this many BDPs",
+                          DoubleValue(8.0),
+                          MakeDoubleAccessor(&RdmaHw::m_guardConcurrencyMinBdps),
+                          MakeDoubleChecker<double>(0.0, 64.0))
             .AddAttribute("GuardGrantRefreshBdps",
                           "Receiver progress between remaining-aware grant refreshes in BDPs; "
                           "zero disables progress refresh",
@@ -815,11 +820,11 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
                     (uint64_t)(fst.GetBaseRttSeconds() * rate.GetBitRate() / 8.0);
                 if (guard_bdp == 0) guard_bdp = 104000;  // safety
             }
-            if (flow_start && (!m_guardSelectiveRegistration || flow_size > guard_bdp)) {
-                HandleRccRequest(rxQp, p, ch);
-            }
             if (rxQp->m_base_rtt_sec == 0 && fst.HasBaseRtt()) {
                 rxQp->m_base_rtt_sec = fst.GetBaseRttSeconds();
+            }
+            if (flow_start && (!m_guardSelectiveRegistration || flow_size > guard_bdp)) {
+                HandleRccRequest(rxQp, p, ch);
             }
         } else {
             std::cout << "ERROR: no FlowStatTag in ReceiveUdp (guard)\n";
@@ -1869,12 +1874,21 @@ void RdmaHw::RedistributeGuardRates(const char *set_change) {
         m_guardCapAwareReclaim
             ? ComputeGuardCapAwareTargets(line_rate_bps)
             : ComputeGuardBaseTargets(line_rate_bps);
-    if (m_guardReceiverConcurrency > 0 &&
-        m_rate_flow_ctl_set.size() > m_guardReceiverConcurrency) {
+    size_t concurrency_candidates = 0;
+    if (m_guardReceiverConcurrency > 0) {
+        for (auto *flow : m_rate_flow_ctl_set) {
+            uint64_t bdp_bytes = flow->m_base_rtt_sec > 0
+                                     ? (uint64_t)(flow->m_base_rtt_sec * line_rate_bps / 8.0)
+                                     : 104000;
+            if (flow->m_guard_flow_size > m_guardConcurrencyMinBdps * bdp_bytes)
+                concurrency_candidates++;
+        }
+    }
+    if (concurrency_candidates > m_guardReceiverConcurrency) {
         m_guardConcurrencyLimitedAllocations++;
         m_guardConcurrencyMaxDeferredFlows = std::max<uint64_t>(
             m_guardConcurrencyMaxDeferredFlows,
-            m_rate_flow_ctl_set.size() - m_guardReceiverConcurrency);
+            concurrency_candidates - m_guardReceiverConcurrency);
     }
     for (auto *flow : m_rate_flow_ctl_set) {
         flow->m_guard_interval_bytes = 0;
@@ -1896,14 +1910,22 @@ std::unordered_map<RdmaRxQueuePair*, uint64_t> RdmaHw::ComputeGuardBaseTargets(
     size_t count = m_rate_flow_ctl_set.size();
     if (count == 0) return targets;
     uint64_t equal_share = line_rate_bps / count;
-    size_t service_count = m_guardReceiverConcurrency == 0
-                               ? count
-                               : std::min<size_t>(count, m_guardReceiverConcurrency);
+    std::vector<RdmaRxQueuePair*> concurrency_candidates;
+    if (m_guardReceiverConcurrency > 0) {
+        for (auto *flow : m_rate_flow_ctl_set) {
+            uint64_t bdp_bytes = flow->m_base_rtt_sec > 0
+                                     ? (uint64_t)(flow->m_base_rtt_sec * line_rate_bps / 8.0)
+                                     : 104000;
+            if (flow->m_guard_flow_size > m_guardConcurrencyMinBdps * bdp_bytes)
+                concurrency_candidates.push_back(flow);
+        }
+    }
+    size_t service_count = std::min<size_t>(
+        concurrency_candidates.size(), m_guardReceiverConcurrency);
     std::unordered_set<RdmaRxQueuePair*> service_set;
-    if (service_count < count) {
-        std::vector<RdmaRxQueuePair*> ranked(m_rate_flow_ctl_set.begin(),
-                                             m_rate_flow_ctl_set.end());
-        std::sort(ranked.begin(), ranked.end(),
+    if (m_guardReceiverConcurrency > 0 &&
+        service_count < concurrency_candidates.size()) {
+        std::sort(concurrency_candidates.begin(), concurrency_candidates.end(),
                   [](RdmaRxQueuePair *left, RdmaRxQueuePair *right) {
                       uint64_t left_remaining =
                           left->m_guard_flow_size > left->ReceiverNextExpectedSeq
@@ -1917,13 +1939,22 @@ std::unordered_map<RdmaRxQueuePair*, uint64_t> RdmaHw::ComputeGuardBaseTargets(
                           return left_remaining < right_remaining;
                       return left->m_flow_id < right->m_flow_id;
                   });
-        service_set.insert(ranked.begin(), ranked.begin() + service_count);
+        for (auto *flow : m_rate_flow_ctl_set) {
+            if (std::find(concurrency_candidates.begin(), concurrency_candidates.end(), flow) ==
+                concurrency_candidates.end()) {
+                service_set.insert(flow);
+            }
+        }
+        service_set.insert(concurrency_candidates.begin(),
+                           concurrency_candidates.begin() + service_count);
 
-        // Preserve a bounded starvation floor for deferred flows, then give
-        // the remaining receiver capacity only to the K shortest flows.
+        // Preserve a bounded starvation floor for deferred elephants, then
+        // share the remaining receiver capacity among all shorter flows and
+        // only the K shortest elephants.
+        size_t deferred_count = concurrency_candidates.size() - service_count;
         uint64_t minimum_rate = std::min<uint64_t>(
             m_minRate.GetBitRate(), line_rate_bps / count);
-        uint64_t residual = line_rate_bps - minimum_rate * count;
+        uint64_t residual = line_rate_bps - minimum_rate * deferred_count;
         double weight_sum = 0.0;
         uint64_t min_remaining = std::numeric_limits<uint64_t>::max();
         for (auto *flow : service_set) {
@@ -1947,9 +1978,9 @@ std::unordered_map<RdmaRxQueuePair*, uint64_t> RdmaHw::ComputeGuardBaseTargets(
             weight_sum += weight;
         }
         for (auto *flow : m_rate_flow_ctl_set) {
-            targets[flow] = minimum_rate;
+            targets[flow] = service_set.find(flow) == service_set.end() ? minimum_rate : 0;
             if (service_set.find(flow) != service_set.end()) {
-                targets[flow] += (uint64_t)(
+                targets[flow] = (uint64_t)(
                     residual * weights[flow] / std::max(weight_sum, 1e-12));
             }
         }

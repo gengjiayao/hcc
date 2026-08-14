@@ -225,6 +225,7 @@ class RdmaHw : public Object {
     double m_guardMinShareFraction;
     double m_guardRemainingExponent;
     uint32_t m_guardReceiverConcurrency;
+    double m_guardConcurrencyMinBdps;
     double m_guardGrantRefreshBdps;
     uint32_t m_guardSrptQuantumPackets;
     bool m_guardWorkConserving;
