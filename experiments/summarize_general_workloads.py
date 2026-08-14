@@ -299,6 +299,21 @@ def mechanism_checks(arm: str, stats: Mapping[str, object]) -> Dict[str, bool]:
     raise AnalysisError(f"unsupported arm: {arm}")
 
 
+def homa_completion_checks(stats: Mapping[str, object], flow_count: int) -> Dict[str, bool]:
+    replays = int(stats["homa_completion_notices_replayed"])
+    duplicates = int(stats["homa_duplicate_data_after_completion"])
+    return {
+        "homa_tracked_every_flow": int(stats["homa_messages_tracked"]) == flow_count,
+        "homa_completed_every_flow": int(stats["homa_messages_completed"]) == flow_count,
+        "homa_tombstone_every_flow": int(stats["homa_completed_message_ids"]) == flow_count,
+        "homa_notice_received_every_flow":
+            int(stats["homa_completion_notices_received"]) == flow_count,
+        "homa_completion_replays_close": replays == duplicates,
+        "homa_notice_sends_close":
+            int(stats["homa_completion_notices_sent"]) == flow_count + replays,
+    }
+
+
 def analyze_run(
     campaign_dir: Path,
     preflight_workload: Mapping[str, object],
@@ -359,14 +374,7 @@ def analyze_run(
         checks.update(mechanism_checks(arm, stats))
     if arm == "homa":
         flow_count = int(trace["flow_count"])
-        checks.update({
-            "homa_tracked_every_flow": int(stats["homa_messages_tracked"]) == flow_count,
-            "homa_completed_every_flow": int(stats["homa_messages_completed"]) == flow_count,
-            "homa_notice_sent_every_flow":
-                int(stats["homa_completion_notices_sent"]) == flow_count,
-            "homa_notice_received_every_flow":
-                int(stats["homa_completion_notices_received"]) == flow_count,
-        })
+        checks.update(homa_completion_checks(stats, flow_count))
     controller_metrics: Dict[str, float] = {}
     controller_footer = {"attempted": 0, "written": 0, "truncated": 0}
     if controller_trace:

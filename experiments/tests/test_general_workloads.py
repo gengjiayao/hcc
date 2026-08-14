@@ -19,6 +19,7 @@ from experiments.summarize_general_workloads import (
     fct_metrics,
     flow_scope,
     mechanism_checks,
+    homa_completion_checks,
     parse_controller,
 )
 
@@ -205,6 +206,22 @@ class GeneralWorkloadSummaryTests(unittest.TestCase):
             homa_priority={1: {"data_packets": 20}, 7: {"data_packets": 80}},
         )
         self.assertTrue(all(mechanism_checks("homa", homa).values()))
+
+    def test_homa_completion_replays_close_exactly(self):
+        stats = {
+            "homa_messages_tracked": 4,
+            "homa_messages_completed": 4,
+            "homa_completed_message_ids": 4,
+            "homa_completion_notices_received": 4,
+            "homa_completion_notices_sent": 6,
+            "homa_duplicate_data_after_completion": 2,
+            "homa_completion_notices_replayed": 2,
+        }
+        self.assertTrue(all(homa_completion_checks(stats, 4).values()))
+        stats["homa_completion_notices_replayed"] = 1
+        self.assertFalse(
+            homa_completion_checks(stats, 4)["homa_completion_replays_close"]
+        )
 
     def test_controller_trace_is_bounded_and_bucketed(self):
         with tempfile.TemporaryDirectory() as directory:
