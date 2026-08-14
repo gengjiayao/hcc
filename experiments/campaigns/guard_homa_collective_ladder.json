@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "name": "guard-hpcc-homa-collective-mechanism-ladder",
+  "purpose": "Replace two failed collective admission cells without selecting on comparative performance.",
+  "selection_policy": "Evaluate levels in listed order using seed 1 only. Select the first level at which every arm completes all flows without switch drops or generic recovery, GUARD exercises grants and actual HPCC rate changes, HPCC exercises actual rate changes without grants, and Homa exercises native DATA/grants/completion with at least two priorities. Stop that workload immediately after its first passing level. Only then generate seeds 2-5 at the selected level.",
+  "failed_v1_diagnostics": {
+    "all_to_all": "At 9 MiB, Homa completed 240/240 but recorded 194 switch drops and 277 native retransmissions.",
+    "ring_open_loop": "Numeric-neighbor placement at a 20 ms phase span completed but GUARD recorded zero actual HPCC rate changes because almost every ring edge stayed within a ToR."
+  },
+  "seeds": [1, 2, 3, 4, 5],
+  "common": {
+    "topo": "leaf_spine_16_100G_OS4",
+    "run_duration_ms": 20,
+    "priority_group": 4,
+    "jitter_us": 0.5,
+    "max_flows": 1000,
+    "run_bytes": 104857600,
+    "run_timeout_seconds": 1800
+  },
+  "workloads": {
+    "all_to_all": [
+      {"level": "a0-buffer16", "generator": "all-to-all", "flow_bytes": 524288, "buffer_mb": 16},
+      {"level": "a1-buffer32", "generator": "all-to-all", "flow_bytes": 524288, "buffer_mb": 32}
+    ],
+    "ring_open_loop": [
+      {"level": "r0-4mib-buffer16", "generator": "ring-allreduce", "tensor_bytes": 4194304, "ring_span_ms": 2, "ring_placement": "alternating", "buffer_mb": 16},
+      {"level": "r1-8mib-buffer16", "generator": "ring-allreduce", "tensor_bytes": 8388608, "ring_span_ms": 2, "ring_placement": "alternating", "buffer_mb": 16},
+      {"level": "r2-8mib-buffer32", "generator": "ring-allreduce", "tensor_bytes": 8388608, "ring_span_ms": 2, "ring_placement": "alternating", "buffer_mb": 32},
+      {"level": "r3-16mib-buffer32", "generator": "ring-allreduce", "tensor_bytes": 16777216, "ring_span_ms": 2, "ring_placement": "alternating", "buffer_mb": 32}
+    ]
+  },
+  "guard": {
+    "lambda": 1.4,
+    "beta": 0.125,
+    "gamma": 1.0,
+    "size_priority": 1,
+    "sender_srpt": 1,
+    "srpt_quantum_packets": 64,
+    "work_conserving": 1,
+    "adaptive_rebalance_interval_us": 200,
+    "demand_threshold": 0.75,
+    "receiver_util_threshold": 0.75
+  }
+}
