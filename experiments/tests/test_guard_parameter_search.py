@@ -23,6 +23,7 @@ ADAPTIVE_TARGET_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_paramete
 ADAPTIVE_SCOPE_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage3c.json"
 ADAPTIVE_REFINEMENT_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage3d.json"
 ADAPTIVE_EXPANSION_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage3e.json"
+ADAPTIVE_BISECTION_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage3f.json"
 
 
 class GuardParameterSearchTest(unittest.TestCase):
@@ -223,6 +224,13 @@ class GuardParameterSearchTest(unittest.TestCase):
             {arm["guard_adaptive_target_max_bdps"] for arm in spec["arms"].values()},
             {0.0, 16.0, 24.0, 32.0},
         )
+
+    def test_adaptive_scope_bisection_keeps_original_gates(self):
+        spec = read_spec(ADAPTIVE_BISECTION_SPEC_PATH)
+        self.assertEqual(spec["search_kind"], "adaptive_scope_bisection")
+        self.assertEqual(spec["seeds"], [101, 102, 103, 104, 105])
+        self.assertEqual(spec["selection"]["constraints"]["gt_1MB_fct_us_mean"], 0.5)
+        self.assertEqual(spec["arms"]["scope20"]["guard_adaptive_target_max_bdps"], 20.0)
 
     def test_selection_applies_primary_and_constraint_gates(self):
         result = select_candidate(self.spec, self.rows())
