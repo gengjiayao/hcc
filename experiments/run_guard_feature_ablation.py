@@ -52,10 +52,12 @@ GUARD_OPTIONS = (
     "guard_selective_registration", "guard_proactive_release",
     "guard_keep_last_hop_int", "guard_size_priority", "guard_sender_srpt",
     "guard_one_rtt_bypass", "guard_tail_bypass", "guard_tail_bypass_bdps",
+    "guard_tail_congestion_gate", "guard_tail_safe_ratio", "guard_tail_safe_samples",
     "guard_ack_interval_packets", "guard_fixed_window", "guard_remaining_aware",
     "guard_min_share_fraction", "guard_remaining_exponent",
     "guard_grant_refresh_bdps",
     "guard_srpt_quantum_packets", "guard_work_conserving",
+    "guard_cap_aware_reclaim", "guard_cap_headroom", "guard_cap_min_share_fraction",
     "guard_rebalance_interval_us", "guard_demand_threshold",
     "guard_receiver_util_threshold",
 )

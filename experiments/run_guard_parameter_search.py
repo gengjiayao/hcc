@@ -22,6 +22,7 @@ except ModuleNotFoundError:  # Direct execution from experiments/.
 ETA_VALUES = (0.0, 0.1, 0.2)
 RHO_VALUES = (0.5, 0.75, 1.0)
 QUANTUM_VALUES = (16, 32, 64, 128)
+TAIL_SAFE_RATIOS = (0.8, 0.9, 1.0)
 
 
 def read_spec(path: Path) -> Mapping[str, object]:
@@ -84,8 +85,30 @@ def read_spec(path: Path) -> Mapping[str, object]:
             observed.add(quantum)
         if observed != set(QUANTUM_VALUES) or len(arms) != len(QUANTUM_VALUES):
             raise CampaignError("arms must cover each frozen SRPT quantum once")
+    elif kind == "tail_gate":
+        observed = set()
+        for name, raw in arms.items():
+            arm = dict(raw)
+            if arm.get("cc") != "guard":
+                raise CampaignError(f"{name} must select cc=guard")
+            gate = int(arm.get("guard_tail_congestion_gate", -1))
+            ratio = float(arm.get("guard_tail_safe_ratio", -1))
+            samples = int(arm.get("guard_tail_safe_samples", -1))
+            if samples != 2 or gate not in (0, 1):
+                raise CampaignError(f"{name} is outside the frozen tail gate")
+            if gate == 0:
+                if ratio != 0.9:
+                    raise CampaignError("ungated baseline must retain ratio 0.9")
+                observed.add((0, ratio))
+            elif ratio in TAIL_SAFE_RATIOS:
+                observed.add((1, ratio))
+            else:
+                raise CampaignError(f"{name} has an unfrozen safe ratio")
+        expected = {(0, 0.9)} | {(1, ratio) for ratio in TAIL_SAFE_RATIOS}
+        if observed != expected or len(arms) != len(expected):
+            raise CampaignError("arms must cover the frozen tail-gate baseline and ratios")
     else:
-        raise CampaignError("search_kind must be receiver_grid or srpt_quantum")
+        raise CampaignError("search_kind must be receiver_grid, srpt_quantum, or tail_gate")
     selection = dict(spec.get("selection", {}))
     if selection.get("baseline_arm") not in arms:
         raise CampaignError("selection baseline is not a grid arm")
