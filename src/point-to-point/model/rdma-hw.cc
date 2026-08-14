@@ -1011,7 +1011,7 @@ int RdmaHw::ReceiveGuardCapReport(Ptr<Packet> /*p*/, CustomHeader &ch) {
                 ? rx_qp->m_guard_fabric_bound_reports + 1
                 : 1;
         rx_qp->m_guard_unbound_reports = 0;
-        if (rx_qp->m_guard_fabric_bound_reports >= 2) {
+        if (rx_qp->m_guard_fabric_bound_reports >= 3) {
             rx_qp->m_guard_cap_limited = true;
         }
     } else {
@@ -1908,7 +1908,10 @@ std::unordered_map<RdmaRxQueuePair*, uint64_t> RdmaHw::ComputeGuardCapAwareTarge
         }
         bool fresh = !flow->m_guard_last_cap_report_time.IsZero() &&
                      now - flow->m_guard_last_cap_report_time <= freshness;
-        if (!fresh || flow->m_guard_cap_report_samples < 2) return base;
+        if (!fresh || flow->m_guard_cap_report_samples < 3 ||
+            (!flow->m_guard_cap_limited && flow->m_guard_unbound_reports < 3)) {
+            return base;
+        }
         if (fresh && flow->m_guard_cap_limited &&
             flow->m_guard_reported_rate_bps > 0) {
             long double demand = m_guardCapHeadroom *
