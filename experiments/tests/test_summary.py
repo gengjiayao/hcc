@@ -216,6 +216,23 @@ class SummaryTests(unittest.TestCase):
             self.assertEqual(stats["guard_tail_gate_deferrals"], 7)
             self.assertEqual(stats["guard_tail_gate_qualified_flows"], 9)
 
+    def test_guard_receiver_concurrency_stats_preserve_activity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            path.write_text(
+                "total 0 0 0 0\n"
+                "guard_receiver_scheduler remaining_aware 1 "
+                "min_share_fraction 0.000000 remaining_exponent 1.000000 "
+                "concurrency 1 limited_allocations 394 max_deferred 2 "
+                "refresh_bdps 1.000000 refresh_events 2065\n",
+                encoding="utf-8",
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["guard_receiver_concurrency"], 1)
+            self.assertEqual(stats["guard_concurrency_limited_allocations"], 394)
+            self.assertEqual(stats["guard_concurrency_max_deferred_flows"], 2)
+            self.assertEqual(stats["guard_remaining_refresh_events"], 2065)
+
     def test_guard_short_flow_and_ack_stats_preserve_frozen_controls(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "stats.txt"
