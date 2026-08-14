@@ -2385,6 +2385,17 @@ void RdmaHw::HomaScheduler::OnDataArrival(Ptr<RdmaRxQueuePair> rx_qp,
         return;
     }
 
+    // Schedule() intentionally sleeps when every selected message already
+    // has one BDP of granted-but-unreceived data. A new DATA arrival reduces
+    // that outstanding window and is therefore the event that should wake
+    // the grant pacer; polling every serialization interval would create an
+    // empty event loop under persistent fabric congestion.
+    if (!active.empty() && !is_scheduled) {
+        is_scheduled = true;
+        SetPacingInterval();
+        Simulator::Schedule(NanoSeconds(pacing_interval),
+                            &RdmaHw::HomaScheduler::Schedule, this);
+    }
 }
 
 void RdmaHw::HomaScheduler::Schedule() {
@@ -2400,6 +2411,7 @@ void RdmaHw::HomaScheduler::Schedule() {
         tick.push_back(active.pop());
     }
 
+    bool sent_grant = false;
     for (size_t k = 0; k < tick.size(); k++) {
         HomaFlow* flow = tick[k];
         // Do not authorize an entire stalled message. Homa keeps roughly one
@@ -2423,16 +2435,20 @@ void RdmaHw::HomaScheduler::Schedule() {
             // waiting for already-queued packets (Homa paper, Section 3.6).
             uint8_t slot_pri = (uint8_t)(7 - (tick.size() - 1 - k));
             SendGrant(flow, slot_pri);
+            sent_grant = true;
         }
         if (!flow->fully_granted()) {
             active.insert(flow);
         }
     }
 
-    if (!active.empty()) {
+    if (!active.empty() && sent_grant) {
         Simulator::Schedule(NanoSeconds(pacing_interval),
                             &RdmaHw::HomaScheduler::Schedule, this);
     } else {
+        // If no grant was possible, all selected flows already have a BDP in
+        // flight. OnDataArrival restarts the pacer once receiver progress
+        // creates grant headroom.
         is_scheduled = false;
     }
 }
