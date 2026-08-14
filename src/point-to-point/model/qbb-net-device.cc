@@ -25,6 +25,7 @@
 #include <stdio.h>
 
 #include <iostream>
+#include <limits>
 #include <unordered_map>
 
 #include "ns3/assert.h"
@@ -109,6 +110,44 @@ int RdmaEgressQueue::GetNextQindex(bool paused[]) {
 
     // no pkt in highest priority queue, do rr for each qp
     uint32_t fcount = m_qpGrp->GetN();
+    if (IntHeader::mode == 3) {
+        // Homa schedules ready messages at the sender in SRPT order. A QP is
+        // ready only when its next DATA byte is covered by the unscheduled
+        // allowance or a receiver GRANT (native retransmits are always ready).
+        int best = -1024;
+        uint64_t best_remaining = std::numeric_limits<uint64_t>::max();
+        for (uint32_t step = 1; step <= fcount; step++) {
+            uint32_t index = (step + m_rrlast) % fcount;
+            if (m_qpGrp->IsQpFinished(index)) continue;
+            Ptr<RdmaQueuePair> qp = m_qpGrp->Get(index);
+            bool has_retransmit = !qp->homa.m_retransmit_queue.empty();
+            bool has_bytes = qp->GetBytesLeft() > 0 || has_retransmit;
+            bool window_allowed =
+                !qp->IsWinBound() && (!qp->irn.m_enabled || qp->CanIrnTransmit(m_mtu));
+            if (!has_bytes || !window_allowed) {
+                if (qp->IsFinishedConst()) m_qpGrp->SetQpFinished(index);
+                continue;
+            }
+            uint64_t next_offset = has_retransmit
+                                       ? qp->homa.m_retransmit_queue.front().first
+                                       : qp->snd_nxt;
+            uint16_t next_pg = next_offset < qp->homa.m_unscheduled_bytes
+                                   ? qp->homa.m_unscheduled_priority
+                                   : qp->homa.m_grant_priority;
+            if (paused[next_pg] || qp->m_nextAvail > Simulator::Now()) continue;
+            uint64_t authorized = std::max(qp->homa.m_unscheduled_bytes,
+                                           qp->homa.m_granted_offset);
+            if (!has_retransmit && qp->snd_nxt >= authorized) continue;
+
+            uint64_t remaining = qp->GetBytesLeft();
+            if (remaining < best_remaining) {
+                best_remaining = remaining;
+                best = (int)index;
+            }
+        }
+        return best;
+    }
+
     for (qIndex = 1; qIndex <= fcount; qIndex++) {
         if (m_qpGrp->IsQpFinished((qIndex + m_rrlast) % fcount)) continue;
         Ptr<RdmaQueuePair> qp = m_qpGrp->Get((qIndex + m_rrlast) % fcount);
