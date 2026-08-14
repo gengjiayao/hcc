@@ -1,0 +1,190 @@
+{
+  "baseline_arm": "concurrency_all",
+  "candidates": [
+    {
+      "arm": "threshold4",
+      "eligible": true,
+      "gates": {
+        "gt_1MB_fct_us_mean_ci95_high_below_0.0": true,
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_0.0": true,
+        "queue_bytes_mean_ci95_high_at_most_25.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "gt_1MB_fct_us_mean": {
+          "ci95_half_width": 0.6883694328938057,
+          "ci95_high": -1.0716552885421757,
+          "ci95_low": -2.448394154329787,
+          "mean": -1.7600247214359814,
+          "n": 5
+        },
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.04937541565745616,
+          "ci95_high": 0.05006154646578304,
+          "ci95_low": -0.04868928484912927,
+          "mean": 0.0006861308083268864,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.10360542237340775,
+          "ci95_high": -0.922932689398638,
+          "ci95_low": -1.1301435341454535,
+          "mean": -1.0265381117720458,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 3.901081472493976,
+          "ci95_high": -10.446055710417221,
+          "ci95_low": -18.248218655405175,
+          "mean": -14.347137182911197,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        -1.7600247214359814,
+        -1.0265381117720458,
+        -14.347137182911197
+      ]
+    },
+    {
+      "arm": "threshold6",
+      "eligible": false,
+      "gates": {
+        "gt_1MB_fct_us_mean_ci95_high_below_0.0": true,
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_0.0": false,
+        "queue_bytes_mean_ci95_high_at_most_25.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "gt_1MB_fct_us_mean": {
+          "ci95_half_width": 0.881884236554052,
+          "ci95_high": -1.1053378010073063,
+          "ci95_low": -2.8691062741154103,
+          "mean": -1.9872220375613583,
+          "n": 5
+        },
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.04379138366735985,
+          "ci95_high": 0.03579712005566892,
+          "ci95_low": -0.05178564727905078,
+          "mean": -0.007994263611690927,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 4.608802091631919,
+          "ci95_high": 5.286284782485462,
+          "ci95_low": -3.9313194007783756,
+          "mean": 0.6774826908535433,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 2.710765218244402,
+          "ci95_high": -12.342967491669636,
+          "ci95_low": -17.76449792815844,
+          "mean": -15.053732709914039,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        -1.9872220375613583,
+        0.6774826908535433,
+        -15.053732709914039
+      ]
+    },
+    {
+      "arm": "threshold8",
+      "eligible": true,
+      "gates": {
+        "gt_1MB_fct_us_mean_ci95_high_below_0.0": true,
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_0.0": true,
+        "queue_bytes_mean_ci95_high_at_most_25.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "gt_1MB_fct_us_mean": {
+          "ci95_half_width": 0.9074170624235034,
+          "ci95_high": -0.836811782775112,
+          "ci95_low": -2.651645907622119,
+          "mean": -1.7442288451986154,
+          "n": 5
+        },
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.0501542139054555,
+          "ci95_high": 0.04336136238236394,
+          "ci95_low": -0.05694706542854706,
+          "mean": -0.006792851523091561,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.17007819529683982,
+          "ci95_high": -0.6612153372335394,
+          "ci95_low": -1.001371727827219,
+          "mean": -0.8312935325303792,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 3.4468742197083295,
+          "ci95_high": -10.8509342932758,
+          "ci95_low": -17.74468273269246,
+          "mean": -14.29780851298413,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        -1.7442288451986154,
+        -0.8312935325303792,
+        -14.29780851298413
+      ]
+    },
+    {
+      "arm": "threshold12",
+      "eligible": true,
+      "gates": {
+        "gt_1MB_fct_us_mean_ci95_high_below_0.0": true,
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_0.0": true,
+        "queue_bytes_mean_ci95_high_at_most_25.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "gt_1MB_fct_us_mean": {
+          "ci95_half_width": 1.09175879110826,
+          "ci95_high": -0.8467144826035056,
+          "ci95_low": -3.0302320648200256,
+          "mean": -1.9384732737117656,
+          "n": 5
+        },
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.06389773327718536,
+          "ci95_high": 0.07458097757045266,
+          "ci95_low": -0.053214488983918055,
+          "mean": 0.010683244293267303,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.2876940280069798,
+          "ci95_high": -0.42544036024309445,
+          "ci95_low": -1.000828416257054,
+          "mean": -0.7131343882500742,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 2.8959482771201372,
+          "ci95_high": -5.676490123215849,
+          "ci95_low": -11.468386677456124,
+          "mean": -8.572438400335987,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        -1.9384732737117656,
+        -0.7131343882500742,
+        -8.572438400335987
+      ]
+    }
+  ],
+  "requires_fresh_holdout_before_claim": true,
+  "schema_version": 1,
+  "selected_arm": "threshold12",
+  "selection_used_performance_direction": true,
+  "status": "eligible_candidate_selected"
+}

@@ -1,0 +1,51 @@
+{
+  "all_arms_passed": true,
+  "arms": [
+    {
+      "arm": "concurrency_all",
+      "failures": [],
+      "flow_sha256": "7aa033d1a468be4db542550edea33ce30259150a510d230c87b8a38ad5cc67bf",
+      "output_id": "599868896",
+      "passed": true,
+      "seed": 61
+    },
+    {
+      "arm": "threshold4",
+      "failures": [],
+      "flow_sha256": "7aa033d1a468be4db542550edea33ce30259150a510d230c87b8a38ad5cc67bf",
+      "output_id": "655427240",
+      "passed": true,
+      "seed": 61
+    },
+    {
+      "arm": "threshold6",
+      "failures": [],
+      "flow_sha256": "7aa033d1a468be4db542550edea33ce30259150a510d230c87b8a38ad5cc67bf",
+      "output_id": "978635611",
+      "passed": true,
+      "seed": 61
+    },
+    {
+      "arm": "threshold8",
+      "failures": [],
+      "flow_sha256": "7aa033d1a468be4db542550edea33ce30259150a510d230c87b8a38ad5cc67bf",
+      "output_id": "419083603",
+      "passed": true,
+      "seed": 61
+    },
+    {
+      "arm": "threshold12",
+      "failures": [],
+      "flow_sha256": "7aa033d1a468be4db542550edea33ce30259150a510d230c87b8a38ad5cc67bf",
+      "output_id": "219305008",
+      "passed": true,
+      "seed": 61
+    }
+  ],
+  "decision": "extend_all_grid_points",
+  "flow_hash_matched": true,
+  "gate": "first seed mechanism and safety only; no performance metric inspected",
+  "preflight_sha256": "deefa116bbc79bd6df60e21dab8773a156d53b4f1081fdbbf6963276ed27666b",
+  "schema_version": 1,
+  "seed": 61
+}
