@@ -224,6 +224,7 @@ class RdmaHw : public Object {
     bool m_guardRemainingAware;
     double m_guardMinShareFraction;
     double m_guardRemainingExponent;
+    uint32_t m_guardReceiverConcurrency;
     double m_guardGrantRefreshBdps;
     uint32_t m_guardSrptQuantumPackets;
     bool m_guardWorkConserving;
@@ -271,6 +272,8 @@ class RdmaHw : public Object {
     uint64_t m_guardCapGrantUpdates;
     uint64_t m_guardCapMaxReclaimedBps;
     uint64_t m_guardRemainingRefreshEvents;
+    uint64_t m_guardConcurrencyLimitedAllocations;
+    uint64_t m_guardConcurrencyMaxDeferredFlows;
     uint64_t m_guardOneRttBypassFlows;
     uint64_t m_guardOneRttBypassFeedbacks;
     uint64_t m_guardOneRttAcksSuppressed;

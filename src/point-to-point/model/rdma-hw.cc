@@ -183,6 +183,12 @@ TypeId RdmaHw::GetTypeId(void) {
                           DoubleValue(1.0),
                           MakeDoubleAccessor(&RdmaHw::m_guardRemainingExponent),
                           MakeDoubleChecker<double>(0.0, 2.0))
+            .AddAttribute("GuardReceiverConcurrency",
+                          "Maximum registered flows receiving more than the minimum rate; "
+                          "zero serves all registered flows",
+                          UintegerValue(0),
+                          MakeUintegerAccessor(&RdmaHw::m_guardReceiverConcurrency),
+                          MakeUintegerChecker<uint32_t>())
             .AddAttribute("GuardGrantRefreshBdps",
                           "Receiver progress between remaining-aware grant refreshes in BDPs; "
                           "zero disables progress refresh",
@@ -313,6 +319,8 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardCapGrantUpdates = 0;
     m_guardCapMaxReclaimedBps = 0;
     m_guardRemainingRefreshEvents = 0;
+    m_guardConcurrencyLimitedAllocations = 0;
+    m_guardConcurrencyMaxDeferredFlows = 0;
     m_guardOneRttBypassFlows = 0;
     m_guardOneRttBypassFeedbacks = 0;
     m_guardOneRttAcksSuppressed = 0;
@@ -1861,6 +1869,13 @@ void RdmaHw::RedistributeGuardRates(const char *set_change) {
         m_guardCapAwareReclaim
             ? ComputeGuardCapAwareTargets(line_rate_bps)
             : ComputeGuardBaseTargets(line_rate_bps);
+    if (m_guardReceiverConcurrency > 0 &&
+        m_rate_flow_ctl_set.size() > m_guardReceiverConcurrency) {
+        m_guardConcurrencyLimitedAllocations++;
+        m_guardConcurrencyMaxDeferredFlows = std::max<uint64_t>(
+            m_guardConcurrencyMaxDeferredFlows,
+            m_rate_flow_ctl_set.size() - m_guardReceiverConcurrency);
+    }
     for (auto *flow : m_rate_flow_ctl_set) {
         flow->m_guard_interval_bytes = 0;
         flow->m_guard_demand_samples = 0;
@@ -1881,6 +1896,65 @@ std::unordered_map<RdmaRxQueuePair*, uint64_t> RdmaHw::ComputeGuardBaseTargets(
     size_t count = m_rate_flow_ctl_set.size();
     if (count == 0) return targets;
     uint64_t equal_share = line_rate_bps / count;
+    size_t service_count = m_guardReceiverConcurrency == 0
+                               ? count
+                               : std::min<size_t>(count, m_guardReceiverConcurrency);
+    std::unordered_set<RdmaRxQueuePair*> service_set;
+    if (service_count < count) {
+        std::vector<RdmaRxQueuePair*> ranked(m_rate_flow_ctl_set.begin(),
+                                             m_rate_flow_ctl_set.end());
+        std::sort(ranked.begin(), ranked.end(),
+                  [](RdmaRxQueuePair *left, RdmaRxQueuePair *right) {
+                      uint64_t left_remaining =
+                          left->m_guard_flow_size > left->ReceiverNextExpectedSeq
+                              ? left->m_guard_flow_size - left->ReceiverNextExpectedSeq
+                              : 0;
+                      uint64_t right_remaining =
+                          right->m_guard_flow_size > right->ReceiverNextExpectedSeq
+                              ? right->m_guard_flow_size - right->ReceiverNextExpectedSeq
+                              : 0;
+                      if (left_remaining != right_remaining)
+                          return left_remaining < right_remaining;
+                      return left->m_flow_id < right->m_flow_id;
+                  });
+        service_set.insert(ranked.begin(), ranked.begin() + service_count);
+
+        // Preserve a bounded starvation floor for deferred flows, then give
+        // the remaining receiver capacity only to the K shortest flows.
+        uint64_t minimum_rate = std::min<uint64_t>(
+            m_minRate.GetBitRate(), line_rate_bps / count);
+        uint64_t residual = line_rate_bps - minimum_rate * count;
+        double weight_sum = 0.0;
+        uint64_t min_remaining = std::numeric_limits<uint64_t>::max();
+        for (auto *flow : service_set) {
+            uint64_t remaining = flow->m_guard_flow_size > flow->ReceiverNextExpectedSeq
+                                     ? flow->m_guard_flow_size - flow->ReceiverNextExpectedSeq
+                                     : 1;
+            min_remaining = std::min(min_remaining,
+                                     std::max<uint64_t>(remaining, m_mtu));
+        }
+        std::unordered_map<RdmaRxQueuePair*, double> weights;
+        for (auto *flow : service_set) {
+            uint64_t remaining = flow->m_guard_flow_size > flow->ReceiverNextExpectedSeq
+                                     ? flow->m_guard_flow_size - flow->ReceiverNextExpectedSeq
+                                     : 1;
+            remaining = std::max<uint64_t>(remaining, m_mtu);
+            double weight = (!m_guardRemainingAware || m_guardRemainingExponent == 0.0)
+                                ? 1.0
+                                : std::pow((double)min_remaining / remaining,
+                                           m_guardRemainingExponent);
+            weights[flow] = weight;
+            weight_sum += weight;
+        }
+        for (auto *flow : m_rate_flow_ctl_set) {
+            targets[flow] = minimum_rate;
+            if (service_set.find(flow) != service_set.end()) {
+                targets[flow] += (uint64_t)(
+                    residual * weights[flow] / std::max(weight_sum, 1e-12));
+            }
+        }
+        return targets;
+    }
     if (!m_guardRemainingAware || count == 1 || m_guardRemainingExponent == 0.0) {
         for (auto *flow : m_rate_flow_ctl_set) targets[flow] = equal_share;
         return targets;
