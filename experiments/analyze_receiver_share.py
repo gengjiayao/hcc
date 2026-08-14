@@ -61,7 +61,7 @@ def parse_bounded_trace(path: Path) -> Tuple[List[Dict[str, object]], Dict[str, 
     for line_number, raw in enumerate(reader, 2):
         if raw["event"] not in ("sent", "received"):
             raise SummaryError(f"invalid grant event at {path}:{line_number}")
-        if raw["set_change"] not in ("registration", "release", "none"):
+        if raw["set_change"] not in ("registration", "release", "demand", "none"):
             raise SummaryError(f"invalid set change at {path}:{line_number}")
         row: Dict[str, object] = {"event": raw["event"], "set_change": raw["set_change"]}
         for field in TRACE_FIELDS:
@@ -143,7 +143,12 @@ def rate_metrics(
         row for row in sent
         if int(row["host_node"]) == receiver and int(row["flow_id"]) in target_ids
     ]
-    max_active_rows = [row for row in target_sent if int(row["active_flows"]) == expected_n]
+    # Demand events deliberately replace C/N with a work-conserving vector.
+    # The equality audit applies only to membership-change grants.
+    max_active_rows = [
+        row for row in target_sent
+        if int(row["active_flows"]) == expected_n and row["set_change"] != "demand"
+    ]
     if {int(row["flow_id"]) for row in max_active_rows} != set(target_ids):
         raise SummaryError("not every target flow received a max-active C/N grant")
     observed_rates = [int(row["grant_rate_bps"]) for row in max_active_rows]

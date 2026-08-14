@@ -39,18 +39,21 @@ class ReceiverShareTests(unittest.TestCase):
                 + "101,sent,registration,15,1,3,2,2,100000000000,50000000000,1000,60\n"
                 + "110,received,none,0,0,1,2,0,100000000000,50000000000,9000,60\n"
                 + "111,received,none,1,1,3,2,0,100000000000,50000000000,9000,60\n"
-                + "# attempted 4 written 4 truncated 0\n",
+                + "120,sent,demand,15,0,1,2,2,100000000000,25000000000,10000,60\n"
+                + "130,received,none,0,0,1,2,0,100000000000,25000000000,19000,60\n"
+                + "# attempted 6 written 6 truncated 0\n",
                 encoding="utf-8",
             )
             rows, counts = parse_bounded_trace(path)
             sent = [row for row in rows if row["event"] == "sent"]
-            self.assertEqual(sum(row["serialized_bytes"] for row in sent), 120)
-            self.assertEqual(counts, {"attempted": 4, "written": 4, "truncated": 0})
+            self.assertEqual(sum(row["serialized_bytes"] for row in sent), 180)
+            self.assertEqual(counts, {"attempted": 6, "written": 6, "truncated": 0})
+            self.assertEqual(sent[-1]["set_change"], "demand")
             audit = rate_metrics(rows, 15, [0, 1], 2)
             self.assertEqual(audit["max_active_c_over_n_error_bps_max"], 0)
             self.assertEqual(
                 audit["sender_applied_grants_by_flow"]["0"]["rates_bps"],
-                [50_000_000_000],
+                [50_000_000_000, 25_000_000_000],
             )
 
     def test_full_guard_raw_trace_can_include_int_header_area(self):
