@@ -96,6 +96,8 @@ uint32_t CustomHeader::GetSerializedSize (void) const{
 			len += GetUdpHeaderSize();
 		else if (l3Prot == 0xFC || l3Prot == 0xFD || l3Prot == 0xFB)
 			len += GetAckSerializedSize();
+		else if (l3Prot == GUARD_RATE_GRANT)
+			len += GetGuardGrantSerializedSize();
 		else if (l3Prot == 0xFA)
 			len += GetAckSerializedSize() + sizeof(udp.homa_type)
 			     + sizeof(udp.homa_message_id) + sizeof(udp.homa_msg_total_length)
@@ -201,6 +203,11 @@ void CustomHeader::Serialize (Buffer::Iterator start) const{
 		  i.WriteU8(cnp.ecnBits);
 		  i.WriteU16(cnp.qfb);
 		  i.WriteU16(cnp.total);
+	  }else if (l3Prot == GUARD_RATE_GRANT){
+		  i.WriteU16(grant.sport);
+		  i.WriteU16(grant.dport);
+		  i.WriteU16(grant.pg);
+		  i.WriteU32(grant.rateMbps);
 	  }else if (l3Prot == 0xFC || l3Prot == 0xFD || l3Prot == 0xFB){ // ACK or NACK
 		  i.WriteU16(ack.sport);
 		  i.WriteU16(ack.dport);
@@ -400,6 +407,12 @@ CustomHeader::Deserialize (Buffer::Iterator start)
 		  cnp.qfb = i.ReadU16();
 		  cnp.total = i.ReadU16();
 		  l4Size = 8;
+	  }else if (l3Prot == GUARD_RATE_GRANT){
+		  grant.sport = i.ReadU16();
+		  grant.dport = i.ReadU16();
+		  grant.pg = i.ReadU16();
+		  grant.rateMbps = i.ReadU32();
+		  l4Size = GetGuardGrantSerializedSize();
 	  }else if (l3Prot == 0xFC || l3Prot == 0xFD || l3Prot == 0xFB){ // ACK or NACK
 		  ack.sport = i.ReadU16();
 		  ack.dport = i.ReadU16();
@@ -460,6 +473,10 @@ uint32_t CustomHeader::GetAckSerializedSize(void){
 	return sizeof(ack.sport) + sizeof(ack.dport) + sizeof(ack.flags) + sizeof(ack.pg) + sizeof(ack.seq) + IntHeader::GetStaticSize();
 }
 
+uint32_t CustomHeader::GetGuardGrantSerializedSize(void){
+	return sizeof(grant.sport) + sizeof(grant.dport) + sizeof(grant.pg) + sizeof(grant.rateMbps);
+}
+
 uint32_t CustomHeader::GetUdpHeaderSize(void){
 	if (IntHeader::mode == 2) // homa-simple adds is_request_package field
 		return 8 + sizeof(udp.pg) + sizeof(udp.seq) + IntHeader::GetStaticSize() + sizeof(udp.is_request_package);
@@ -474,4 +491,3 @@ uint32_t CustomHeader::GetStaticWholeHeaderSize(void){
 }
 
 } // namespace ns3
-

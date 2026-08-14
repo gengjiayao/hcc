@@ -83,6 +83,42 @@ private:
   bool enable_irn;
 };
 
+/**
+ * Compact receiver rate grant for GUARD.
+ *
+ * A rate grant needs only the flow ports, priority group, and rate.  Keeping
+ * it separate from qbbHeader avoids serializing qbbHeader's unused INT area.
+ */
+class GuardGrantHeader : public Header
+{
+public:
+  GuardGrantHeader ();
+  virtual ~GuardGrantHeader ();
+
+  void SetSport (uint16_t sport);
+  void SetDport (uint16_t dport);
+  void SetPG (uint16_t pg);
+  void SetRateMbps (uint32_t rateMbps);
+
+  uint16_t GetSport () const;
+  uint16_t GetDport () const;
+  uint16_t GetPG () const;
+  uint32_t GetRateMbps () const;
+
+  static TypeId GetTypeId (void);
+  virtual TypeId GetInstanceTypeId (void) const;
+  virtual void Print (std::ostream &os) const;
+  virtual uint32_t GetSerializedSize (void) const;
+  virtual void Serialize (Buffer::Iterator start) const;
+  virtual uint32_t Deserialize (Buffer::Iterator start);
+
+private:
+  uint16_t m_sport;
+  uint16_t m_dport;
+  uint16_t m_pg;
+  uint32_t m_rateMbps;
+};
+
 }; // namespace ns3
 
 #endif /* QBB_HEADER */

@@ -981,9 +981,10 @@ int RdmaHw::ReceiveCnp(Ptr<Packet> p, CustomHeader &ch) {
 
 int RdmaHw::ReceiveRate(Ptr<Packet> p, CustomHeader &ch) {
     // find qp
-    uint16_t pg = ch.ack.pg;
-    uint16_t dport = ch.ack.dport;
-    uint16_t sport = ch.ack.sport;
+    bool compact = ch.l3Prot == CustomHeader::GUARD_RATE_GRANT;
+    uint16_t pg = compact ? ch.grant.pg : ch.ack.pg;
+    uint16_t dport = compact ? ch.grant.dport : ch.ack.dport;
+    uint16_t sport = compact ? ch.grant.sport : ch.ack.sport;
     uint64_t key = GetQpKey(ch.sip, dport, sport, pg);
     Ptr<RdmaQueuePair> qp = GetQp(key);
 
@@ -1001,7 +1002,7 @@ int RdmaHw::ReceiveRate(Ptr<Packet> p, CustomHeader &ch) {
         return 0;
     }
 
-    uint32_t received_val = ch.ack.seq;
+    uint32_t received_val = compact ? ch.grant.rateMbps : ch.ack.seq;
 
     // Use string constructor to avoid overflow
     std::string rate_str = std::to_string(received_val) + "Mbps";
@@ -1247,7 +1248,12 @@ int RdmaHw::Receive(Ptr<Packet> p, CustomHeader &ch) {
         return ReceiveAck(p, ch);
     } else if (ch.l3Prot == 0xFC) {  // ACK
         return ReceiveAck(p, ch);
-    } else if (ch.l3Prot == 0xFB) {  // guard grant/report or homa-simple credit
+    } else if (ch.l3Prot == CustomHeader::GUARD_RATE_GRANT) {
+        if (m_cc_mode == 11 || m_cc_mode == 13) {
+            return ReceiveRate(p, ch);
+        }
+        return 0;
+    } else if (ch.l3Prot == 0xFB) {  // guard cap report or homa-simple credit
         if (m_cc_mode == 11 || m_cc_mode == 13) {
             if (m_cc_mode == 11 &&
                 ((ch.ack.flags >> qbbHeader::FLAG_GUARD_CAP_REPORT) & 1) != 0) {
@@ -1571,7 +1577,7 @@ void RdmaHw::PktSent(Ptr<RdmaQueuePair> qp, Ptr<Packet> pkt, Time interframeGap)
             if (qp->m_retransmit.IsRunning()) qp->m_retransmit.Cancel();
             qp->m_retransmit = Simulator::Schedule(qp->GetRto(m_mtu), &RdmaHw::HandleTimeout, this,
                                                    qp, qp->GetRto(m_mtu));
-        } else if (ch.l3Prot == 0xFB || ch.l3Prot == 0xFC || ch.l3Prot == 0xFD || ch.l3Prot == 0xFF || ch.l3Prot == 0xFA) {  // ACK, NACK, CNP, homa ctrl
+        } else if (ch.l3Prot == CustomHeader::GUARD_RATE_GRANT || ch.l3Prot == 0xFB || ch.l3Prot == 0xFC || ch.l3Prot == 0xFD || ch.l3Prot == 0xFF || ch.l3Prot == 0xFA) {  // ACK, NACK, CNP, homa ctrl
         } else if (ch.l3Prot == 0xFE) {                                            // PFC
         }
     }
@@ -2424,19 +2430,19 @@ void RdmaHw::TraceGuardGrantReceive(Ptr<RdmaQueuePair> qp, Ptr<Packet> packet,
 void RdmaHw::SendRateControlPacket(Ptr<RdmaRxQueuePair> rx_qp,
                                    uint32_t rate_data, const char *set_change) {
     m_guardRateGrantsSent++;
-    qbbHeader seqh;
-    seqh.SetSeq(rate_data); // PS: send rate in Mbps, used field: seq
-    seqh.SetPG(rx_qp->m_guard_pg);
-    seqh.SetSport(rx_qp->sport);
-    seqh.SetDport(rx_qp->dport);
+    GuardGrantHeader grant;
+    grant.SetRateMbps(rate_data);
+    grant.SetPG(rx_qp->m_guard_pg);
+    grant.SetSport(rx_qp->sport);
+    grant.SetDport(rx_qp->dport);
 
-    Ptr<Packet> newp = Create<Packet>(std::max(60 - 14 - 20 - (int)seqh.GetSerializedSize(), 0));
-    newp->AddHeader(seqh);
+    Ptr<Packet> newp = Create<Packet>(std::max(60 - 14 - 20 - (int)grant.GetSerializedSize(), 0));
+    newp->AddHeader(grant);
 
     Ipv4Header head;  // Prepare IPv4 header
     head.SetDestination(Ipv4Address(rx_qp->dip));
     head.SetSource(Ipv4Address(rx_qp->sip));
-    head.SetProtocol(0xFB);  // 0xFB rate grant (guard)
+    head.SetProtocol(CustomHeader::GUARD_RATE_GRANT);
     head.SetTtl(64);
     head.SetPayloadSize(newp->GetSize());
     head.SetIdentification(rx_qp->m_ipid++);

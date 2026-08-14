@@ -67,6 +67,9 @@ public:
 	L3_Header = 2,
 	L4_Header = 4
   };
+  enum CustomProtocol {
+    GUARD_RATE_GRANT = 0xF9
+  };
 
   // ppp header
   uint16_t pppProto;
@@ -145,6 +148,12 @@ public:
 		  uint32_t irnNack;
 		  uint16_t irnNackSize;
 	  } ack;
+	  // Compact GUARD receiver rate grant
+	  struct {
+		  uint16_t sport, dport;
+		  uint16_t pg;
+		  uint32_t rateMbps;
+	  } grant;
 	  // PauseHeader
 	  struct {
 		  uint32_t time;
@@ -155,6 +164,7 @@ public:
 
   uint8_t GetIpv4EcnBits (void) const;
   static uint32_t GetAckSerializedSize(void);
+  static uint32_t GetGuardGrantSerializedSize(void);
   static uint32_t GetUdpHeaderSize(void); // include udp, seqTs, INT
   static uint32_t GetStaticWholeHeaderSize(void); // ppp + ip + udp + int
 };
@@ -163,4 +173,3 @@ public:
 
 
 #endif /* CUSTOM_HEADER_H */
-

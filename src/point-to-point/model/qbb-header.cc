@@ -10,6 +10,7 @@ NS_LOG_COMPONENT_DEFINE("qbbHeader");
 namespace ns3 {
 
 	NS_OBJECT_ENSURE_REGISTERED(qbbHeader);
+	NS_OBJECT_ENSURE_REGISTERED(GuardGrantHeader);
 
 	qbbHeader::qbbHeader(uint16_t pg)
 		: m_pg(pg), sport(0), dport(0), flags(0), m_seq(0)
@@ -158,6 +159,65 @@ namespace ns3 {
 
 		// read IntHeader
 		ih.Deserialize(i);
+		return GetSerializedSize();
+	}
+
+	GuardGrantHeader::GuardGrantHeader()
+		: m_sport(0), m_dport(0), m_pg(0), m_rateMbps(0)
+	{}
+
+	GuardGrantHeader::~GuardGrantHeader()
+	{}
+
+	void GuardGrantHeader::SetSport(uint16_t sport) { m_sport = sport; }
+	void GuardGrantHeader::SetDport(uint16_t dport) { m_dport = dport; }
+	void GuardGrantHeader::SetPG(uint16_t pg) { m_pg = pg; }
+	void GuardGrantHeader::SetRateMbps(uint32_t rateMbps) { m_rateMbps = rateMbps; }
+
+	uint16_t GuardGrantHeader::GetSport() const { return m_sport; }
+	uint16_t GuardGrantHeader::GetDport() const { return m_dport; }
+	uint16_t GuardGrantHeader::GetPG() const { return m_pg; }
+	uint32_t GuardGrantHeader::GetRateMbps() const { return m_rateMbps; }
+
+	TypeId GuardGrantHeader::GetTypeId(void)
+	{
+		static TypeId tid = TypeId("ns3::GuardGrantHeader")
+			.SetParent<Header>()
+			.AddConstructor<GuardGrantHeader>();
+		return tid;
+	}
+
+	TypeId GuardGrantHeader::GetInstanceTypeId(void) const
+	{
+		return GetTypeId();
+	}
+
+	void GuardGrantHeader::Print(std::ostream &os) const
+	{
+		os << "guard-grant:pg=" << m_pg << ",rate=" << m_rateMbps << "Mbps";
+	}
+
+	uint32_t GuardGrantHeader::GetSerializedSize(void) const
+	{
+		return sizeof(m_sport) + sizeof(m_dport) + sizeof(m_pg) + sizeof(m_rateMbps);
+	}
+
+	void GuardGrantHeader::Serialize(Buffer::Iterator start) const
+	{
+		Buffer::Iterator i = start;
+		i.WriteU16(m_sport);
+		i.WriteU16(m_dport);
+		i.WriteU16(m_pg);
+		i.WriteU32(m_rateMbps);
+	}
+
+	uint32_t GuardGrantHeader::Deserialize(Buffer::Iterator start)
+	{
+		Buffer::Iterator i = start;
+		m_sport = i.ReadU16();
+		m_dport = i.ReadU16();
+		m_pg = i.ReadU16();
+		m_rateMbps = i.ReadU32();
 		return GetSerializedSize();
 	}
 }; // namespace ns3
