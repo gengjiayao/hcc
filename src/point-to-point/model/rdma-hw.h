@@ -269,6 +269,8 @@ class RdmaHw : public Object {
     uint64_t m_homaMessagesTracked;
     uint64_t m_homaMessagesCompleted;
     uint64_t m_homaMaxPendingMessages;
+    uint64_t m_homaDuplicateDataAfterCompletion;
+    uint64_t m_homaCompletionNoticesReplayed;
     uint32_t m_homaOvercommitDegree;
     Time m_homaResendTimeout;
     uint32_t m_homaUnscheduledLevels;
@@ -473,6 +475,7 @@ class RdmaHw : public Object {
     int ReceiveHomaControl(Ptr<Packet> p, CustomHeader &ch);
 
     struct HomaFlow {
+        uint64_t message_id;
         uint64_t msg_total_length;
         uint64_t bytes_received;
         uint64_t granted_offset_sent;    // cumulative bytes we've granted to sender
@@ -592,6 +595,10 @@ class RdmaHw : public Object {
         uint64_t pacing_interval;
         HomaPriorityQueue active;
         std::unordered_map<RdmaRxQueuePair*, std::unique_ptr<HomaFlow>> flow_hash;
+        // A completed message may still have DATA retransmissions in flight.
+        // Retain only its ID so those packets cannot create a ghost scheduler
+        // entry; formal runs cap this set by their bounded input flow count.
+        std::unordered_set<uint64_t> completed_message_ids;
     };
 
     HomaScheduler homa_scheduler;

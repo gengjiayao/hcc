@@ -261,6 +261,8 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_homaMessagesTracked = 0;
     m_homaMessagesCompleted = 0;
     m_homaMaxPendingMessages = 0;
+    m_homaDuplicateDataAfterCompletion = 0;
+    m_homaCompletionNoticesReplayed = 0;
     m_homaUnscheduledLevels = 3;
     m_homaUnscheduledCutoffs.push_back(26000);
     m_homaUnscheduledCutoffs.push_back(52000);
@@ -2296,11 +2298,28 @@ void RdmaHw::HomaScheduler::SetPacingInterval() {
 
 void RdmaHw::HomaScheduler::OnDataArrival(Ptr<RdmaRxQueuePair> rx_qp,
                                               Ptr<Packet> /*p*/, CustomHeader &ch) {
+    uint64_t message_id = ch.udp.homa_message_id;
+    if (completed_message_ids.count(message_id)) {
+        // A RESEND may already be in flight when the original DATA completes.
+        // Do not recreate receive/grant state for that late duplicate. Replay
+        // the completion notice so a lost first notice cannot strand the
+        // sender-side QP.
+        HomaFlow completed;
+        completed.message_id = message_id;
+        completed.msg_total_length = ch.udp.homa_msg_total_length;
+        completed.pg = 0;
+        completed.rx_qp = rx_qp;
+        SendCompletionNotice(&completed);
+        rdma_hw->m_homaDuplicateDataAfterCompletion++;
+        rdma_hw->m_homaCompletionNoticesReplayed++;
+        return;
+    }
     RdmaRxQueuePair* hkey = PeekPointer(rx_qp);
     auto it = flow_hash.find(hkey);
     if (it == flow_hash.end()) {
         // First DATA observed for this rx_qp.
         std::unique_ptr<HomaFlow> new_flow(new HomaFlow);
+        new_flow->message_id          = message_id;
         new_flow->msg_total_length    = ch.udp.homa_msg_total_length;
         new_flow->bytes_received      = 0;
         new_flow->granted_offset_sent = ch.udp.homa_unscheduled_bytes;
@@ -2377,6 +2396,7 @@ void RdmaHw::HomaScheduler::OnDataArrival(Ptr<RdmaRxQueuePair> rx_qp,
     }
 
     if (p_flow->fully_received()) {
+        completed_message_ids.insert(p_flow->message_id);
         SendCompletionNotice(p_flow);
         rdma_hw->m_homaMessagesCompleted++;
         active.erase(hkey);
@@ -2463,7 +2483,7 @@ void RdmaHw::HomaScheduler::SendGrant(HomaFlow* flow, uint8_t grant_priority) {
 
     HomaHeader hfh;
     hfh.SetType(HomaHeader::GRANT);
-    hfh.SetMessageId((uint64_t)flow->rx_qp->m_flow_id);
+    hfh.SetMessageId(flow->message_id);
     hfh.SetGrantedOffset(flow->granted_offset_sent);
     // Sender will use this priority for subsequent scheduled DATA packets.
     hfh.SetGrantPriority(grant_priority);
@@ -2526,7 +2546,7 @@ void RdmaHw::HomaScheduler::SendResend(HomaFlow* flow, uint64_t offset, uint64_t
 
     HomaHeader hfh;
     hfh.SetType(HomaHeader::RESEND);
-    hfh.SetMessageId((uint64_t)flow->rx_qp->m_flow_id);
+    hfh.SetMessageId(flow->message_id);
     hfh.SetResendOffset(offset);
     hfh.SetResendLength(length);
 
@@ -2562,7 +2582,7 @@ void RdmaHw::HomaScheduler::SendCompletionNotice(HomaFlow* flow) {
 
     HomaHeader hfh;
     hfh.SetType(HomaHeader::ACK);
-    hfh.SetMessageId((uint64_t)flow->rx_qp->m_flow_id);
+    hfh.SetMessageId(flow->message_id);
 
     Ptr<Packet> newp = Create<Packet>(
         std::max(60 - 14 - 20 - (int)qbbh.GetSerializedSize() -

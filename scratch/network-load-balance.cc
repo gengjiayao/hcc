@@ -2684,6 +2684,24 @@ int main(int argc, char *argv[]) {
             homa_totals[0], homa_totals[1], homa_totals[2], homa_totals[3],
             homa_totals[4], homa_totals[5], homa_totals[6], homa_totals[7],
             homa_totals[8], homa_totals[9], homa_totals[10], homa_max_active);
+    fprintf(homa_stats_output,
+            "homa_tombstone node_id completed_ids duplicate_data completion_replays\n");
+    uint64_t homa_tombstone_totals[3] = {0};
+    for (uint32_t i = 0; i < node_num; i++) {
+        if (n.Get(i)->GetNodeType() != 0) continue;
+        Ptr<RdmaDriver> driver = n.Get(i)->GetObject<RdmaDriver>();
+        Ptr<RdmaHw> hw = driver->m_rdma;
+        uint64_t completed_ids = hw->homa_scheduler.completed_message_ids.size();
+        fprintf(homa_stats_output, "homa_tombstone %u %lu %lu %lu\n", i,
+                completed_ids, hw->m_homaDuplicateDataAfterCompletion,
+                hw->m_homaCompletionNoticesReplayed);
+        homa_tombstone_totals[0] += completed_ids;
+        homa_tombstone_totals[1] += hw->m_homaDuplicateDataAfterCompletion;
+        homa_tombstone_totals[2] += hw->m_homaCompletionNoticesReplayed;
+    }
+    fprintf(homa_stats_output, "homa_tombstone_total %lu %lu %lu\n",
+            homa_tombstone_totals[0], homa_tombstone_totals[1],
+            homa_tombstone_totals[2]);
     fprintf(homa_stats_output, "homa_priority priority data_packets data_bytes\n");
     for (uint32_t priority = 0; priority < 8; priority++) {
         uint64_t packets = 0;
