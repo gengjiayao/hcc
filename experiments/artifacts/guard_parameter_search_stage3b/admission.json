@@ -1,0 +1,43 @@
+{
+  "all_arms_passed": true,
+  "arms": [
+    {
+      "arm": "adaptive_off",
+      "failures": [],
+      "flow_sha256": "afd0e79910884a31ae7f43f469a450615ecbd875a90ab9c22418069a85cb9529",
+      "output_id": "151209905",
+      "passed": true,
+      "seed": 81
+    },
+    {
+      "arm": "budget025",
+      "failures": [],
+      "flow_sha256": "afd0e79910884a31ae7f43f469a450615ecbd875a90ab9c22418069a85cb9529",
+      "output_id": "764546830",
+      "passed": true,
+      "seed": 81
+    },
+    {
+      "arm": "budget050",
+      "failures": [],
+      "flow_sha256": "afd0e79910884a31ae7f43f469a450615ecbd875a90ab9c22418069a85cb9529",
+      "output_id": "519466200",
+      "passed": true,
+      "seed": 81
+    },
+    {
+      "arm": "budget100",
+      "failures": [],
+      "flow_sha256": "afd0e79910884a31ae7f43f469a450615ecbd875a90ab9c22418069a85cb9529",
+      "output_id": "774293366",
+      "passed": true,
+      "seed": 81
+    }
+  ],
+  "decision": "extend_all_grid_points",
+  "flow_hash_matched": true,
+  "gate": "first seed mechanism and safety only; no performance metric inspected",
+  "preflight_sha256": "32013f98dee9d6f21cee83740dea4abecc7825615bcdd619c772ede1d835d7a6",
+  "schema_version": 1,
+  "seed": 81
+}
