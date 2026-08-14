@@ -173,6 +173,7 @@ bool guard_proactive_release = true;
 bool guard_keep_last_hop_int = false;
 bool guard_size_priority = true;
 bool guard_sender_srpt = true;
+bool guard_one_rtt_bypass = true;
 uint32_t guard_srpt_quantum_packets = 64;
 bool guard_work_conserving = true;
 uint64_t guard_rebalance_interval_us = 200;
@@ -1264,6 +1265,9 @@ int main(int argc, char *argv[]) {
             } else if (key.compare("GUARD_SENDER_SRPT") == 0) {
                 conf >> guard_sender_srpt;
                 std::cerr << "GUARD_SENDER_SRPT\t" << guard_sender_srpt << '\n';
+            } else if (key.compare("GUARD_ONE_RTT_BYPASS") == 0) {
+                conf >> guard_one_rtt_bypass;
+                std::cerr << "GUARD_ONE_RTT_BYPASS\t" << guard_one_rtt_bypass << '\n';
             } else if (key.compare("GUARD_SRPT_QUANTUM_PACKETS") == 0) {
                 conf >> guard_srpt_quantum_packets;
                 std::cerr << "GUARD_SRPT_QUANTUM_PACKETS\t"
@@ -1940,6 +1944,7 @@ int main(int argc, char *argv[]) {
             rdmaHw->SetAttribute("GuardKeepLastHopInt", BooleanValue(guard_keep_last_hop_int));
             rdmaHw->SetAttribute("GuardSizePriority", BooleanValue(guard_size_priority));
             rdmaHw->SetAttribute("GuardSenderSrpt", BooleanValue(guard_sender_srpt));
+            rdmaHw->SetAttribute("GuardOneRttBypass", BooleanValue(guard_one_rtt_bypass));
             rdmaHw->SetAttribute("GuardSrptQuantumPackets",
                                  UintegerValue(guard_srpt_quantum_packets));
             rdmaHw->SetAttribute("GuardWorkConserving", BooleanValue(guard_work_conserving));
@@ -2593,6 +2598,21 @@ int main(int argc, char *argv[]) {
             Settings::guard_sender_srpt_selections,
             Settings::guard_sender_srpt_non_rr_selections,
             Settings::guard_sender_srpt_forced_rr);
+    uint64_t total_guard_one_rtt_bypass_flows = 0;
+    uint64_t total_guard_one_rtt_bypass_feedbacks = 0;
+    uint64_t total_guard_one_rtt_acks_suppressed = 0;
+    for (uint32_t i = 0; i < node_num; i++) {
+        if (n.Get(i)->GetNodeType() != 0) continue;
+        Ptr<RdmaDriver> driver = n.Get(i)->GetObject<RdmaDriver>();
+        total_guard_one_rtt_bypass_flows += driver->m_rdma->m_guardOneRttBypassFlows;
+        total_guard_one_rtt_bypass_feedbacks += driver->m_rdma->m_guardOneRttBypassFeedbacks;
+        total_guard_one_rtt_acks_suppressed += driver->m_rdma->m_guardOneRttAcksSuppressed;
+    }
+    fprintf(guard_stats_output,
+            "guard_one_rtt_bypass enabled %u flows %lu feedbacks_skipped %lu "
+            "acks_suppressed %lu\n",
+            guard_one_rtt_bypass ? 1 : 0, total_guard_one_rtt_bypass_flows,
+            total_guard_one_rtt_bypass_feedbacks, total_guard_one_rtt_acks_suppressed);
     fprintf(guard_stats_output, "switch_drops ingress %u egress %u total %u\n",
             Settings::dropped_pkt_sw_ingress, Settings::dropped_pkt_sw_egress,
             Settings::dropped_pkt_sw_ingress + Settings::dropped_pkt_sw_egress);

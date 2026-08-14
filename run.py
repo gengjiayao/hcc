@@ -95,6 +95,7 @@ GUARD_PROACTIVE_RELEASE {guard_proactive_release}
 GUARD_KEEP_LAST_HOP_INT {guard_keep_last_hop_int}
 GUARD_SIZE_PRIORITY {guard_size_priority}
 GUARD_SENDER_SRPT {guard_sender_srpt}
+GUARD_ONE_RTT_BYPASS {guard_one_rtt_bypass}
 GUARD_SRPT_QUANTUM_PACKETS {guard_srpt_quantum_packets}
 GUARD_WORK_CONSERVING {guard_work_conserving}
 GUARD_REBALANCE_INTERVAL_US {guard_rebalance_interval_us}
@@ -378,6 +379,8 @@ def main():
                         help="remap GUARD flows to size-based priority groups (default: 1)")
     parser.add_argument('--guard_sender_srpt', type=int, choices=(0, 1), default=1,
                         help="select shortest remaining ready GUARD flow at sender (default: 1)")
+    parser.add_argument('--guard_one_rtt_bypass', type=int, choices=(0, 1), default=1,
+                        help="keep <=1-BDP GUARD flows at line rate (default: 1)")
     parser.add_argument('--guard_srpt_quantum_packets', type=int, default=64,
                         help="consecutive SRPT packet bound before RR service (default: 64)")
     parser.add_argument('--guard_work_conserving', type=int, choices=(0, 1), default=1,
@@ -828,6 +831,7 @@ def main():
                                         guard_keep_last_hop_int=args.guard_keep_last_hop_int,
                                         guard_size_priority=args.guard_size_priority,
                                         guard_sender_srpt=args.guard_sender_srpt,
+                                        guard_one_rtt_bypass=args.guard_one_rtt_bypass,
                                         guard_srpt_quantum_packets=args.guard_srpt_quantum_packets,
                                         guard_work_conserving=args.guard_work_conserving,
                                         guard_rebalance_interval_us=args.guard_rebalance_interval_us,

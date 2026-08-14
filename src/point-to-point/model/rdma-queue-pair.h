@@ -71,6 +71,7 @@ class RdmaQueuePair : public Object {
     DataRate m_max_rate;  // max rate
     bool m_var_win;       // variable window size
     bool m_guard_sender_srpt;  // GUARD sender selects the shortest ready flow
+    bool m_guard_one_rtt_bypass;  // Ignore delayed fabric feedback for <=1-BDP flows
     uint32_t m_guard_srpt_quantum_packets;
     Time m_nextAvail;     //< Soonest time of next send
     uint32_t wp;          // current window of packets

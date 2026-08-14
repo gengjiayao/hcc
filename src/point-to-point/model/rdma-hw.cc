@@ -132,6 +132,12 @@ TypeId RdmaHw::GetTypeId(void) {
                           "Select the shortest remaining ready GUARD flow at each sender NIC",
                           BooleanValue(true), MakeBooleanAccessor(&RdmaHw::m_guardSenderSrpt),
                           MakeBooleanChecker())
+            .AddAttribute("GuardOneRttBypass",
+                          "Keep GUARD flows no larger than one BDP at line rate because delayed "
+                          "fabric feedback cannot prevent their first-RTT injection",
+                          BooleanValue(true),
+                          MakeBooleanAccessor(&RdmaHw::m_guardOneRttBypass),
+                          MakeBooleanChecker())
             .AddAttribute("GuardSrptQuantumPackets",
                           "Maximum consecutive SRPT packets before one round-robin service",
                           UintegerValue(64),
@@ -234,6 +240,9 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardMaxActiveFlows = 0;
     m_guardRebalanceEvents = 0;
     m_guardAdaptiveGrantUpdates = 0;
+    m_guardOneRttBypassFlows = 0;
+    m_guardOneRttBypassFeedbacks = 0;
+    m_guardOneRttAcksSuppressed = 0;
     m_guardUnderutilizedSamples = 0;
     m_guardLastRebalanceTime = Time(0);
     m_guardLifecycleTraceSink = NULL;
@@ -373,6 +382,13 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
 
     // add qp
     uint32_t nic_idx = GetNicIdxOfQp(qp);
+
+    if (m_cc_mode == CC_MODE_GUARD && m_guardOneRttBypass) {
+        DataRate line_rate = m_nic[nic_idx].dev->GetDataRate();
+        uint64_t bdp_bytes = baseRtt * line_rate.GetBitRate() / 8000000000lu;
+        qp->m_guard_one_rtt_bypass = bdp_bytes > 0 && size <= bdp_bytes;
+        if (qp->m_guard_one_rtt_bypass) m_guardOneRttBypassFlows++;
+    }
 
     // For GUARD modes, borrow homa's idea of routing short
     // messages to higher-priority switch queues (lower pg = higher prio in
@@ -572,6 +588,28 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
 
     bool cnp_check = false;
     int x = ReceiverCheckSeq(ch.udp.seq, rxQp, payload_size, cnp_check);
+
+    // A <=1-BDP GUARD flow cannot act on closed-loop telemetry before its
+    // bounded first-RTT burst is already in flight.  With lossless PFC, keep
+    // only its cumulative completion ACK (and never suppress a NACK).  This
+    // removes reverse-path per-packet ACK traffic without weakening recovery:
+    // IRN retains its normal ACK stream, while any out-of-order packet still
+    // produces x==2 below.
+    if (m_cc_mode == CC_MODE_GUARD && m_guardOneRttBypass && !m_irn && x == 1 &&
+        has_flow_tag && flow_size > 0 && rxQp->ReceiverNextExpectedSeq < flow_size) {
+        FlowStatTag fst;
+        uint64_t bdp = 104000;
+        if (p->PeekPacketTag(fst) && fst.HasBaseRtt()) {
+            uint32_t nic_idx = GetNicIdxOfRxQp(rxQp);
+            DataRate rate = m_nic[nic_idx].dev->GetDataRate();
+            bdp = (uint64_t)(fst.GetBaseRttSeconds() * rate.GetBitRate() / 8.0);
+            if (bdp == 0) bdp = 104000;
+        }
+        if (flow_size <= bdp) {
+            x = 5;
+            m_guardOneRttAcksSuppressed++;
+        }
+    }
 
     // x==2 is a recovery NACK caused by an out-of-order packet. x==6 is
     // encoded with protocol 0xFD in IRN mode but semantically acknowledges
@@ -2613,6 +2651,13 @@ void RdmaHw::HomaScheduler::SendCompletionNotice(HomaFlow* flow) {
  * High Precision CC
  ***********************/
 void RdmaHw::HandleAckHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch) {
+    if (m_cc_mode == CC_MODE_GUARD && qp->m_guard_one_rtt_bypass) {
+        // A flow no larger than one BDP cannot reduce the bytes it injected
+        // before the first feedback RTT.  Applying that delayed sample only
+        // throttles its tail, so GUARD leaves this bounded burst at line rate.
+        m_guardOneRttBypassFeedbacks++;
+        return;
+    }
     uint32_t ack_seq = ch.ack.seq;
     // update rate
     if (ack_seq > qp->hp.m_lastUpdateSeq) {  // if full RTT feedback is ready, do full update
