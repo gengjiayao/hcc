@@ -1,0 +1,145 @@
+{
+  "baseline_arm": "tail_ungated",
+  "candidates": [
+    {
+      "arm": "tail_gate_r080_s2",
+      "eligible": false,
+      "gates": {
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_1.0": false,
+        "overall_slowdown_p99_ci95_high_below_0.0": false,
+        "queue_bytes_mean_ci95_high_at_most_5.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.03510180461284567,
+          "ci95_high": 0.03277865226174777,
+          "ci95_low": -0.03742495696394357,
+          "mean": -0.002323152351097905,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.6885670694787701,
+          "ci95_high": 1.1960710270973611,
+          "ci95_low": -0.18106311186017898,
+          "mean": 0.5075039576185911,
+          "n": 5
+        },
+        "overall_slowdown_p99": {
+          "ci95_half_width": 0.7981740225058662,
+          "ci95_high": 1.2542881347763064,
+          "ci95_low": -0.34205991023542615,
+          "mean": 0.4561141122704401,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 5.54009497858007,
+          "ci95_high": -0.571146018109502,
+          "ci95_low": -11.651335975269642,
+          "mean": -6.111240996689572,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        0.4561141122704401,
+        0.5075039576185911,
+        -6.111240996689572
+      ]
+    },
+    {
+      "arm": "tail_gate_r090_s2",
+      "eligible": false,
+      "gates": {
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_1.0": false,
+        "overall_slowdown_p99_ci95_high_below_0.0": false,
+        "queue_bytes_mean_ci95_high_at_most_5.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.02628123497878525,
+          "ci95_high": 0.03157563809517354,
+          "ci95_low": -0.020986831862396964,
+          "mean": 0.005294403116388286,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.5983456067034163,
+          "ci95_high": 1.000928124672162,
+          "ci95_low": -0.19576308873467052,
+          "mean": 0.4025825179687458,
+          "n": 5
+        },
+        "overall_slowdown_p99": {
+          "ci95_half_width": 0.808528043136681,
+          "ci95_high": 1.2564450898721944,
+          "ci95_low": -0.36061099640116756,
+          "mean": 0.44791704673551347,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 5.1864770619483,
+          "ci95_high": -0.07482824990398029,
+          "ci95_low": -10.44778237380058,
+          "mean": -5.26130531185228,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        0.44791704673551347,
+        0.4025825179687458,
+        -5.26130531185228
+      ]
+    },
+    {
+      "arm": "tail_gate_r100_s2",
+      "eligible": false,
+      "gates": {
+        "le_8KB_slowdown_p95_ci95_high_at_most_1.0": true,
+        "overall_fct_us_mean_ci95_high_at_most_1.0": true,
+        "overall_slowdown_p99_ci95_high_below_0.0": false,
+        "queue_bytes_mean_ci95_high_at_most_5.0": true
+      },
+      "paired_percent_vs_baseline": {
+        "le_8KB_slowdown_p95": {
+          "ci95_half_width": 0.0358866961922218,
+          "ci95_high": 0.03383455809938512,
+          "ci95_low": -0.037938834285058474,
+          "mean": -0.002052138092836677,
+          "n": 5
+        },
+        "overall_fct_us_mean": {
+          "ci95_half_width": 0.41793537712944523,
+          "ci95_high": 0.7303884432216671,
+          "ci95_low": -0.10548231103722339,
+          "mean": 0.31245306609222184,
+          "n": 5
+        },
+        "overall_slowdown_p99": {
+          "ci95_half_width": 0.8579294709912383,
+          "ci95_high": 1.3170278831811875,
+          "ci95_low": -0.3988310588012891,
+          "mean": 0.4590984121899492,
+          "n": 5
+        },
+        "queue_bytes_mean": {
+          "ci95_half_width": 5.638636560022065,
+          "ci95_high": 0.7601558932232448,
+          "ci95_low": -10.517117226820886,
+          "mean": -4.87848066679882,
+          "n": 5
+        }
+      },
+      "tie_break_key": [
+        0.4590984121899492,
+        0.31245306609222184,
+        -4.87848066679882
+      ]
+    }
+  ],
+  "requires_fresh_holdout_before_claim": true,
+  "schema_version": 1,
+  "selected_arm": "tail_ungated",
+  "selection_used_performance_direction": true,
+  "status": "no_candidate_beats_frozen_gates"
+}
