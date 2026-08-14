@@ -69,16 +69,21 @@ def make_background(hosts, count, flow_bytes, pg, start_s, duration_s, seed):
     return flows
 
 
-def make_ring_allreduce(hosts, tensor_bytes, pg, start_s, duration_s):
+def make_ring_allreduce(hosts, tensor_bytes, pg, start_s, duration_s,
+                        seed=None, jitter_us=0.0):
     # A ring executes N-1 reduce-scatter steps followed by N-1 all-gather
     # steps.  Each host sends one tensor chunk to its clockwise neighbor per
-    # step.  Dependencies are represented by distinct, ordered start times.
+    # step.  Distinct start times represent nominal phases only; this remains
+    # an open-loop trace because a phase does not wait for prior completions.
     steps = 2 * (hosts - 1)
     chunk_bytes = int(math.ceil(tensor_bytes / float(hosts)))
+    rng = random.Random(seed)
     flows = []
     for step in range(steps):
-        flow_start = start_s + duration_s * (step + 1) / float(steps + 1)
+        step_start = start_s + duration_s * (step + 1) / float(steps + 1)
         for src in range(hosts):
+            flow_start = step_start + (
+                rng.uniform(0, jitter_us * 1e-6) if jitter_us > 0 else 0.0)
             flows.append(Flow(src, (src + 1) % hosts, pg, chunk_bytes, flow_start))
     return flows
 
@@ -235,6 +240,11 @@ def generate(args):
         raise ValueError("--all-to-all-jitter-us must be finite and non-negative")
     if args.all_to_all_jitter_us * 1e-6 > duration_s * 0.80:
         raise ValueError("--all-to-all-jitter-us exceeds the workload duration")
+    if not math.isfinite(args.ring_jitter_us) or args.ring_jitter_us < 0:
+        raise ValueError("--ring-jitter-us must be finite and non-negative")
+    ring_step_s = duration_s / float(2 * (args.hosts - 1) + 1)
+    if args.ring_jitter_us * 1e-6 >= ring_step_s:
+        raise ValueError("--ring-jitter-us must be below the open-loop step interval")
     if not 1 <= args.max_flows <= HARD_MAX_FLOWS:
         raise ValueError("--max-flows must be in [1, {}]".format(HARD_MAX_FLOWS))
 
@@ -256,7 +266,7 @@ def generate(args):
     elif args.workload == "ring-allreduce":
         flows = make_ring_allreduce(
             args.hosts, args.tensor_bytes, args.priority_group,
-            args.base_time, duration_s)
+            args.base_time, duration_s, args.seed, args.ring_jitter_us)
     elif args.workload == "all-to-all":
         flows = make_all_to_all(
             args.hosts, args.flow_bytes, args.priority_group,
@@ -377,6 +387,9 @@ def parse_args(argv=None):
     parser.add_argument("--background-flows", type=positive_int, default=512)
     parser.add_argument("--background-flow-bytes", type=positive_int, default=64 * 1024)
     parser.add_argument("--tensor-bytes", type=positive_int, default=4 * 1024 * 1024)
+    parser.add_argument(
+        "--ring-jitter-us", type=float, default=0.0,
+        help="seeded per-flow jitter within each open-loop ring step")
     parser.add_argument(
         "--all-to-all-jitter-us", type=float, default=0.0,
         help="seeded per-flow uniform start jitter for all-to-all (default: legacy spread)")

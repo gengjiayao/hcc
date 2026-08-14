@@ -109,6 +109,36 @@ class GenerateWorkloadTest(unittest.TestCase):
                 max(flow.start_s for flow in flows) -
                 min(flow.start_s for flow in flows), 0.5e-6)
 
+    def test_ring_seeded_jitter_preserves_steps_and_changes_trace(self):
+        common = [
+            "--workload", "ring-allreduce", "--output", "unused",
+            "--hosts", "16", "--duration-ms", "20",
+            "--ring-jitter-us", "0.5", "--priority-group", "4",
+        ]
+        first = generate_workload.generate(generate_workload.parse_args(
+            common + ["--seed", "1"]))
+        repeat = generate_workload.generate(generate_workload.parse_args(
+            common + ["--seed", "1"]))
+        second = generate_workload.generate(generate_workload.parse_args(
+            common + ["--seed", "2"]))
+        self.assertEqual(first, repeat)
+        self.assertNotEqual(first, second)
+        self.assertEqual(len(first), 480)
+        self.assertEqual(
+            sorted((flow.src, flow.dst, flow.size_bytes) for flow in first),
+            sorted((flow.src, flow.dst, flow.size_bytes) for flow in second))
+        step_interval = 0.02 / 31
+        for step in range(30):
+            nominal = 2.0 + 0.02 * (step + 1) / 31
+            step_flows = [
+                flow for flow in first
+                if nominal <= flow.start_s < nominal + 0.5e-6
+            ]
+            self.assertEqual(len(step_flows), 16)
+            self.assertTrue(all(
+                flow.start_s < nominal + min(0.5e-6, step_interval)
+                for flow in step_flows))
+
     def test_oflm_churn_has_fixed_rate_bdp_mix_behind_active_elephants(self):
         args = generate_workload.parse_args([
             "--workload", "oflm-churn", "--output", "unused",
