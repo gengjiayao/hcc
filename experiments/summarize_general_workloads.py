@@ -16,7 +16,7 @@ from typing import Dict, Iterable, List, Mapping, MutableMapping, Sequence, Tupl
 try:
     from experiments.run_campaign import directory_size, sha256_file, write_json
     from experiments.summarize_campaign import (
-        GUARD_TOTAL_FIELDS,
+        GUARD_TOTAL_FIELDS, HOMA_TOTAL_FIELDS,
         PFC_PRIORITY_FIELDS,
         parse_guard_stats,
         parse_pfc,
@@ -33,7 +33,7 @@ try:
 except ModuleNotFoundError:  # Direct execution from experiments/.
     from run_campaign import directory_size, sha256_file, write_json
     from summarize_campaign import (
-        GUARD_TOTAL_FIELDS,
+        GUARD_TOTAL_FIELDS, HOMA_TOTAL_FIELDS,
         PFC_PRIORITY_FIELDS,
         parse_guard_stats,
         parse_pfc,
@@ -50,7 +50,7 @@ except ModuleNotFoundError:  # Direct execution from experiments/.
 
 
 ARMS = ("full", "hpcc", "receiver")
-CC_MODES = {"full": 11, "hpcc": 3, "receiver": 13}
+CC_MODES = {"full": 11, "guard": 11, "hpcc": 3, "receiver": 13, "homa": 12}
 T95_DF4 = 2.7764451051977987
 ZERO_RECOVERY_FIELDS = (
     "switch_drops_ingress", "switch_drops_egress", "switch_drops_total",
@@ -61,6 +61,11 @@ ZERO_RECOVERY_FIELDS = (
 HPCC_ZERO_FIELDS = (
     "hpcc_feedback_updates", "hpcc_valid_feedback", "hpcc_rate_updates_applied",
     "hpcc_full_computations", "hpcc_fast_computations", "hpcc_actual_rate_changes",
+)
+GUARD_SCHEDULER_FIELDS = (
+    "guard_sender_srpt_enabled", "guard_srpt_quantum_packets",
+    "guard_sender_srpt_selections", "guard_sender_srpt_non_rr",
+    "guard_sender_srpt_forced_rr",
 )
 
 
@@ -202,7 +207,7 @@ def one_output_file(output: Path, suffix: str) -> Path:
 
 def validate_config(
     config: Mapping[str, str], manifest: Mapping[str, object], arm: str,
-    admission: bool, expected_snapshot: Path,
+    controller_trace: bool, expected_snapshot: Path, spec: Mapping[str, object],
 ) -> List[str]:
     errors: List[str] = []
     expected = {
@@ -212,10 +217,27 @@ def validate_config(
         "RANDOM_SEED": manifest["seed"],
         "PREFLIGHT_MAX_FLOWS": 10000,
         "MONITOR_PROFILE": "bulk",
-        "GUARD_CONTROLLER_TRACE": 1 if admission and arm == "full" else 0,
+        "GUARD_CONTROLLER_TRACE": 1 if controller_trace else 0,
     }
-    if arm in ("full", "receiver"):
-        expected["GUARD_SIZE_PRIORITY"] = 0
+    cc = str(dict(spec["arms"])[arm]["cc"])
+    if cc in ("guard", "guard-active-only"):
+        controls = dict(spec["defaults"])
+        controls.update(dict(spec["arms"])[arm])
+        config_names = {
+            "guard_lambda": "GUARD_LAMBDA",
+            "guard_beta": "GUARD_EWMA_BETA",
+            "guard_gamma": "GUARD_RELEASE_GAMMA",
+            "guard_selective_registration": "GUARD_SELECTIVE_REGISTRATION",
+            "guard_proactive_release": "GUARD_PROACTIVE_RELEASE",
+            "guard_keep_last_hop_int": "GUARD_KEEP_LAST_HOP_INT",
+            "guard_size_priority": "GUARD_SIZE_PRIORITY",
+            "guard_sender_srpt": "GUARD_SENDER_SRPT",
+            "guard_srpt_quantum_packets": "GUARD_SRPT_QUANTUM_PACKETS",
+            "guard_work_conserving": "GUARD_WORK_CONSERVING",
+        }
+        for option, key in config_names.items():
+            if option in controls:
+                expected[key] = controls[option]
     for key, value in expected.items():
         actual = config.get(key)
         if str(actual) != str(value):
@@ -231,23 +253,50 @@ def validate_config(
 def mechanism_checks(arm: str, stats: Mapping[str, object]) -> Dict[str, bool]:
     grants_sent = int(stats["grants_sent"])
     grants_received = int(stats["grants_received"])
-    if arm == "full":
-        return {
+    if arm in ("full", "guard"):
+        checks = {
             "full_grants": grants_sent > 0,
             "full_valid_hpcc": int(stats["hpcc_valid_feedback"]) > 0,
             "full_actual_rate_change": int(stats["hpcc_actual_rate_changes"]) > 0,
             "full_reactive_binding": int(stats["reactive_binding_updates"]) > 0,
         }
+        if arm == "guard":
+            checks.update({
+                "guard_sender_srpt_enabled": int(stats["guard_sender_srpt_enabled"]) == 1,
+                "guard_sender_srpt_selected": int(stats["guard_sender_srpt_selections"]) > 0,
+                "guard_sender_srpt_non_rr": int(stats["guard_sender_srpt_non_rr"]) > 0,
+            })
+        return checks
     if arm == "hpcc":
         return {
             "hpcc_zero_grants": grants_sent + grants_received == 0,
             "hpcc_valid_feedback": int(stats["hpcc_valid_feedback"]) > 0,
             "hpcc_actual_rate_change": int(stats["hpcc_actual_rate_changes"]) > 0,
         }
-    return {
+    if arm == "receiver":
+        return {
         "receiver_grants": grants_sent > 0,
         "receiver_zero_hpcc": all(int(stats[field]) == 0 for field in HPCC_ZERO_FIELDS),
-    }
+        }
+    if arm == "homa":
+        used_priorities = sum(
+            1 for row in stats["homa_priority"].values()
+            if int(row["data_packets"]) > 0
+        )
+        return {
+            "homa_data": int(stats["homa_data_packets"]) > 0,
+            "homa_grants": int(stats["homa_grants_sent"]) > 0
+                           and int(stats["homa_grants_received"]) > 0,
+            "homa_messages": int(stats["homa_messages_tracked"]) > 0
+                             and int(stats["homa_messages_completed"]) > 0,
+            "homa_completion_notice": int(stats["homa_completion_notices_sent"]) > 0
+                                      and int(stats["homa_completion_notices_received"]) > 0,
+            "homa_pending_state": int(stats["homa_max_pending_messages"]) > 0,
+            "homa_multiple_priorities": used_priorities >= 2,
+            "homa_zero_guard_hpcc": grants_sent + grants_received == 0
+                                    and all(int(stats[field]) == 0 for field in HPCC_ZERO_FIELDS),
+        }
+    raise AnalysisError(f"unsupported arm: {arm}")
 
 
 def analyze_run(
@@ -285,7 +334,9 @@ def analyze_run(
     validate_completions(flows, fct, int(profile["hosts"]))
     config = parse_config(output / "config.txt")
     admission = seed == int(dict(spec["admission"])["seed"])
-    errors = validate_config(config, manifest, arm, admission, snapshot)
+    trace_arm = str(dict(spec["admission"]).get("controller_trace_arm", "full"))
+    controller_trace = admission and arm == trace_arm
+    errors = validate_config(config, manifest, arm, controller_trace, snapshot, spec)
     stats = parse_guard_stats(output / f"{output_id}_out_guard_stats.txt")
     pfc = parse_pfc(output / f"{output_id}_out_pfc.txt")
     raw_priority = pfc["pfc_event_priority"]
@@ -306,9 +357,19 @@ def analyze_run(
     }
     if admission:
         checks.update(mechanism_checks(arm, stats))
+    if arm == "homa":
+        flow_count = int(trace["flow_count"])
+        checks.update({
+            "homa_tracked_every_flow": int(stats["homa_messages_tracked"]) == flow_count,
+            "homa_completed_every_flow": int(stats["homa_messages_completed"]) == flow_count,
+            "homa_notice_sent_every_flow":
+                int(stats["homa_completion_notices_sent"]) == flow_count,
+            "homa_notice_received_every_flow":
+                int(stats["homa_completion_notices_received"]) == flow_count,
+        })
     controller_metrics: Dict[str, float] = {}
     controller_footer = {"attempted": 0, "written": 0, "truncated": 0}
-    if admission and arm == "full":
+    if controller_trace:
         controller_path = output / f"{output_id}_out_guard_controller.csv"
         controller_footer, controller_metrics = parse_controller(
             controller_path,
@@ -330,6 +391,10 @@ def analyze_run(
         if scope == "all":
             metrics[metric] = float(value)
     for field in GUARD_TOTAL_FIELDS:
+        metrics[field] = float(stats[field])
+    for field in HOMA_TOTAL_FIELDS:
+        metrics[field] = float(stats[field])
+    for field in GUARD_SCHEDULER_FIELDS:
         metrics[field] = float(stats[field])
     for field in ZERO_RECOVERY_FIELDS:
         metrics[field] = float(stats[field])
@@ -378,7 +443,8 @@ def admission_report(
         if workload["decision"] != "included":
             continue
         arm_rows: List[Dict[str, object]] = []
-        for arm in ARMS:
+        arms = tuple(map(str, spec["arms"]))
+        for arm in arms:
             try:
                 row, admission = analyze_run(campaign_dir, workload, spec, 1, arm)
                 rows.append(row)
@@ -386,7 +452,7 @@ def admission_report(
             except (AnalysisError, SummaryError, OSError, KeyError, ValueError, StopIteration) as exc:
                 arm_rows.append({"seed": 1, "arm": arm, "passed": False, "failures": [str(exc)]})
         hashes = {row.get("flow_sha256") for row in arm_rows if row.get("flow_sha256")}
-        hash_matched = len(hashes) == 1 and len(arm_rows) == 3
+        hash_matched = len(hashes) == 1 and len(arm_rows) == len(arms)
         passed = all(row.get("passed") is True for row in arm_rows) and hash_matched
         decisions[str(workload["name"])] = {
             "passed": passed,
@@ -407,6 +473,7 @@ def admission_report(
 def aggregate_formal(
     rows: Sequence[Mapping[str, object]],
     comparisons: Sequence[Sequence[str]],
+    arms: Sequence[str] = ARMS,
 ) -> Tuple[Dict[str, object], List[Dict[str, object]]]:
     by_workload: Dict[str, object] = {}
     csv_rows: List[Dict[str, object]] = []
@@ -419,7 +486,7 @@ def aggregate_formal(
         workload_rows = [row for row in rows if row["workload"] == workload]
         report: Dict[str, object] = {"by_arm": {}, "paired": {}}
         numeric_by_arm: Dict[str, set[str]] = {}
-        for arm in ARMS:
+        for arm in arms:
             arm_rows = [row for row in workload_rows if row["arm"] == arm]
             if len(arm_rows) != 5 or {int(row["seed"]) for row in arm_rows} != set(range(1, 6)):
                 raise AnalysisError(f"{workload}/{arm} does not contain exactly seeds 1..5")
@@ -437,7 +504,7 @@ def aggregate_formal(
                     "comparison": arm, "metric": metric, **stats,
                 })
             report["by_arm"][arm] = arm_report
-        common = set.intersection(*(numeric_by_arm[arm] for arm in ARMS))
+        common = set.intersection(*(numeric_by_arm[arm] for arm in arms))
         for pair in comparisons:
             left, right = map(str, pair)
             name = f"{left}_minus_{right}"
@@ -520,14 +587,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         if workload["decision"] != "included" or admission["workloads"][name]["passed"] is not True:
             continue
         for seed in range(1, 6):
-            for arm in ARMS:
+            for arm in spec["arms"]:
                 row, _admission = analyze_run(campaign_dir, workload, spec, seed, arm)
                 if row["passed"] is not True:
                     raise AnalysisError(f"formal validation failed: {name}/s{seed}/{arm}: {row['failures']}")
                 formal_rows.append(row)
     if not formal_rows:
         raise AnalysisError("no admitted workload has a complete formal matrix")
-    aggregates, metric_rows = aggregate_formal(formal_rows, spec["comparisons"])
+    aggregates, metric_rows = aggregate_formal(
+        formal_rows, spec["comparisons"], tuple(map(str, spec["arms"]))
+    )
     write_csv(output / "general_runs.csv", formal_rows)
     write_csv(output / "general_metrics.csv", metric_rows)
     report = {

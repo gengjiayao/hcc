@@ -196,6 +196,15 @@ class GeneralWorkloadSummaryTests(unittest.TestCase):
         self.assertTrue(all(mechanism_checks("receiver", receiver).values()))
         receiver["hpcc_actual_rate_changes"] = 1
         self.assertFalse(mechanism_checks("receiver", receiver)["receiver_zero_hpcc"])
+        homa = dict(
+            base,
+            homa_data_packets=100, homa_grants_sent=10, homa_grants_received=10,
+            homa_messages_tracked=4, homa_messages_completed=4,
+            homa_completion_notices_sent=4, homa_completion_notices_received=4,
+            homa_max_pending_messages=2,
+            homa_priority={1: {"data_packets": 20}, 7: {"data_packets": 80}},
+        )
+        self.assertTrue(all(mechanism_checks("homa", homa).values()))
 
     def test_controller_trace_is_bounded_and_bucketed(self):
         with tempfile.TemporaryDirectory() as directory:
