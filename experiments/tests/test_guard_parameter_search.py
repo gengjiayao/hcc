@@ -13,6 +13,7 @@ from experiments.summarize_guard_parameter_search import select_candidate
 REPO = Path(__file__).resolve().parents[2]
 SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage1.json"
 QUANTUM_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage1b.json"
+TAIL_SPEC_PATH = REPO / "experiments" / "campaigns" / "guard_parameter_search_stage1c.json"
 
 
 class GuardParameterSearchTest(unittest.TestCase):
@@ -69,6 +70,26 @@ class GuardParameterSearchTest(unittest.TestCase):
             {arm["guard_srpt_quantum_packets"] for arm in spec["arms"].values()},
             {16, 32, 64, 128},
         )
+
+    def test_tail_gate_grid_is_complete_and_forwarded(self):
+        spec = read_spec(TAIL_SPEC_PATH)
+        self.assertEqual(spec["search_kind"], "tail_gate")
+        observed = {
+            (arm["guard_tail_congestion_gate"], arm["guard_tail_safe_ratio"],
+             arm["guard_tail_safe_samples"])
+            for arm in spec["arms"].values()
+        }
+        self.assertEqual(observed, {
+            (0, 0.9, 2), (1, 0.8, 2), (1, 0.9, 2), (1, 1.0, 2),
+        })
+        command = run_command(
+            REPO, spec, {"name": "AliStorage50", "cdf": "AliStorage2019"},
+            {"seed": 41, "path": "/tmp/frozen-flow.txt"},
+            "tail_gate_r090_s2")
+        joined = " ".join(command)
+        self.assertIn("--guard_tail_congestion_gate 1", joined)
+        self.assertIn("--guard_tail_safe_ratio 0.9", joined)
+        self.assertIn("--guard_tail_safe_samples 2", joined)
 
     def test_selection_applies_primary_and_constraint_gates(self):
         result = select_candidate(self.spec, self.rows())
