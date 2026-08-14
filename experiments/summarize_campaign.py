@@ -135,6 +135,12 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
         "guard_tail_safe_samples": 0, "guard_tail_gate_deferrals": 0,
         "guard_tail_gate_qualified_flows": 0,
     }
+    guard_adaptive_target = {
+        "guard_adaptive_target_enabled": 0, "guard_target_floor": 0.0,
+        "guard_queue_budget_bdps": 0.0, "guard_adaptive_target_updates": 0,
+        "guard_adaptive_target_min_observed": 0.0,
+        "guard_adaptive_target_max_queue_bdps": 0.0,
+    }
     guard_receiver = {
         "guard_remaining_aware": 0, "guard_min_share_fraction": 0.0,
         "guard_remaining_exponent": 0.0, "guard_grant_refresh_bdps": 0.0,
@@ -245,6 +251,15 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
                     "guard_tail_gate_deferrals": int(parts[16]),
                     "guard_tail_gate_qualified_flows": int(parts[18]),
                 }
+            elif parts[:2] == ["guard_adaptive_target", "enabled"] and len(parts) == 13:
+                guard_adaptive_target = {
+                    "guard_adaptive_target_enabled": int(parts[2]),
+                    "guard_target_floor": float(parts[4]),
+                    "guard_queue_budget_bdps": float(parts[6]),
+                    "guard_adaptive_target_updates": int(parts[8]),
+                    "guard_adaptive_target_min_observed": float(parts[10]),
+                    "guard_adaptive_target_max_queue_bdps": float(parts[12]),
+                }
             elif parts[:2] == ["guard_receiver_scheduler", "remaining_aware"] and len(parts) == 11:
                 guard_receiver = {
                     "guard_remaining_aware": int(parts[2]),
@@ -297,6 +312,7 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
     result.update(guard_scheduler)
     result.update(guard_short)
     result.update(guard_tail)
+    result.update(guard_adaptive_target)
     result.update(guard_receiver)
     result.update(guard_cap_aware)
     result.update({f"switch_drops_{key}": value for key, value in switch_drops.items()})

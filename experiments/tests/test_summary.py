@@ -216,6 +216,24 @@ class SummaryTests(unittest.TestCase):
             self.assertEqual(stats["guard_tail_gate_deferrals"], 7)
             self.assertEqual(stats["guard_tail_gate_qualified_flows"], 9)
 
+    def test_guard_adaptive_target_stats_preserve_queue_response(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            path.write_text(
+                "total 0 0 0 0\n"
+                "guard_adaptive_target enabled 1 floor 0.950000 "
+                "queue_budget_bdps 0.500000 updates 123 min_target 0.950000000 "
+                "max_queue_bdps 1.750000000\n",
+                encoding="utf-8",
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["guard_adaptive_target_enabled"], 1)
+            self.assertEqual(stats["guard_target_floor"], 0.95)
+            self.assertEqual(stats["guard_queue_budget_bdps"], 0.5)
+            self.assertEqual(stats["guard_adaptive_target_updates"], 123)
+            self.assertEqual(stats["guard_adaptive_target_min_observed"], 0.95)
+            self.assertEqual(stats["guard_adaptive_target_max_queue_bdps"], 1.75)
+
     def test_guard_receiver_concurrency_stats_preserve_activity(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "stats.txt"

@@ -70,6 +70,9 @@ GUARD_SCHEDULER_FIELDS = (
 GUARD_OPTIMIZATION_FIELDS = (
     "guard_tail_bypass_enabled", "guard_tail_bypass_bdps",
     "guard_tail_bypass_flows", "guard_tail_bypass_feedbacks",
+    "guard_adaptive_target_enabled", "guard_target_floor",
+    "guard_queue_budget_bdps", "guard_adaptive_target_updates",
+    "guard_adaptive_target_min_observed", "guard_adaptive_target_max_queue_bdps",
     "guard_remaining_aware", "guard_min_share_fraction",
     "guard_remaining_exponent", "guard_receiver_concurrency",
     "guard_concurrency_min_bdps", "guard_concurrency_limited_allocations",
@@ -244,6 +247,9 @@ def validate_config(
             "guard_one_rtt_bypass": "GUARD_ONE_RTT_BYPASS",
             "guard_tail_bypass": "GUARD_TAIL_BYPASS",
             "guard_tail_bypass_bdps": "GUARD_TAIL_BYPASS_BDPS",
+            "guard_adaptive_fabric_target": "GUARD_ADAPTIVE_FABRIC_TARGET",
+            "guard_target_floor": "GUARD_TARGET_FLOOR",
+            "guard_queue_budget_bdps": "GUARD_QUEUE_BUDGET_BDPS",
             "guard_ack_interval_packets": "GUARD_ACK_INTERVAL_PACKETS",
             "guard_fixed_window": "GUARD_FIXED_WINDOW",
             "guard_remaining_aware": "GUARD_REMAINING_AWARE",
@@ -289,6 +295,9 @@ def mechanism_checks(arm: str, stats: Mapping[str, object]) -> Dict[str, bool]:
                 "guard_progress_refresh":
                     int(stats["guard_remaining_refresh_events"]) > 0,
             })
+            if int(stats["guard_adaptive_target_enabled"]):
+                checks["guard_adaptive_target_updates"] = (
+                    int(stats["guard_adaptive_target_updates"]) > 0)
         return checks
     if arm == "hpcc":
         return {

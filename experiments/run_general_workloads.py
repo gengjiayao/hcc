@@ -96,8 +96,7 @@ def read_spec(path: Path) -> Mapping[str, object]:
                 raise CampaignError(f"guard arm must freeze {field}")
         optimized_fields = (
             "guard_one_rtt_bypass", "guard_tail_bypass",
-            "guard_tail_bypass_bdps", "guard_adaptive_fabric_target",
-            "guard_target_floor", "guard_queue_budget_bdps", "guard_ack_interval_packets",
+            "guard_tail_bypass_bdps", "guard_ack_interval_packets",
             "guard_fixed_window", "guard_remaining_aware",
             "guard_min_share_fraction", "guard_remaining_exponent",
             "guard_grant_refresh_bdps",
@@ -107,6 +106,17 @@ def read_spec(path: Path) -> Mapping[str, object]:
             missing = [field for field in optimized_fields if field not in controls]
             raise CampaignError(
                 "optimized guard profile must freeze all new controls; missing "
+                + ", ".join(missing)
+            )
+        adaptive_fields = (
+            "guard_adaptive_fabric_target", "guard_target_floor",
+            "guard_queue_budget_bdps",
+        )
+        adaptive_present = [field for field in adaptive_fields if field in controls]
+        if adaptive_present and len(adaptive_present) != len(adaptive_fields):
+            missing = [field for field in adaptive_fields if field not in controls]
+            raise CampaignError(
+                "adaptive fabric target must freeze all controls; missing "
                 + ", ".join(missing)
             )
         concurrency_fields = (

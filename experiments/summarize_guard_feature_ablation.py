@@ -124,6 +124,9 @@ def analyze_run(
             "guard_one_rtt_bypass": "GUARD_ONE_RTT_BYPASS",
             "guard_tail_bypass": "GUARD_TAIL_BYPASS",
             "guard_tail_bypass_bdps": "GUARD_TAIL_BYPASS_BDPS",
+            "guard_adaptive_fabric_target": "GUARD_ADAPTIVE_FABRIC_TARGET",
+            "guard_target_floor": "GUARD_TARGET_FLOOR",
+            "guard_queue_budget_bdps": "GUARD_QUEUE_BUDGET_BDPS",
             "guard_ack_interval_packets": "GUARD_ACK_INTERVAL_PACKETS",
             "guard_fixed_window": "GUARD_FIXED_WINDOW",
             "guard_remaining_aware": "GUARD_REMAINING_AWARE",
@@ -175,6 +178,11 @@ def analyze_run(
         if int(controls.get("guard_tail_bypass", 0)):
             if int(stats["guard_tail_bypass_flows"]) == 0:
                 failures.append("tail bypass did not exercise any flow")
+        expected_adaptive = int(controls.get("guard_adaptive_fabric_target", 0))
+        if int(stats["guard_adaptive_target_enabled"]) != expected_adaptive:
+            failures.append("adaptive-target activity flag disagrees with configuration")
+        if expected_adaptive and int(stats["guard_adaptive_target_updates"]) == 0:
+            failures.append("adaptive fabric target never changed")
         if int(controls.get("guard_remaining_aware", 0)):
             if int(stats["guard_remaining_refresh_events"]) == 0:
                 failures.append("remaining-aware grants never refreshed")
@@ -204,6 +212,9 @@ def analyze_run(
         "guard_ack_interval_packets", "guard_fixed_window",
         "guard_tail_bypass_enabled", "guard_tail_bypass_bdps",
         "guard_tail_bypass_flows", "guard_tail_bypass_feedbacks",
+        "guard_adaptive_target_enabled", "guard_target_floor",
+        "guard_queue_budget_bdps", "guard_adaptive_target_updates",
+        "guard_adaptive_target_min_observed", "guard_adaptive_target_max_queue_bdps",
         "guard_remaining_aware", "guard_min_share_fraction",
         "guard_remaining_exponent", "guard_grant_refresh_bdps",
         "guard_remaining_refresh_events",
