@@ -29,6 +29,7 @@ ELEPHANT_THRESHOLD_BDPS = (4.0, 6.0, 8.0, 12.0)
 TAIL_BYPASS_BDPS = (1.0, 2.0, 4.0, 8.0)
 ADAPTIVE_QUEUE_BUDGET_BDPS = (0.25, 0.5, 1.0)
 ADAPTIVE_TARGET_MAX_BDPS = (4.0, 8.0, 12.0)
+ADAPTIVE_TARGET_EXPANDED_BDPS = (16.0, 24.0, 32.0)
 
 
 def read_spec(path: Path) -> Mapping[str, object]:
@@ -254,12 +255,31 @@ def read_spec(path: Path) -> Mapping[str, object]:
             ))
         if observed != expected or len(arms) != 2:
             raise CampaignError("adaptive refinement must compare disabled with 12-BDP scope")
+    elif kind == "adaptive_scope_expansion":
+        observed = set()
+        disabled = 0
+        for name, raw in arms.items():
+            arm = dict(raw)
+            if arm.get("cc") != "guard":
+                raise CampaignError(f"{name} must select cc=guard")
+            enabled = int(arm.get("guard_adaptive_fabric_target", -1))
+            max_bdps = float(arm.get("guard_adaptive_target_max_bdps", -1))
+            if enabled == 0:
+                disabled += 1
+            elif enabled == 1 and max_bdps in ADAPTIVE_TARGET_EXPANDED_BDPS:
+                observed.add(max_bdps)
+            else:
+                raise CampaignError(f"{name} is outside the frozen expanded-scope grid")
+        if (disabled != 1 or observed != set(ADAPTIVE_TARGET_EXPANDED_BDPS) or
+                len(arms) != 1 + len(ADAPTIVE_TARGET_EXPANDED_BDPS)):
+            raise CampaignError("arms must cover disabled and each expanded adaptive scope")
     else:
         raise CampaignError(
             "search_kind must be receiver_grid, srpt_quantum, tail_gate, "
             "lambda_high_load, receiver_concurrency, elephant_concurrency, "
             "elephant_threshold, tail_bypass_threshold, adaptive_fabric_target, "
-            "adaptive_target_scope, or adaptive_scope_refinement")
+            "adaptive_target_scope, adaptive_scope_refinement, or "
+            "adaptive_scope_expansion")
     selection = dict(spec.get("selection", {}))
     if selection.get("baseline_arm") not in arms:
         raise CampaignError("selection baseline is not a grid arm")
