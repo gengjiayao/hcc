@@ -44,6 +44,9 @@ class CollectiveSummaryTest(unittest.TestCase):
             "homa_grants_sent": 0, "homa_messages_completed": 0,
             "homa_messages_tracked": 0, "homa_completed_message_ids": 0,
             "homa_completion_notices_sent": 0,
+            "homa_completion_notices_received": 0,
+            "homa_duplicate_data_after_completion": 0,
+            "homa_completion_notices_replayed": 0,
         }
 
     def test_mechanism_arms_are_distinct(self):
@@ -59,9 +62,27 @@ class CollectiveSummaryTest(unittest.TestCase):
         homa.update(
             homa_data_packets=10, homa_grants_sent=2,
             homa_messages_tracked=10, homa_messages_completed=10,
-            homa_completed_message_ids=10, homa_completion_notices_sent=10,
+            homa_completed_message_ids=10, homa_completion_notices_sent=12,
+            homa_completion_notices_received=10,
+            homa_duplicate_data_after_completion=2,
+            homa_completion_notices_replayed=2,
         )
         self.assertEqual(validate_mechanism("homa", homa, 10, 2), [])
+
+    def test_homa_completion_replay_must_close_exactly(self):
+        homa = self.values()
+        homa.update(
+            homa_data_packets=10, homa_grants_sent=2,
+            homa_messages_tracked=10, homa_messages_completed=10,
+            homa_completed_message_ids=10, homa_completion_notices_sent=12,
+            homa_completion_notices_received=10,
+            homa_duplicate_data_after_completion=2,
+            homa_completion_notices_replayed=1,
+        )
+        self.assertIn(
+            "homa_completion_replay_count_mismatch",
+            validate_mechanism("homa", homa, 10, 2),
+        )
 
     def test_guard_requires_actual_reactive_change(self):
         guard = self.values()

@@ -102,8 +102,13 @@ def validate_mechanism(
             failures.append("homa_completed_tombstone_count_mismatch")
         if values["homa_data_packets"] <= 0 or values["homa_grants_sent"] <= 0:
             failures.append("homa_native_data_or_grants_zero")
-        if values["homa_completion_notices_sent"] != expected_flows:
-            failures.append("homa_completion_notice_count_mismatch")
+        if values["homa_completion_notices_received"] != expected_flows:
+            failures.append("homa_completion_notice_receive_count_mismatch")
+        if values["homa_completion_notices_replayed"] != values["homa_duplicate_data_after_completion"]:
+            failures.append("homa_completion_replay_count_mismatch")
+        expected_sent = expected_flows + values["homa_completion_notices_replayed"]
+        if values["homa_completion_notices_sent"] != expected_sent:
+            failures.append("homa_completion_notice_send_count_mismatch")
         if used_priorities < 2:
             failures.append("homa_multiple_priorities_not_exercised")
     return failures
