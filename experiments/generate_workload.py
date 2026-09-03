@@ -153,6 +153,28 @@ def make_all_to_all(hosts, flow_bytes, pg, start_s, duration_s,
     return flows
 
 
+def make_access_saturation(hosts, hosts_per_tor, fanout, flow_bytes, pg,
+                           start_s, duration_s, seed=None, jitter_us=0.0):
+    """Keep every host access link backlogged with balanced rack-local flows."""
+    if hosts % hosts_per_tor:
+        raise ValueError("--hosts must be divisible by --access-hosts-per-tor")
+    if not 1 <= fanout < hosts_per_tor:
+        raise ValueError("--access-fanout must be in [1, access-hosts-per-tor - 1]")
+
+    trigger_s = start_s + duration_s * 0.05
+    rng = random.Random(seed)
+    flows = []
+    for src in range(hosts):
+        rack_base = (src // hosts_per_tor) * hosts_per_tor
+        local_src = src - rack_base
+        for offset in range(1, fanout + 1):
+            flow_start = trigger_s + (
+                rng.uniform(0, jitter_us * 1e-6) if jitter_us else 0.0)
+            dst = rack_base + (local_src + offset) % hosts_per_tor
+            flows.append(Flow(src, dst, pg, flow_bytes, flow_start))
+    return flows
+
+
 def make_oflm_churn(hosts, bdp_bytes, elephant_count, elephant_bytes,
                     rounds, arrival_interval_us, pg, start_s, duration_s,
                     seed=None, jitter_us=0.0):
@@ -281,6 +303,13 @@ def generate(args):
         raise ValueError("--all-to-all-jitter-us must be finite and non-negative")
     if args.all_to_all_jitter_us * 1e-6 > duration_s * 0.80:
         raise ValueError("--all-to-all-jitter-us exceeds the workload duration")
+    if args.access_hosts_per_tor > args.hosts:
+        raise ValueError("--access-hosts-per-tor cannot exceed --hosts")
+    if (not math.isfinite(args.access_jitter_us) or
+            args.access_jitter_us < 0):
+        raise ValueError("--access-jitter-us must be finite and non-negative")
+    if args.access_jitter_us * 1e-6 > duration_s * 0.25:
+        raise ValueError("--access-jitter-us exceeds the workload duration")
     if not math.isfinite(args.ring_jitter_us) or args.ring_jitter_us < 0:
         raise ValueError("--ring-jitter-us must be finite and non-negative")
     ring_span_s = (args.ring_span_ms / 1000.0
@@ -321,6 +350,11 @@ def generate(args):
         flows = make_all_to_all(
             args.hosts, args.flow_bytes, args.priority_group,
             args.base_time, duration_s, args.seed, args.all_to_all_jitter_us)
+    elif args.workload == "access-saturation":
+        flows = make_access_saturation(
+            args.hosts, args.access_hosts_per_tor, args.access_fanout,
+            args.flow_bytes, args.priority_group, args.base_time, duration_s,
+            args.seed, args.access_jitter_us)
     elif args.workload == "oflm-churn":
         flows = make_oflm_churn(
             args.hosts, args.oflm_bdp_bytes, args.oflm_elephant_flows,
@@ -415,7 +449,8 @@ def parse_args(argv=None):
     parser.add_argument(
         "--workload", required=True,
         choices=("incast", "hybrid", "directed-hybrid", "ring-allreduce",
-                 "all-to-all", "oflm-churn", "receiver-share"))
+                 "all-to-all", "access-saturation", "oflm-churn",
+                 "receiver-share"))
     parser.add_argument("--output", required=True, help="flow file to write")
     parser.add_argument("--manifest", help="manifest path (default: OUTPUT.manifest.json)")
     parser.add_argument("--force", action="store_true", help="replace existing outputs")
@@ -449,6 +484,11 @@ def parse_args(argv=None):
     parser.add_argument(
         "--all-to-all-jitter-us", type=float, default=0.0,
         help="seeded per-flow uniform start jitter for all-to-all (default: legacy spread)")
+    parser.add_argument("--access-hosts-per-tor", type=positive_int, default=16)
+    parser.add_argument("--access-fanout", type=positive_int, default=4)
+    parser.add_argument(
+        "--access-jitter-us", type=float, default=10.0,
+        help="seeded start jitter for access-link saturation flows (default: 10us)")
     parser.add_argument("--oflm-bdp-bytes", type=positive_int,
                         default=DEFAULT_OFLM_BDP_BYTES)
     parser.add_argument("--oflm-elephant-flows", type=positive_int, default=8)
@@ -519,6 +559,9 @@ def main(argv=None):
             "ring_placement": args.ring_placement,
             "ring_span_ms": args.ring_span_ms,
             "all_to_all_jitter_us": args.all_to_all_jitter_us,
+            "access_hosts_per_tor": args.access_hosts_per_tor,
+            "access_fanout": args.access_fanout,
+            "access_jitter_us": args.access_jitter_us,
             "oflm_bdp_bytes": args.oflm_bdp_bytes,
             "oflm_elephant_flows": args.oflm_elephant_flows,
             "oflm_elephant_bytes": args.oflm_elephant_bytes,

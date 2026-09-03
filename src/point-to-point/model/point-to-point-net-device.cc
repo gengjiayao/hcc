@@ -115,12 +115,9 @@ PointToPointNetDevice::GetTypeId (void)
     .AddTraceSource ("PhyTxDrop", 
                      "Trace source indicating a packet has been dropped by the device during transmission",
                      MakeTraceSourceAccessor (&PointToPointNetDevice::m_phyTxDropTrace))
-#if 0
-    // Not currently implemented for this device
     .AddTraceSource ("PhyRxBegin", 
                      "Trace source indicating a packet has begun being received by the device",
                      MakeTraceSourceAccessor (&PointToPointNetDevice::m_phyRxBeginTrace))
-#endif
     .AddTraceSource ("PhyRxEnd", 
                      "Trace source indicating a packet has been completely received by the device",
                      MakeTraceSourceAccessor (&PointToPointNetDevice::m_phyRxEndTrace))
@@ -147,6 +144,9 @@ PointToPointNetDevice::GetTypeId (void)
 PointToPointNetDevice::PointToPointNetDevice () 
   :
     m_txMachineState (READY),
+    m_txTimeRemainder (0),
+    m_txTimeRemainderRate (0),
+    m_txTimeTicksPerSecond (0),
     m_channel (0),
     m_linkUp (false),
     m_currentPkt (0)
@@ -200,6 +200,67 @@ DataRate PointToPointNetDevice::GetDataRate(){
 	return m_bps;
 }
 
+Time
+PointToPointNetDevice::CalculateTxTime (uint32_t bytes)
+{
+  uint64_t ticksPerSecond;
+  switch (Time::GetResolution ())
+    {
+    case Time::S:
+      ticksPerSecond = 1ULL;
+      break;
+    case Time::MS:
+      ticksPerSecond = 1000ULL;
+      break;
+    case Time::US:
+      ticksPerSecond = 1000000ULL;
+      break;
+    case Time::NS:
+      ticksPerSecond = 1000000000ULL;
+      break;
+    case Time::PS:
+      ticksPerSecond = 1000000000000ULL;
+      break;
+    case Time::FS:
+      ticksPerSecond = 1000000000000000ULL;
+      break;
+    default:
+      NS_FATAL_ERROR ("Unsupported simulator time resolution");
+      return Time (0);
+    }
+
+  const uint64_t bitRate = m_bps.GetBitRate ();
+  NS_ASSERT_MSG (bitRate != 0, "Data rate must be non-zero");
+
+  if (bitRate != m_txTimeRemainderRate ||
+      ticksPerSecond != m_txTimeTicksPerSecond)
+    {
+      m_txTimeRemainder = 0;
+      m_txTimeRemainderRate = bitRate;
+      m_txTimeTicksPerSecond = ticksPerSecond;
+    }
+
+  // Use integer arithmetic so converting through double/Seconds cannot drop
+  // the fractional part of every packet.  Ceiling the cumulative duration
+  // keeps every transmitted prefix capacity-safe; the carried remainder makes
+  // the long-run average exact at the configured line rate.
+  const bool oldRemainder = (m_txTimeRemainder != 0);
+  const unsigned __int128 numerator =
+    static_cast<unsigned __int128> (bytes) * 8 * ticksPerSecond +
+    m_txTimeRemainder;
+  uint64_t ticks = static_cast<uint64_t> (numerator / bitRate);
+  m_txTimeRemainder = static_cast<uint64_t> (numerator % bitRate);
+  if (m_txTimeRemainder != 0)
+    {
+      ++ticks;
+    }
+  if (oldRemainder)
+    {
+      --ticks;
+    }
+  return Time (ticks);
+}
+
 void
 PointToPointNetDevice::SetInterframeGap (Time t)
 {
@@ -223,7 +284,7 @@ PointToPointNetDevice::TransmitStart (Ptr<Packet> p)
   m_currentPkt = p;
   m_phyTxBeginTrace (m_currentPkt);
 
-  Time txTime = Seconds (m_bps.CalculateTxTime (p->GetSize ()));
+  Time txTime = CalculateTxTime (p->GetSize ());
   Time txCompleteTime = txTime + m_tInterframeGap;
 
   NS_LOG_LOGIC ("Schedule TransmitCompleteEvent in " << txCompleteTime.GetSeconds () << "sec");
@@ -303,6 +364,12 @@ PointToPointNetDevice::SetReceiveErrorModel (Ptr<ErrorModel> em)
 {
   NS_LOG_FUNCTION (this << em);
   m_receiveErrorModel = em;
+}
+
+void
+PointToPointNetDevice::NotifyPhyRxBegin (Ptr<Packet> packet)
+{
+  m_phyRxBeginTrace (packet);
 }
 
 void

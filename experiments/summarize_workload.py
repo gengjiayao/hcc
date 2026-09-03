@@ -164,7 +164,7 @@ def validate_manifest(
     workload = manifest.get("workload")
     allowed = {
         "incast", "hybrid", "directed-hybrid", "ring-allreduce", "all-to-all",
-        "oflm-churn", "receiver-share",
+        "access-saturation", "oflm-churn", "receiver-share",
     }
     if workload not in allowed:
         raise SummaryError(f"unsupported workload: {workload!r}")

@@ -330,31 +330,89 @@ struct FlowInput {
 FlowInput flow_input = {0};  // global variable
 uint32_t flow_num;
 
-std::map<uint32_t,uint64_t> nodeTxBytes, nodeRxBytes;
-std::map<uint32_t, uint64_t> nodeTotalTxBytes, nodeTotalRxBytes;
+struct LinkBusyState {
+  uint32_t nodeId = 0;
+  uint64_t bitRate = 0;
+  bool txBusy = false;
+  bool rxBusy = false;
+  uint64_t txStartNs = 0;
+  uint64_t rxStartNs = 0;
+  long double txRateNs = 0;
+  long double rxRateNs = 0;
+};
 
-void NodeTx(Ptr<NetDevice> dev, Ptr<const Packet> p) {
-  uint32_t nodeId = dev->GetNode()->GetId();
-  nodeTxBytes[nodeId] += p->GetSize();
+std::map<NetDevice*, LinkBusyState> linkBusyState;
+
+LinkBusyState& GetLinkBusyState(Ptr<NetDevice> dev) {
+  LinkBusyState& state = linkBusyState[PeekPointer(dev)];
+  if (state.bitRate == 0) {
+    Ptr<PointToPointNetDevice> pointToPoint = DynamicCast<PointToPointNetDevice>(dev);
+    NS_ASSERT_MSG(pointToPoint, "bandwidth monitor requires a point-to-point device");
+    state.nodeId = dev->GetNode()->GetId();
+    state.bitRate = pointToPoint->GetDataRate().GetBitRate();
+  }
+  return state;
 }
 
-void NodeRx(Ptr<NetDevice> dev, Ptr<const Packet> p) {
-  uint32_t nodeId = dev->GetNode()->GetId();
-  nodeRxBytes[nodeId] += p->GetSize();
+void NodeTxBegin(Ptr<NetDevice> dev, Ptr<const Packet> p) {
+  LinkBusyState& state = GetLinkBusyState(dev);
+  NS_ASSERT_MSG(!state.txBusy, "overlapping transmissions on one point-to-point device");
+  state.txBusy = true;
+  state.txStartNs = Simulator::Now().GetNanoSeconds();
+}
+
+void NodeTxEnd(Ptr<NetDevice> dev, Ptr<const Packet> p) {
+  LinkBusyState& state = GetLinkBusyState(dev);
+  NS_ASSERT_MSG(state.txBusy, "transmission ended without a matching begin event");
+  if (!state.txBusy) return;
+  const uint64_t nowNs = Simulator::Now().GetNanoSeconds();
+  state.txRateNs += static_cast<long double>(nowNs - state.txStartNs) * state.bitRate;
+  state.txBusy = false;
+}
+
+void NodeRxBegin(Ptr<NetDevice> dev, Ptr<const Packet> p) {
+  LinkBusyState& state = GetLinkBusyState(dev);
+  NS_ASSERT_MSG(!state.rxBusy, "overlapping receptions on one point-to-point device");
+  state.rxBusy = true;
+  state.rxStartNs = Simulator::Now().GetNanoSeconds();
+}
+
+void NodeRxEnd(Ptr<NetDevice> dev, Ptr<const Packet> p) {
+  LinkBusyState& state = GetLinkBusyState(dev);
+  NS_ASSERT_MSG(state.rxBusy, "reception ended without a matching begin event");
+  if (!state.rxBusy) return;
+  const uint64_t nowNs = Simulator::Now().GetNanoSeconds();
+  state.rxRateNs += static_cast<long double>(nowNs - state.rxStartNs) * state.bitRate;
+  state.rxBusy = false;
 }
 
 static const uint64_t interval_ns = 100000; // 100μs
 
 void PrintBw(FILE* outFile) {
-  double interval_s = double (interval_ns) * 1e-9;
-  for (auto &kv : nodeTxBytes) {
+  const uint64_t nowNs = Simulator::Now().GetNanoSeconds();
+  std::map<uint32_t, long double> nodeTxRateNs;
+  std::map<uint32_t, long double> nodeRxRateNs;
+  for (auto &kv : linkBusyState) {
+    LinkBusyState& state = kv.second;
+    if (state.txBusy) {
+      state.txRateNs += static_cast<long double>(nowNs - state.txStartNs) * state.bitRate;
+      state.txStartNs = nowNs;
+    }
+    if (state.rxBusy) {
+      state.rxRateNs += static_cast<long double>(nowNs - state.rxStartNs) * state.bitRate;
+      state.rxStartNs = nowNs;
+    }
+    nodeTxRateNs[state.nodeId] += state.txRateNs;
+    nodeRxRateNs[state.nodeId] += state.rxRateNs;
+    state.txRateNs = 0;
+    state.rxRateNs = 0;
+  }
+
+  for (auto &kv : nodeTxRateNs) {
     uint32_t id = kv.first;
-    double txGbps = kv.second * 8.0 / interval_s / 1e9;
-    double rxGbps = nodeRxBytes[id] * 8.0 / interval_s / 1e9;
+    double txGbps = static_cast<double>(kv.second / interval_ns / 1e9L);
+    double rxGbps = static_cast<double>(nodeRxRateNs[id] / interval_ns / 1e9L);
     fprintf(outFile, "%ld\t%d\t%.4lf\t%.4lf \n", Simulator::Now().GetNanoSeconds() - 2000000000, id, txGbps, rxGbps);
-    // 重置
-    kv.second = 0;
-    nodeRxBytes[id] = 0;
   }
   // 再次调度
   Simulator::Schedule (NanoSeconds (interval_ns), &PrintBw, outFile);
@@ -2806,8 +2864,14 @@ int main(int argc, char *argv[]) {
             if (detailed_monitoring) {
                 for (uint32_t j = 0; j < node->GetNDevices(); ++j) {
                     Ptr<NetDevice> dev = node->GetDevice(j);
-                    dev->TraceConnectWithoutContext("PhyTxEnd", MakeBoundCallback(&NodeTx, dev));
-                    dev->TraceConnectWithoutContext("PhyRxEnd", MakeBoundCallback(&NodeRx, dev));
+                    dev->TraceConnectWithoutContext("PhyTxBegin",
+                                                    MakeBoundCallback(&NodeTxBegin, dev));
+                    dev->TraceConnectWithoutContext("PhyTxEnd",
+                                                    MakeBoundCallback(&NodeTxEnd, dev));
+                    dev->TraceConnectWithoutContext("PhyRxBegin",
+                                                    MakeBoundCallback(&NodeRxBegin, dev));
+                    dev->TraceConnectWithoutContext("PhyRxEnd",
+                                                    MakeBoundCallback(&NodeRxEnd, dev));
                 }
             }
 

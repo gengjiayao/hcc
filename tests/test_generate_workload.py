@@ -24,6 +24,7 @@ class GenerateWorkloadTest(unittest.TestCase):
             "directed-hybrid": 15,
             "ring-allreduce": 480,
             "all-to-all": 240,
+            "access-saturation": 64,
         }
         with tempfile.TemporaryDirectory() as temporary:
             for workload, expected_count in expected_counts.items():
@@ -134,6 +135,37 @@ class GenerateWorkloadTest(unittest.TestCase):
             self.assertLessEqual(
                 max(flow.start_s for flow in flows) -
                 min(flow.start_s for flow in flows), 0.5e-6)
+
+    def test_access_saturation_balances_every_host_within_its_tor(self):
+        common = [
+            "--workload", "access-saturation", "--output", "unused",
+            "--hosts", "128", "--duration-ms", "30",
+            "--access-hosts-per-tor", "16", "--access-fanout", "4",
+            "--access-jitter-us", "10", "--priority-group", "4",
+            "--flow-bytes", str(64 * 1024 * 1024),
+        ]
+        first = generate_workload.generate(generate_workload.parse_args(
+            common + ["--seed", "1"]))
+        repeat = generate_workload.generate(generate_workload.parse_args(
+            common + ["--seed", "1"]))
+        second = generate_workload.generate(generate_workload.parse_args(
+            common + ["--seed", "2"]))
+
+        self.assertEqual(first, repeat)
+        self.assertNotEqual(first, second)
+        self.assertEqual(len(first), 512)
+        for host in range(128):
+            outgoing = [flow for flow in first if flow.src == host]
+            incoming = [flow for flow in first if flow.dst == host]
+            self.assertEqual(len(outgoing), 4)
+            self.assertEqual(len(incoming), 4)
+            self.assertTrue(all(flow.src // 16 == flow.dst // 16 for flow in outgoing))
+            self.assertTrue(all(flow.pg == 4 for flow in outgoing))
+            self.assertTrue(all(flow.size_bytes == 64 * 1024 * 1024
+                                for flow in outgoing))
+        self.assertLessEqual(
+            max(flow.start_s for flow in first) -
+            min(flow.start_s for flow in first), 10e-6)
 
     def test_ring_seeded_jitter_preserves_steps_and_changes_trace(self):
         common = [

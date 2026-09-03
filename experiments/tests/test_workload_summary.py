@@ -171,6 +171,13 @@ class WorkloadSummaryTests(unittest.TestCase):
             self.assertEqual(result["status"], "validated_complete")
             self.assertEqual(result["workload"], "directed-hybrid")
 
+    def test_access_saturation_manifest_is_supported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output, manifest = self.make_run(directory, workload="access-saturation")
+            result = summarize(output, manifest)
+            self.assertEqual(result["status"], "validated_complete")
+            self.assertEqual(result["workload"], "access-saturation")
+
 
 if __name__ == "__main__":
     unittest.main()

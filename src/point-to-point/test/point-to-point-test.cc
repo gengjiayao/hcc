@@ -17,6 +17,66 @@
 
 namespace ns3 {
 
+class PointToPointSerializationTimeTestDevice : public PointToPointNetDevice
+{
+public:
+  Time NextSerializationTime (uint32_t bytes)
+  {
+    return CalculateTxTime (bytes);
+  }
+};
+
+class PointToPointSerializationTimeTest : public TestCase
+{
+public:
+  PointToPointSerializationTimeTest ()
+    : TestCase ("Point-to-point serialization preserves fractional time")
+  {
+  }
+
+  virtual void DoRun (void)
+  {
+    Ptr<PointToPointSerializationTimeTestDevice> device =
+      CreateObject<PointToPointSerializationTimeTestDevice> ();
+    device->SetDataRate (DataRate ("100Gbps"));
+
+    // 1090 bytes need 87.2 ns at 100 Gbit/s.  Five packets must consume
+    // exactly 436 ns rather than five independently truncated 87 ns slots.
+    int64_t elapsed = 0;
+    const int64_t expectedData[] = {88, 87, 87, 87, 87};
+    for (uint32_t i = 0; i < 5; ++i)
+      {
+        const int64_t ticks = device->NextSerializationTime (1090).GetTimeStep ();
+        NS_TEST_ASSERT_MSG_EQ (ticks, expectedData[i],
+                               "fractional data-packet serialization is incorrect");
+        elapsed += ticks;
+      }
+    NS_TEST_ASSERT_MSG_EQ (elapsed, 436,
+                           "five 1090-byte packets must consume 436 ns at 100 Gbit/s");
+
+    // Changing the rate resets the fractional state instead of mixing units
+    // from two independently configured link speeds.
+    device->SetDataRate (DataRate ("50Gbps"));
+    NS_TEST_ASSERT_MSG_EQ (device->NextSerializationTime (1090).GetTimeStep (), 175,
+                           "rate change must start a fresh capacity-safe interval");
+
+    Ptr<PointToPointSerializationTimeTestDevice> controlDevice =
+      CreateObject<PointToPointSerializationTimeTestDevice> ();
+    controlDevice->SetDataRate (DataRate ("100Gbps"));
+    elapsed = 0;
+    const int64_t expectedControl[] = {5, 5, 5, 5, 4};
+    for (uint32_t i = 0; i < 5; ++i)
+      {
+        const int64_t ticks = controlDevice->NextSerializationTime (60).GetTimeStep ();
+        NS_TEST_ASSERT_MSG_EQ (ticks, expectedControl[i],
+                               "fractional control-packet serialization is incorrect");
+        elapsed += ticks;
+      }
+    NS_TEST_ASSERT_MSG_EQ (elapsed, 24,
+                           "five 60-byte packets must consume 24 ns at 100 Gbit/s");
+  }
+};
+
 class PointToPointTest : public TestCase
 {
 public:
@@ -1857,6 +1917,7 @@ public:
 PointToPointTestSuite::PointToPointTestSuite ()
   : TestSuite ("devices-point-to-point", UNIT)
 {
+  AddTestCase (new PointToPointSerializationTimeTest);
   AddTestCase (new PointToPointTest);
   AddTestCase (new GuardInitialWindowPriorityEncodingTest);
   AddTestCase (new GuardTransportWindowFloorTest);

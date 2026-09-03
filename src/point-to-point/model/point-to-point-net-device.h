@@ -146,6 +146,14 @@ public:
    */
   void Receive (Ptr<Packet> p);
 
+  /**
+   * Notify trace listeners that the first bit of a packet has arrived.
+   * Packet processing still occurs in Receive() after serialization ends.
+   *
+   * @param p Ptr to the arriving packet.
+   */
+  void NotifyPhyRxBegin (Ptr<Packet> p);
+
   // The remaining methods are documented in ns3::NetDevice*
 
   virtual void SetIfIndex (const uint32_t index);
@@ -256,6 +264,17 @@ protected:
   bool TransmitStart (Ptr<Packet> p);
 
   /**
+   * Calculate a packet serialization time without losing fractional simulator
+   * ticks.  The remainder is carried to following packets, so cumulative
+   * serialization time tracks the configured data rate instead of rounding
+   * every packet down independently.
+   *
+   * \param bytes packet size in bytes
+   * \returns serialization time at the current data rate
+   */
+  Time CalculateTxTime (uint32_t bytes);
+
+  /**
    * Stop Sending a Packet Down the Wire and Begin the Interframe Gap.
    *
    * The TransmitComplete method is used internally to finish the process
@@ -273,6 +292,15 @@ protected:
    * @see class DataRate
    */
   DataRate       m_bps;
+
+  /** Fractional serialization numerator carried between packets. */
+  uint64_t       m_txTimeRemainder;
+
+  /** Data rate associated with m_txTimeRemainder. */
+  uint64_t       m_txTimeRemainderRate;
+
+  /** Simulator ticks per second associated with m_txTimeRemainder. */
+  uint64_t       m_txTimeTicksPerSecond;
 
   /**
    * The interframe gap that the Net Device uses to throttle packet

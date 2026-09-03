@@ -506,6 +506,7 @@ void QbbNetDevice::Receive(Ptr<Packet> packet) {
         return;
     }
 
+    m_phyRxEndTrace(packet);
     m_macRxTrace(packet);
     CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
     ch.getInt = 1;  // parse INT header
@@ -591,7 +592,7 @@ bool QbbNetDevice::TransmitStart(Ptr<Packet> p) {
     m_txMachineState = BUSY;
     m_currentPkt = p;
     m_phyTxBeginTrace(m_currentPkt);
-    Time txTime = Seconds(m_bps.CalculateTxTime(p->GetSize()));
+    Time txTime = CalculateTxTime(p->GetSize());
     Time txCompleteTime = txTime + m_tInterframeGap;
     NS_LOG_LOGIC("Schedule TransmitCompleteEvent in " << txCompleteTime.GetSeconds() << "sec");
     Simulator::Schedule(txCompleteTime, &QbbNetDevice::TransmitComplete, this);
