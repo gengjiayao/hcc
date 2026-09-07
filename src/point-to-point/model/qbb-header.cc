@@ -245,7 +245,7 @@ namespace ns3 {
 	}
 
 	GuardGrantAckHeader::GuardGrantAckHeader()
-		: m_sport(0), m_dport(0), m_pg(0), m_generation(0)
+		: m_sport(0), m_dport(0), m_pg(0), m_generation(0), m_phaseTag(0)
 	{}
 
 	GuardGrantAckHeader::~GuardGrantAckHeader()
@@ -255,11 +255,17 @@ namespace ns3 {
 	void GuardGrantAckHeader::SetDport(uint16_t dport) { m_dport = dport; }
 	void GuardGrantAckHeader::SetPG(uint16_t pg) { m_pg = pg; }
 	void GuardGrantAckHeader::SetGeneration(uint32_t generation) { m_generation = generation; }
+	void GuardGrantAckHeader::SetPhaseTag(uint8_t phaseTag)
+	{
+		NS_ASSERT_MSG(phaseTag <= 7, "GUARD grant ACK phase tag exceeds three bits");
+		m_phaseTag = phaseTag;
+	}
 
 	uint16_t GuardGrantAckHeader::GetSport() const { return m_sport; }
 	uint16_t GuardGrantAckHeader::GetDport() const { return m_dport; }
 	uint16_t GuardGrantAckHeader::GetPG() const { return m_pg; }
 	uint32_t GuardGrantAckHeader::GetGeneration() const { return m_generation; }
+	uint8_t GuardGrantAckHeader::GetPhaseTag() const { return m_phaseTag; }
 
 	TypeId GuardGrantAckHeader::GetTypeId(void)
 	{
@@ -276,12 +282,14 @@ namespace ns3 {
 
 	void GuardGrantAckHeader::Print(std::ostream &os) const
 	{
-		os << "guard-grant-ack:pg=" << m_pg << ",generation=" << m_generation;
+		os << "guard-grant-ack:pg=" << m_pg << ",generation=" << m_generation
+		   << ",phase_tag=" << static_cast<uint32_t>(m_phaseTag);
 	}
 
 	uint32_t GuardGrantAckHeader::GetSerializedSize(void) const
 	{
-		return sizeof(m_sport) + sizeof(m_dport) + sizeof(m_pg) + sizeof(m_generation);
+		return sizeof(m_sport) + sizeof(m_dport) + sizeof(m_pg) + sizeof(m_generation)
+		       + sizeof(m_phaseTag);
 	}
 
 	void GuardGrantAckHeader::Serialize(Buffer::Iterator start) const
@@ -291,6 +299,7 @@ namespace ns3 {
 		i.WriteU16(m_dport);
 		i.WriteU16(m_pg);
 		i.WriteU32(m_generation);
+		i.WriteU8(m_phaseTag);
 	}
 
 	uint32_t GuardGrantAckHeader::Deserialize(Buffer::Iterator start)
@@ -300,6 +309,7 @@ namespace ns3 {
 		m_dport = i.ReadU16();
 		m_pg = i.ReadU16();
 		m_generation = i.ReadU32();
+		m_phaseTag = i.ReadU8();
 		return GetSerializedSize();
 	}
 }; // namespace ns3

@@ -32,7 +32,7 @@ GUARD_STATS_OUTPUT_FILE mix/output/{id}/{id}_out_guard_stats.txt
 GUARD_LIFECYCLE_TRACE_OUTPUT_FILE {guard_lifecycle_output}
 GUARD_CONTROLLER_TRACE_OUTPUT_FILE {guard_controller_output}
 GUARD_GRANT_TRACE_OUTPUT_FILE {guard_grant_output}
-QUEUE_STATS_OUTPUT_FILE mix/output/{id}/{id}_out_queue_stats.txt
+{guard_transition_audit_output_config}QUEUE_STATS_OUTPUT_FILE mix/output/{id}/{id}_out_queue_stats.txt
 QLEN_MON_FILE mix/output/{id}/{id}_out_qlen.txt
 VOQ_MON_FILE mix/output/{id}/{id}_out_voq.txt
 VOQ_MON_DETAIL_FILE mix/output/{id}/{id}_out_voq_per_dst.txt
@@ -119,8 +119,8 @@ GUARD_INITIAL_COLLECTION_QUIET_NS {guard_initial_collection_quiet_ns}
 GUARD_INITIAL_COLLECTION_FULL_DEADLINE {guard_initial_collection_full_deadline}
 GUARD_SMALL_SET_FASTPATH_LIMIT {guard_small_set_fastpath_limit}
 GUARD_TRANSITION_PREFIX_BARRIER {guard_transition_prefix_barrier}
-{guard_transition_prefix_wire_watchdog_config}GUARD_GRANT_RELIABILITY_RTTS {guard_grant_reliability_rtts}
-GUARD_SRPT_QUANTUM_PACKETS {guard_srpt_quantum_packets}
+{guard_transition_prefix_fail_closed_config}{guard_transition_prefix_wire_watchdog_config}GUARD_GRANT_RELIABILITY_RTTS {guard_grant_reliability_rtts}
+{guard_mixed_pg_vector_fastpath_config}{guard_serialized_progress_refresh_config}{guard_serialized_draining_config}GUARD_SRPT_QUANTUM_PACKETS {guard_srpt_quantum_packets}
 GUARD_WORK_CONSERVING {guard_work_conserving}
 GUARD_CAP_AWARE_RECLAIM {guard_cap_aware_reclaim}
 GUARD_CAP_HEADROOM {guard_cap_headroom}
@@ -134,7 +134,7 @@ GUARD_CONTROLLER_TRACE {guard_controller_trace}
 GUARD_CONTROLLER_TRACE_MAX_LINES {guard_controller_max_lines}
 GUARD_GRANT_TRACE {guard_grant_trace}
 GUARD_GRANT_TRACE_MAX_LINES {guard_grant_max_lines}
-HOMA_OVERCOMMIT {homa_overcommit}
+{guard_transition_audit_config}HOMA_OVERCOMMIT {homa_overcommit}
 HOMA_RESEND_TIMEOUT_US {homa_resend_timeout_us}
 HOMA_UNSCHEDULED_LEVELS {homa_unscheduled_levels}
 HOMA_UNSCHEDULED_CUTOFFS 5 {homa_unscheduled_cutoffs}
@@ -198,6 +198,8 @@ DEFAULT_GUARD_CONTROLLER_MAX_LINES = 10000
 HARD_GUARD_CONTROLLER_MAX_LINES = 300000
 DEFAULT_GUARD_GRANT_MAX_LINES = 1000
 HARD_GUARD_GRANT_MAX_LINES = 10000
+DEFAULT_GUARD_TRANSITION_AUDIT_MAX_RECORDS = 10000
+HARD_GUARD_TRANSITION_AUDIT_MAX_RECORDS = 10000
 HOMA_DATA_PRIORITY_LEVELS = 7
 HOMA_PRIORITY_PROFILE_SAMPLES = 10000
 
@@ -335,6 +337,35 @@ def validate_guard_grant_options(enabled, cc, output, max_lines):
         raise ValueError("--guard_grant_output requires --guard_grant_trace 1")
 
 
+def validate_guard_transition_audit_options(enabled, cc, output, max_records,
+                                            prefix_barrier):
+    """Keep per-transition evidence applicable, explicit, and bounded."""
+    if not 1 <= max_records <= HARD_GUARD_TRANSITION_AUDIT_MAX_RECORDS:
+        raise ValueError(
+            "--guard_transition_audit_max_records must be in [1, {}]".format(
+                HARD_GUARD_TRANSITION_AUDIT_MAX_RECORDS))
+    if enabled and cc != "guard":
+        raise ValueError("--guard_transition_audit requires full GUARD mode")
+    if enabled and not prefix_barrier:
+        raise ValueError(
+            "--guard_transition_audit requires --guard_transition_prefix_barrier 1")
+    if not enabled and output:
+        raise ValueError(
+            "--guard_transition_audit_output requires --guard_transition_audit 1")
+
+
+def validate_guard_transition_audit_output_path(enabled, output,
+                                                reserved_outputs):
+    """Require a dedicated audit artifact instead of aliasing another file."""
+    if not enabled:
+        return
+    normalized_output = os.path.realpath(os.path.abspath(output))
+    for label, reserved in reserved_outputs.items():
+        if normalized_output == os.path.realpath(os.path.abspath(reserved)):
+            raise ValueError(
+                "--guard_transition_audit_output collides with {}".format(label))
+
+
 def main():
     # make directory if not exists
     isExist = os.path.exists(os.getcwd() + "/mix/output/")
@@ -459,6 +490,18 @@ def main():
     parser.add_argument('--guard_transition_prefix_wire_watchdog', type=int,
                         choices=(0, 1), default=0,
                         help="V13 wire/residual-capacity prefix watchdog (default: 0)")
+    parser.add_argument('--guard_transition_prefix_fail_closed', type=int,
+                        choices=(0, 1), default=0,
+                        help="V14 abort-on-prefix-deadline policy (default: 0)")
+    parser.add_argument('--guard_mixed_pg_vector_fastpath', type=int,
+                        choices=(0, 1), default=0,
+                        help="V14 canonical vector across receiver priority groups (default: 0)")
+    parser.add_argument('--guard_serialized_progress_refresh', type=int,
+                        choices=(0, 1), default=0,
+                        help="V14 serialized remaining-aware progress refresh (default: 0)")
+    parser.add_argument('--guard_serialized_draining', type=int,
+                        choices=(0, 1), default=0,
+                        help="V14 capacity reservation for proactive draining (default: 0)")
     parser.add_argument('--guard_grant_reliability_rtts', type=float, default=0.0,
                         help="cached grant refresh in equal-share service rounds [0,64] (default: 0)")
     parser.add_argument('--guard_srpt_quantum_packets', type=int, default=64,
@@ -498,6 +541,13 @@ def main():
     parser.add_argument('--guard_grant_max_lines', type=int,
                         default=DEFAULT_GUARD_GRANT_MAX_LINES,
                         help="maximum grant audit rows (default: 1000; hard maximum: 10000)")
+    parser.add_argument('--guard_transition_audit', type=int, choices=(0, 1), default=0,
+                        help="write bounded per-transition GUARD audit records (default: 0)")
+    parser.add_argument('--guard_transition_audit_output', type=str,
+                        help="transition audit CSV path (default: the run output directory)")
+    parser.add_argument('--guard_transition_audit_max_records', type=int,
+                        default=DEFAULT_GUARD_TRANSITION_AUDIT_MAX_RECORDS,
+                        help="maximum transition records (default/hard maximum: 10000)")
     parser.add_argument('--homa_overcommit', type=int, choices=range(1, 7), default=None,
                         help="Homa scheduled messages per receiver; default uses every scheduled priority")
     parser.add_argument('--homa_resend_timeout_us', type=int, default=1000,
@@ -598,6 +648,17 @@ def main():
             raise Exception("CONFIG ERROR: membership coalescing requires --guard_fixed_window 1.")
         if args.guard_grant_reliability_rtts < 1.0:
             raise Exception("CONFIG ERROR: membership coalescing requires grant refresh >= 1 RTT.")
+        if (args.guard_proactive_release == 1 and
+                not args.guard_serialized_progress_refresh):
+            raise Exception(
+                "CONFIG ERROR: membership coalescing permits proactive release "
+                "only through the V14 serialized draining coordinator.")
+        if ((args.guard_grant_refresh_bdps > 0 and
+             not args.guard_serialized_progress_refresh) or
+                args.guard_work_conserving or args.guard_cap_aware_reclaim):
+            raise Exception(
+                "CONFIG ERROR: membership coalescing requires serialized V14 refresh "
+                "or zero grant refresh, and forbids work-conserving/cap-aware reclaim.")
     if args.guard_small_set_fastpath_limit:
         if (args.guard_membership_coalesce_ns != 12480 or
                 args.guard_initial_collection_quiet_ns != 16640 or
@@ -606,9 +667,12 @@ def main():
             raise Exception(
                 "CONFIG ERROR: V11 small-set fast path requires membership quiet 12480 ns, "
                 "initial quiet 16640 ns, five windows, and sliding initial mode.")
-        if args.guard_remaining_aware != 0 or args.guard_receiver_concurrency != 0:
+        if ((args.guard_remaining_aware != 0 and
+             not args.guard_serialized_progress_refresh) or
+                args.guard_receiver_concurrency != 0):
             raise Exception(
-                "CONFIG ERROR: V11 small-set fast path requires equal-share receiver grants.")
+                "CONFIG ERROR: V11 small-set fast path permits remaining-aware grants "
+                "only through the V14 serialized bundle and forbids receiver concurrency.")
     if args.guard_transition_prefix_barrier and (
             args.guard_small_set_fastpath_limit != 4 or
             args.guard_fixed_window != 1):
@@ -620,6 +684,30 @@ def main():
         raise Exception(
             "CONFIG ERROR: V13 prefix wire watchdog requires "
             "--guard_transition_prefix_barrier 1.")
+    if (args.guard_transition_prefix_fail_closed and
+            not args.guard_transition_prefix_wire_watchdog):
+        raise Exception(
+            "CONFIG ERROR: V14 fail-closed prefix deadlines require "
+            "--guard_transition_prefix_wire_watchdog 1.")
+    if args.guard_transition_prefix_fail_closed and args.cc != "guard":
+        raise Exception(
+            "CONFIG ERROR: V14 fail-closed prefix deadlines require full GUARD mode.")
+    if (args.guard_mixed_pg_vector_fastpath and
+            (not args.guard_transition_prefix_fail_closed or args.cc != "guard")):
+        raise Exception(
+            "CONFIG ERROR: V14 mixed-PG vector fast path requires full GUARD "
+            "and --guard_transition_prefix_fail_closed 1.")
+    if args.guard_serialized_progress_refresh != args.guard_serialized_draining:
+        raise Exception(
+            "CONFIG ERROR: V14 refresh/draining must be enabled as one fail-closed bundle.")
+    if args.guard_serialized_progress_refresh and (
+            not args.guard_mixed_pg_vector_fastpath or
+            args.guard_remaining_aware != 1 or
+            args.guard_grant_refresh_bdps <= 0 or
+            args.guard_proactive_release != 1 or args.cc != "guard"):
+        raise Exception(
+            "CONFIG ERROR: V14 refresh/draining requires full GUARD, mixed-PG vector, "
+            "remaining-aware refresh, and proactive release.")
     if not 0.0 < args.guard_demand_threshold < 1.0:
         raise Exception("CONFIG ERROR: --guard_demand_threshold must be in (0, 1).")
     if not 0.0 < args.guard_receiver_util_threshold < 1.0:
@@ -648,6 +736,11 @@ def main():
         validate_guard_grant_options(
             args.guard_grant_trace, args.cc, args.guard_grant_output,
             args.guard_grant_max_lines)
+        validate_guard_transition_audit_options(
+            args.guard_transition_audit, args.cc,
+            args.guard_transition_audit_output,
+            args.guard_transition_audit_max_records,
+            args.guard_transition_prefix_barrier)
     except ValueError as error:
         raise Exception("CONFIG ERROR: {}.".format(error))
     if simul_time < MIN_SMOKE_TIME:
@@ -806,6 +899,45 @@ def main():
         raise Exception("CONFIG ERROR: --guard_grant_output cannot contain whitespace.")
     if args.guard_grant_trace:
         output_parent = os.path.dirname(guard_grant_output)
+        if output_parent:
+            os.makedirs(output_parent, exist_ok=True)
+    guard_transition_audit_output = args.guard_transition_audit_output
+    if guard_transition_audit_output is None:
+        guard_transition_audit_output = os.path.join(
+            output_dir, "{}_out_guard_transition_audit.csv".format(config_ID))
+    else:
+        guard_transition_audit_output = os.path.abspath(
+            os.path.expanduser(guard_transition_audit_output))
+    if any(character.isspace() for character in guard_transition_audit_output):
+        raise Exception(
+            "CONFIG ERROR: --guard_transition_audit_output cannot contain whitespace.")
+    if args.guard_transition_audit:
+        reserved_outputs = {
+            "traffic input": flow_path,
+            "topology input": os.path.join(
+                os.getcwd(), "config", "{}.txt".format(args.topo)),
+            "config": os.path.join(output_dir, "config.txt"),
+            "simulation log": os.path.join(output_dir, "config.log"),
+            "lifecycle trace": guard_lifecycle_output,
+            "controller trace": guard_controller_output,
+            "grant trace": guard_grant_output,
+        }
+        if custom_flow_source is not None:
+            reserved_outputs["custom traffic source"] = custom_flow_source
+        for suffix in (
+                "in.txt", "flow_bw.txt", "out_bw.txt", "out_cnp.txt",
+                "out_fct.txt", "out_pfc.txt", "out_guard_stats.txt",
+                "out_queue_stats.txt", "out_qlen.txt", "out_voq.txt",
+                "out_voq_per_dst.txt", "out_uplink.txt", "out_conn.txt",
+                "out_est_error.txt"):
+            reserved_outputs[suffix] = os.path.join(
+                output_dir, "{}_{}".format(config_ID, suffix))
+        try:
+            validate_guard_transition_audit_output_path(
+                True, guard_transition_audit_output, reserved_outputs)
+        except ValueError as error:
+            raise Exception("CONFIG ERROR: {}.".format(error))
+        output_parent = os.path.dirname(guard_transition_audit_output)
         if output_parent:
             os.makedirs(output_parent, exist_ok=True)
 
@@ -1009,6 +1141,18 @@ def main():
                                         guard_transition_prefix_wire_watchdog_config=(
                                             "GUARD_TRANSITION_PREFIX_WIRE_WATCHDOG 1\n"
                                             if args.guard_transition_prefix_wire_watchdog else ""),
+                                        guard_transition_prefix_fail_closed_config=(
+                                            "GUARD_TRANSITION_PREFIX_FAIL_CLOSED 1\n"
+                                            if args.guard_transition_prefix_fail_closed else ""),
+                                        guard_mixed_pg_vector_fastpath_config=(
+                                            "GUARD_MIXED_PG_VECTOR_FASTPATH 1\n"
+                                            if args.guard_mixed_pg_vector_fastpath else ""),
+                                        guard_serialized_progress_refresh_config=(
+                                            "GUARD_SERIALIZED_PROGRESS_REFRESH 1\n"
+                                            if args.guard_serialized_progress_refresh else ""),
+                                        guard_serialized_draining_config=(
+                                            "GUARD_SERIALIZED_DRAINING 1\n"
+                                            if args.guard_serialized_draining else ""),
                                         guard_grant_reliability_rtts=args.guard_grant_reliability_rtts,
                                         guard_srpt_quantum_packets=args.guard_srpt_quantum_packets,
                                         guard_work_conserving=args.guard_work_conserving,
@@ -1027,6 +1171,15 @@ def main():
                                         guard_grant_trace=args.guard_grant_trace,
                                         guard_grant_output=guard_grant_output,
                                         guard_grant_max_lines=args.guard_grant_max_lines,
+                                        guard_transition_audit_output_config=(
+                                            "GUARD_TRANSITION_AUDIT_OUTPUT_FILE {}\n".format(
+                                                guard_transition_audit_output)
+                                            if args.guard_transition_audit else ""),
+                                        guard_transition_audit_config=(
+                                            "GUARD_TRANSITION_AUDIT 1\n"
+                                            "GUARD_TRANSITION_AUDIT_MAX_RECORDS {}\n".format(
+                                                args.guard_transition_audit_max_records)
+                                            if args.guard_transition_audit else ""),
                                         homa_overcommit=homa_overcommit,
                                         homa_resend_timeout_us=args.homa_resend_timeout_us,
                                         homa_unscheduled_levels=homa_profile["unscheduled_levels"],

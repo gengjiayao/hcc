@@ -232,12 +232,18 @@ python3 run.py --cc guard-active-only --seed 3 ...
 | `--guard_min_share_fraction` | remaining-aware grant 的最小等分份额，范围 [0,1]，默认 0 |
 | `--guard_remaining_exponent` | remaining-aware 权重指数，范围 [0,2]，默认 1 |
 | `--guard_grant_refresh_bdps` | 每推进该 BDP 数后刷新 receiver 侧剩余量与 grants；0=关闭，默认 1 |
+| `--guard_serialized_progress_refresh` | 通过 V14 canonical vector/ACK barrier 串行化 remaining-aware progress refresh；默认 0 |
+| `--guard_serialized_draining` | proactive release 后保留 offered-rate 容量直到连续接收完成；默认 0，必须与 serialized progress refresh 同时启用 |
 | `--guard_membership_coalesce_ns` | 首个 vector 后的 membership quiet window（ns），范围 [0,65536]，默认 0=关闭 |
 | `--guard_initial_collection_quiet_ns` | 首个 vector 前的独立 quiet window（ns）；0=沿用 membership window，默认 0 |
 | `--guard_initial_collection_full_deadline` | 1=V9 固定等到 hard deadline；0=使用受同一 deadline 限制的 initial sliding quiet，默认 1 |
 | `--guard_small_set_fastpath_limit` | V11 两阶段 small-set 上限；0=关闭（默认），4=启用唯一冻结配置 |
 | `--guard_transition_prefix_barrier` | V12 high-fan-in transition 的 exact-prefix barrier；0=关闭（默认），1=启用 |
 | `--guard_transition_prefix_wire_watchdog` | V13 按 waiter 完整 wire bytes 和 incumbent 已确认占用计算 V12 nominal watchdog；0=关闭（默认），1=启用且要求 V12 barrier |
+| `--guard_transition_prefix_fail_closed` | V14 prefix deadline 到期立即令仿真失败，不进入 fallback activation；0=关闭（默认），1=启用且要求 V13 watchdog |
+| `--guard_transition_audit` | V14 有界逐 transition 审计 CSV；0=关闭（默认），1=启用且要求 V12 barrier |
+| `--guard_transition_audit_output` | 可选 transition 审计 CSV 路径；未给出时写入本次 run 目录 |
+| `--guard_transition_audit_max_records` | 最多写入的 transition 记录数，默认和硬上限均为 10000 |
 | `--guard_work_conserving` | 1=启用实验性闲置份额回收，0=关闭；正式优化配置默认 0 |
 | `--guard_rebalance_interval_us` | 接收端有界 demand 采样周期，默认 200 us |
 | `--guard_demand_threshold` | flow 实测速率低于 grant 的该比例时积累 demand-limited 证据，默认 0.75 |
@@ -269,6 +275,12 @@ V13 只替换 V12 nominal liveness deadline 的预算：它计入完整 DATA hea
 其 stats 用 `records/non_reconstructable/inconsistent` 阻止把多 transition 或多 receiver 的
 sum/max 混合字段当成一个可重算预算。该开关默认关闭，尚无性能准入结论。
 
+V14 用有界逐 transition CSV 取代跨 transition/receiver 的证据拼接，并可选择在 prefix
+deadline 到期时 fail closed、在任何 fallback grant 前使仿真失败。字段、hash、截断、
+epoch/reset/terminal 边界和 V13 兼容语义见
+[`docs/guard-transition-audit-v14.md`](docs/guard-transition-audit-v14.md)。两个开关均默认关闭；
+本机制提交不包含性能矩阵或性能结论。
+
 每次仿真创建 `mix/output/<10位ID>/`，里面包含：
 
 - `<id>_in.txt`：原始流输入
@@ -290,6 +302,10 @@ sum/max 混合字段当成一个可重算预算。该开关默认关闭，尚无
   释放原因、释放时剩余字节和注册/释放前后的活跃流数。`-1` 表示仿真结束前尚未
   发生相应事件。记录接纳数和文件数据行数受同一个 `max_lines` 限制；即使配置了
   更多流，也不会增长超过命令行上限
+- `<id>_out_guard_transition_audit.csv`：仅在 `--guard_transition_audit 1` 时创建。
+  每条 terminal transition 一行，包含 receiver/NIC、epoch/transaction、PG 和目标向量
+  hash、容量与 active/draining 上界、prefix target/observed、deadline policy/outcome 和
+  terminal closure；footer 明确记录 records/attempted/written/truncated
 - `config.txt` / `config.log`：本次仿真的输入配置和 stdout 输出
 
 `out_pfc` 每行是 `time_ns node_id node_type interface event`，其中 event 1/0

@@ -59,6 +59,46 @@ struct GuardGrantTraceSink {
     GuardGrantTraceSink() : file(NULL), max_lines(0), attempted(0), written(0) {}
 };
 
+// One sink is shared by every receiver NIC.  Only the currently open
+// transition is retained in each RdmaHw; completed records are streamed to the
+// bounded sink instead of being accumulated in memory.
+struct GuardTransitionAuditSink {
+    FILE *file;
+    uint64_t max_records;
+    uint64_t records;
+    uint64_t attempted;
+    uint64_t written;
+
+    GuardTransitionAuditSink()
+        : file(NULL), max_records(0), records(0), attempted(0), written(0) {}
+};
+
+struct GuardTransitionAuditRecord {
+    bool active;
+    uint32_t receiverNode;
+    uint32_t receiverNic;
+    uint64_t epoch;
+    uint64_t transaction;
+    uint64_t priorityGroupSetHash;
+    uint64_t targetVectorHash;
+    uint64_t targetVectorEntries;
+    uint64_t receiverCapacityBps;
+    uint64_t activeUpperBoundBps;
+    uint64_t drainingUpperBoundBps;
+    uint64_t activeDrainingUpperBoundBps;
+    uint64_t drainingWireUpperBoundBytes;
+    uint64_t prefixTargetBytes;
+    uint64_t prefixObservedBytes;
+    uint64_t prefixRetiredObservedBytes;
+    uint64_t startNs;
+    uint64_t deadlineNs;
+    std::string deadlinePolicy;
+    std::string deadlineOutcome;
+    std::string terminalClosure;
+
+    GuardTransitionAuditRecord();
+};
+
 struct GuardTransitionPrefixWaiterBudgetInput {
     uint64_t flowSizeBytes;
     uint64_t exactGateBytes;
@@ -70,18 +110,161 @@ struct GuardTransitionPrefixIncumbentBudgetInput {
     uint64_t baseRttNs;
 };
 
+struct GuardTransitionPrefixDrainingBudgetInput {
+    uint64_t reservedUpperBoundBps;
+    uint64_t baseRttNs;
+};
+
 struct GuardTransitionPrefixWireBudget {
     uint64_t roundedPayloadBudgetBytes;
     uint64_t packetCount;
     uint64_t headerBytesPerPacket;
     uint64_t wireBytes;
     uint64_t incumbentCount;
+    uint64_t drainingCount;
+    uint64_t drainingReservedBps;
     uint64_t occupancyBps;
     uint64_t receiverCapacityBps;
     uint64_t residualBps;
     uint64_t serializationNs;
     uint64_t maxRttNs;
     uint64_t delayNs;
+};
+
+struct GuardQpIdentity {
+    uint32_t sip;
+    uint32_t dip;
+    uint16_t sport;
+    uint16_t dport;
+    uint16_t pg;
+
+    bool operator==(const GuardQpIdentity &other) const {
+        return sip == other.sip && dip == other.dip && sport == other.sport &&
+               dport == other.dport && pg == other.pg;
+    }
+    bool operator!=(const GuardQpIdentity &other) const { return !(*this == other); }
+};
+
+enum GuardQpInsertionDisposition {
+    GUARD_QP_INSERT_OK = 0,
+    GUARD_QP_INSERT_LIVE_DUPLICATE = 1,
+    GUARD_QP_INSERT_LIVE_COLLISION = 2,
+    GUARD_QP_INSERT_RETIRED_TUPLE = 3,
+    GUARD_QP_INSERT_TOMBSTONE_COLLISION = 4,
+};
+
+enum GuardVectorRole {
+    GUARD_VECTOR_INCUMBENT = 0,
+    GUARD_VECTOR_WAITER = 1,
+};
+
+struct GuardVectorTargetInput {
+    GuardQpIdentity identity;
+    uint8_t role;
+    uint64_t remainingBytes;
+    uint64_t frozenProgressSeq;
+    uint64_t requestedBps;
+    RdmaRxQueuePair *flow;
+};
+
+struct GuardFrozenTargetRecord {
+    GuardQpIdentity identity;
+    uint8_t role;
+    uint64_t remainingBytes;
+    uint64_t frozenProgressSeq;
+    uint64_t allocationRevision;
+    uint64_t progressRevision;
+    uint32_t targetMbps;
+    RdmaRxQueuePair *flow;
+    bool tombstone;
+};
+
+enum GuardVectorAction {
+    GUARD_VECTOR_PREPARE_DECREASE = 1,
+    GUARD_VECTOR_ACTIVATE_WAITER = 2,
+    GUARD_VECTOR_ACTIVATE_INCREASE = 3,
+    GUARD_VECTOR_RELEASE_DECREASE = 4,
+    GUARD_VECTOR_RELEASE_INCREASE = 5,
+};
+
+struct GuardGenerationLedgerEntry {
+    GuardQpIdentity identity;
+    uint32_t generation;
+    uint8_t phaseTag;
+    uint8_t action;
+    uint32_t targetMbps;
+    bool tombstone;
+};
+
+// A required-grant ACK may still be in flight when its receiver QP completes.
+// This record deliberately owns no QP pointer: exact wire identity and the
+// immutable generation ledger are sufficient to authenticate the late ACK.
+struct GuardRetiredAckRecord {
+    GuardQpIdentity identity;
+    uint32_t generation;
+    uint8_t phaseTag;
+    uint8_t action;
+    uint32_t targetMbps;
+    int32_t flowId;
+    uint64_t transactionId;
+    uint64_t retiredNs;
+};
+
+enum GuardDrainingState {
+    GUARD_DRAIN_PENDING = 1,
+    GUARD_DRAINING = 2,
+};
+
+struct GuardDrainingRecord {
+    GuardQpIdentity identity;
+    Ptr<RdmaRxQueuePair> hold;
+    uint32_t receiverNic;
+    uint16_t priorityGroup;
+    uint64_t lastAckedUpperBoundBps;
+    uint64_t lastIssuedTargetBps;
+    uint64_t reservedBps;
+    uint32_t generation;
+    uint64_t remainingBytesAtRelease;
+    uint64_t releaseNs;
+    uint8_t state;
+};
+
+enum GuardFrozenActiveProvenanceDisposition {
+    GUARD_FROZEN_ACTIVE_INVALID = 0,
+    GUARD_FROZEN_ACTIVE_COHORT = 1,
+    GUARD_FROZEN_ACTIVE_DEFERRED_WAITER = 2,
+};
+
+// Pointer-free inputs for the fail-closed classification of every live ACTIVE
+// record while a target vector is frozen.  A record outside the exact frozen
+// cohort is safe only when it is a later, still-gated waiter with no grant
+// authority of any kind.
+struct GuardFrozenActiveProvenanceInput {
+    bool inCohort;
+    bool inFastpathWaiters;
+    bool inIncumbents;
+    bool inTransactionWaiters;
+    uint64_t registrationMembershipRevision;
+    uint64_t liveMembershipRevision;
+    uint64_t frozenMembershipRevision;
+    uint64_t pendingMembershipChanges;
+    uint32_t receiverNic;
+    uint32_t frozenReceiverNic;
+    uint64_t receiverCapacityBps;
+    uint64_t frozenReceiverCapacityBps;
+    uint32_t lastAckedGeneration;
+    uint64_t lastAckedUpperBoundBps;
+    uint32_t lastIssuedGeneration;
+    uint64_t lastIssuedTargetBps;
+    uint32_t grantGeneration;
+    uint64_t grantRateBps;
+    uint64_t grantUpperBoundBps;
+    bool grantGenerationAcked;
+    int64_t registerNs;
+    uint64_t flowSizeBytes;
+    bool hasFirstGrantGateBytes;
+    uint64_t firstGrantGateBytes;
+    double baseRttSec;
 };
 
 class RdmaHw : public Object {
@@ -102,6 +285,13 @@ class RdmaHw : public Object {
     std::vector<RdmaInterfaceMgr> m_nic;  // list of running nic controlled by this RdmaHw
     std::unordered_map<uint64_t, Ptr<RdmaQueuePair>> m_qpMap;      // mapping from uint64_t to qp
     std::unordered_map<uint64_t, Ptr<RdmaRxQueuePair>> m_rxQpMap;  // mapping from uint64_t to rx qp
+    // The legacy 64-bit indexes cannot encode IPs, both ports, and PG without
+    // overlap.  These full identities make every live/tombstone collision a
+    // fail-closed error instead of an alias to another flow.
+    std::unordered_map<uint64_t, GuardQpIdentity> m_qpIdentity;
+    std::unordered_map<uint64_t, GuardQpIdentity> m_rxQpIdentity;
+    std::unordered_map<uint64_t, GuardQpIdentity> m_qpTombstoneIdentity;
+    std::unordered_map<uint64_t, GuardQpIdentity> m_rxQpTombstoneIdentity;
     std::unordered_map<uint32_t, std::vector<int>>
         m_rtTable;  // map from ip address (u32) to possible ECMP port (index of dev)
 
@@ -120,7 +310,15 @@ class RdmaHw : public Object {
     /* TxQpeueuPair */
     static uint64_t GetQpKey(uint32_t dip, uint16_t sport, uint16_t dport,
                              uint16_t pg);          // get the lookup key for m_qpMap
+    static GuardQpInsertionDisposition ClassifyGuardQpInsertion(
+        const GuardQpIdentity *live, const GuardQpIdentity *tombstone,
+        const GuardQpIdentity &candidate);
+    static GuardFrozenActiveProvenanceDisposition
+    ClassifyGuardFrozenActiveProvenance(
+        const GuardFrozenActiveProvenanceInput &input);
     Ptr<RdmaQueuePair> GetQp(uint64_t key);         // get the qp
+    Ptr<RdmaQueuePair> GetQp(uint32_t sip, uint32_t dip, uint16_t sport,
+                             uint16_t dport, uint16_t pg);
     uint32_t GetNicIdxOfQp(Ptr<RdmaQueuePair> qp);  // get the NIC index of the qp
     void DeleteQueuePair(Ptr<RdmaQueuePair> qp);    // delete TxQP
 
@@ -330,6 +528,10 @@ class RdmaHw : public Object {
     uint64_t m_guardGrantAcksReceived;
     uint64_t m_guardGrantAckBytesReceived;
     uint64_t m_guardGrantAcksStale;
+    uint64_t m_guardRetiredAckClosures;
+    uint64_t m_guardRetiredAcksReceived;
+    uint64_t m_guardRetiredAckPeak;
+    uint64_t m_guardRetiredAckOverflow;
     uint64_t m_guardStaleGrantsReceived;
     uint64_t m_guardAckRequiredBatches;
     uint64_t m_guardAckOptionalBatches;
@@ -363,6 +565,26 @@ class RdmaHw : public Object {
     uint64_t m_guardFastpathPostTransitionFastGrants;
     uint64_t m_guardFastpathBarrierViolations;
     uint64_t m_guardFastpathEarlyUnlocks;
+    uint64_t m_guardVectorFreezes;
+    uint64_t m_guardVectorMixedPgFreezes;
+    uint64_t m_guardVectorMaxEntries;
+    uint64_t m_guardVectorPrepareDecreases;
+    uint64_t m_guardVectorActivationWaiters;
+    uint64_t m_guardVectorActivationIncreases;
+    uint64_t m_guardVectorReleaseRequired;
+    uint64_t m_guardVectorReleaseOptional;
+    uint64_t m_guardVectorLastHash;
+    uint64_t m_guardSerializedProgressRequests;
+    uint64_t m_guardSerializedProgressTransactions;
+    uint64_t m_guardSerializedProgressCommits;
+    uint64_t m_guardSerializedProgressBusyDeferrals;
+    uint64_t m_guardDrainingRequests;
+    uint64_t m_guardDrainingPendingTransitions;
+    uint64_t m_guardDrainingDirectTransitions;
+    uint64_t m_guardDrainingBoundaryCommits;
+    uint64_t m_guardDrainingCompletionReleases;
+    uint64_t m_guardDrainingMaxRecords;
+    uint64_t m_guardDrainingMaxReservedBps;
     uint64_t m_guardFastpathJoinQueueMax;
     uint64_t m_guardFastpathHighTransitionRegisteredN;
     uint64_t m_guardFastpathHighTransitionWaiters;
@@ -485,6 +707,9 @@ class RdmaHw : public Object {
     GuardLifecycleTraceSink *m_guardLifecycleTraceSink;
     GuardControllerTraceSink *m_guardControllerTraceSink;
     GuardGrantTraceSink *m_guardGrantTraceSink;
+    GuardTransitionAuditSink *m_guardTransitionAuditSink;
+    GuardTransitionAuditRecord m_guardTransitionAuditRecord;
+    uint64_t m_guardTransitionAuditEpoch;
     std::unordered_map<RdmaRxQueuePair*, GuardLifecycleState> m_guardLifecycleStates;
     std::unordered_set<RdmaRxQueuePair*> m_rate_flow_ctl_set;
     EventId m_guardRebalanceEvent;
@@ -518,12 +743,17 @@ class RdmaHw : public Object {
     uint32_t m_guardSmallSetFastpathLimit;
     bool m_guardTransitionPrefixBarrierEnabled;
     bool m_guardTransitionPrefixWireWatchdogEnabled;
+    bool m_guardTransitionPrefixFailClosed;
+    bool m_guardMixedPgVectorFastpath;
+    bool m_guardSerializedProgressRefresh;
+    bool m_guardSerializedDraining;
     GuardFastpathPhase m_guardFastpathPhase;
     bool m_guardFastpathHighFanIn;
     bool m_guardFastpathHighInitialCollectionFlushed;
     bool m_guardFastpathHighInitialCommitted;
     bool m_guardFastpathCollectionReady;
     bool m_guardFastpathTransactionIsTransition;
+    bool m_guardFastpathReleaseRevectorActive;
     uint64_t m_guardFastpathTransaction;
     uint64_t m_guardFastpathMembershipRevision;
     uint64_t m_guardFastpathConsumedMembershipRevision;
@@ -533,6 +763,38 @@ class RdmaHw : public Object {
     uint64_t m_guardFastpathEpochTransitionPrepareStartNs;
     uint64_t m_guardFastpathTransactionTargetN;
     uint32_t m_guardFastpathTransactionTargetMbps;
+    bool m_guardFrozenVectorActive;
+    uint32_t m_guardFrozenReceiverNic;
+    uint64_t m_guardFrozenReceiverCapacityBps;
+    uint64_t m_guardFrozenActiveRecords;
+    uint64_t m_guardFrozenDrainingRecords;
+    uint64_t m_guardFrozenDrainingReservedBps;
+    uint64_t m_guardFrozenAllocatableCapacityBps;
+    uint64_t m_guardFrozenEncodedTargetBps;
+    uint64_t m_guardFrozenMembershipRevision;
+    uint64_t m_guardAllocationRevision;
+    uint64_t m_guardProgressRevision;
+    uint64_t m_guardConsumedProgressRevision;
+    uint64_t m_guardFrozenAllocationRevision;
+    uint64_t m_guardFrozenProgressRevision;
+    uint64_t m_guardFrozenReasonMask;
+    uint64_t m_guardProgressTransactionRevision;
+    bool m_guardProgressTransactionActive;
+    bool m_guardProgressTransactionCapacityDirty;
+    bool m_guardCapacityDirty;
+    bool m_guardApplyingPendingDrains;
+    bool m_guardTerminalResetDeferred;
+    std::unordered_set<RdmaRxQueuePair*> m_guardProgressDirtyFlows;
+    std::unordered_set<RdmaRxQueuePair*> m_guardProgressTransactionFlows;
+    uint64_t m_guardFrozenVectorHash;
+    std::vector<GuardFrozenTargetRecord> m_guardFrozenTargetVector;
+    std::vector<Ptr<RdmaRxQueuePair> > m_guardFrozenTargetHolds;
+    std::unordered_map<RdmaRxQueuePair*, size_t> m_guardFrozenTargetByFlow;
+    std::unordered_map<RdmaRxQueuePair*, GuardGenerationLedgerEntry>
+        m_guardGenerationLedger;
+    std::vector<GuardRetiredAckRecord> m_guardRetiredAckRecords;
+    std::unordered_map<RdmaRxQueuePair*, GuardDrainingRecord>
+        m_guardDrainingRecords;
     std::unordered_set<RdmaRxQueuePair*> m_guardFastpathIncumbents;
     std::unordered_set<RdmaRxQueuePair*> m_guardFastpathWaiters;
     std::unordered_set<RdmaRxQueuePair*> m_guardFastpathTransactionWaiters;
@@ -557,6 +819,8 @@ class RdmaHw : public Object {
     void ConfigureGuardLifecycleTrace(GuardLifecycleTraceSink *sink);
     void ConfigureGuardControllerTrace(GuardControllerTraceSink *sink);
     void ConfigureGuardGrantTrace(GuardGrantTraceSink *sink);
+    void ConfigureGuardTransitionAudit(GuardTransitionAuditSink *sink);
+    void FlushGuardTransitionAudit();
     void TraceGuardControllerEvent(Ptr<RdmaQueuePair> qp, const char *event_type,
                                    DataRate hpcc_rate, const char *binding,
                                    bool rate_changed, bool fast_react, uint32_t nhop,
@@ -566,20 +830,24 @@ class RdmaHw : public Object {
     void SyncHwRate(Ptr<RdmaQueuePair> qp, DataRate target_cc_rate);
     void MaybeSendGuardCapReport(Ptr<RdmaQueuePair> qp);
     void HandleRccRequest(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch);
-    bool HandleRccRemove(Ptr<RdmaRxQueuePair> qp, Ptr<Packet> p, CustomHeader &ch,
-                         GuardReleaseReason reason, uint64_t remaining_bytes);
+    bool HandleRccRemove(Ptr<RdmaRxQueuePair> qp, GuardReleaseReason reason,
+                         uint64_t remaining_bytes);
+    bool RequestGuardProactiveDrain(Ptr<RdmaRxQueuePair> qp,
+                                    uint64_t remaining_bytes);
+    bool ReleaseGuardDrainingOnCompletion(Ptr<RdmaRxQueuePair> qp);
     void TraceGuardGrant(Ptr<RdmaRxQueuePair> qp, const char *event,
                          const char *set_change, uint64_t active_flows,
                          uint64_t line_rate_bps, uint64_t grant_rate_bps,
                          uint64_t next_seq, uint64_t serialized_bytes,
                          uint32_t generation, uint64_t pending_acks,
-                         bool ack_required);
+                         bool ack_required, uint8_t phase_tag);
     void TraceGuardGrantReceive(Ptr<RdmaQueuePair> qp, Ptr<Packet> packet,
                                 uint64_t grant_rate_bps, uint32_t generation,
                                 const char *event, bool ack_required,
                                 uint8_t phase_tag);
     void TraceGuardGrantAckReceive(Ptr<RdmaRxQueuePair> qp, CustomHeader &ch,
-                                   Ptr<Packet> packet, const char *event);
+                                   Ptr<Packet> packet, const char *event,
+                                   const GuardRetiredAckRecord *retired = NULL);
     void TraceGuardGrantAckSend(Ptr<RdmaQueuePair> qp, Ptr<Packet> packet,
                                 uint32_t generation, uint8_t phase_tag);
     Time GetGuardInitialCollectionQuietWindow() const;
@@ -597,24 +865,76 @@ class RdmaHw : public Object {
     void CountGuardFastpathAckFrame(uint8_t phase_tag);
     uint32_t NextGuardGrantGeneration();
     void RequestGuardFastpathMembershipUpdate(const char *set_change);
+    void RequestGuardProgressRefresh(RdmaRxQueuePair *flow,
+                                     uint64_t progress_seq);
+    void StartGuardProgressTransaction();
+    void CloseGuardProgressTransaction();
+    uint64_t CommitGuardPendingDrains();
+    void SettleGuardActiveEmptyState();
+    bool CanResetGuardCoordinator() const;
     void ScheduleGuardFastpathHighCollection(const char *set_change);
     void FlushGuardFastpathHighCollection();
     void StartGuardFastpathTransaction();
     void StartGuardFastpathPrepare();
     void StartGuardFastpathActivate();
+    void FreezeGuardFastpathTargetVector(uint64_t membership_revision);
+    const GuardFrozenTargetRecord *GetGuardFrozenTarget(
+        RdmaRxQueuePair *flow) const;
+    uint64_t GetGuardPotentialUpperBoundBps(RdmaRxQueuePair *flow) const;
+    void AssertGuardFrozenPotentialFits();
+    void AssertGuardDrainReplacementFits(RdmaRxQueuePair *flow,
+                                         uint32_t receiver_nic,
+                                         uint64_t reserved_bps);
+    uint64_t GetGuardDrainingReservedBps(uint32_t receiver_nic) const;
+    static bool ValidateGuardGrantTraceSnapshot(
+        uint64_t frozen_capacity_bps, uint64_t frozen_draining_bps,
+        uint64_t frozen_allocatable_bps, uint64_t frozen_encoded_target_bps,
+        uint64_t grant_rate_bps, uint64_t live_draining_bps,
+        bool capacity_recompute_pending);
+    static uint64_t ComputeGuardDrainingReservationBps(
+        uint64_t last_acked_bps, uint64_t last_issued_bps,
+        uint64_t effective_min_bps);
+    static bool CanReleaseGuardDraining(uint64_t flow_size_bytes,
+                                        uint64_t next_expected_seq);
+    static bool IsGuardLedgerActionCompatible(uint8_t action,
+                                              uint8_t phase_tag);
+    static bool DoesGuardRetiredAckMatch(
+        const GuardRetiredAckRecord &record,
+        const GuardQpIdentity &wire_identity, uint32_t generation,
+        uint8_t phase_tag);
     bool ValidateGuardTransitionQueueCohort();
     static bool ComputeGuardTransitionPrefixWireBudget(
         const std::vector<GuardTransitionPrefixWaiterBudgetInput> &waiters,
         const std::vector<GuardTransitionPrefixIncumbentBudgetInput> &incumbents,
+        const std::vector<GuardTransitionPrefixDrainingBudgetInput> &draining,
         uint32_t mtu, uint32_t header_bytes_per_packet,
         uint64_t receiver_capacity_bps,
         GuardTransitionPrefixWireBudget *budget);
     static bool IsGuardTransitionPrefixWatchdogAggregateInconsistent(
         uint64_t budget_records, uint64_t contributing_hardware,
         bool non_reconstructable);
+    static bool EncodeGuardTargetVector(
+        const std::vector<GuardVectorTargetInput> &inputs,
+        uint32_t receiver_nic, uint64_t receiver_capacity_bps,
+        uint64_t draining_reserved_bps, uint64_t allocatable_capacity_bps,
+        uint64_t minimum_wire_rate_bps, uint64_t membership_revision,
+        uint64_t allocation_revision, uint64_t progress_revision,
+        uint64_t reason_mask,
+        std::vector<GuardFrozenTargetRecord> *records,
+        uint64_t *vector_hash);
+    bool ComputeGuardFrozenRequestedTargets(
+        uint64_t allocatable_bps,
+        std::vector<GuardVectorTargetInput> *inputs) const;
     void StartGuardTransitionPrefixBarrier();
     void CheckGuardTransitionPrefixBarrier();
     void HandleGuardTransitionPrefixDeadline();
+    void BeginGuardTransitionAudit(
+        uint32_t receiver_nic, uint16_t receiver_pg,
+        uint64_t receiver_capacity_bps,
+        const GuardTransitionPrefixWireBudget *watchdog_budget);
+    void RetireGuardTransitionAuditPrefix(RdmaRxQueuePair *flow);
+    void ResolveGuardTransitionAudit(const char *outcome);
+    void FinalizeGuardTransitionAudit(const char *terminal_closure);
     void SendNextGuardTransitionFallbackBatch();
     void FinishGuardFastpathGeneration();
     void FinishGuardFastpathTransaction();
@@ -652,7 +972,15 @@ class RdmaHw : public Object {
                                         const char *set_change,
                                         RdmaRxQueuePair *qp,
                                         uint8_t phase_tag,
-                                        bool receiver_authoritative);
+                                        bool receiver_authoritative,
+                                        uint64_t grant_rate_bps,
+                                        const GuardRetiredAckRecord *retired = NULL);
+    void CountGuardAcceptedAck(uint8_t phase_tag);
+    size_t FindGuardRetiredAckRecord(const GuardQpIdentity &identity,
+                                     uint32_t generation) const;
+    void RetireGuardRequiredAck(
+        Ptr<RdmaRxQueuePair> qp,
+        const GuardGenerationLedgerEntry &ledger);
 
    public:
 

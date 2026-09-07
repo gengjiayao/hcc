@@ -7,6 +7,7 @@
 
 #include <climits>
 #include <cmath>
+#include <tuple>
 
 #include "cn-header.h"
 #include "flow-stat-tag.h"
@@ -30,6 +31,48 @@ NS_LOG_COMPONENT_DEFINE("RdmaHw");
 
 std::unordered_map<unsigned, unsigned> acc_timeout_count;
 uint64_t RdmaHw::nAllPkts = 0;
+
+GuardTransitionAuditRecord::GuardTransitionAuditRecord()
+    : active(false),
+      receiverNode(0),
+      receiverNic(0),
+      epoch(0),
+      transaction(0),
+      priorityGroupSetHash(0),
+      targetVectorHash(0),
+      targetVectorEntries(0),
+      receiverCapacityBps(0),
+      activeUpperBoundBps(0),
+      drainingUpperBoundBps(0),
+      activeDrainingUpperBoundBps(0),
+      drainingWireUpperBoundBytes(0),
+      prefixTargetBytes(0),
+      prefixObservedBytes(0),
+      prefixRetiredObservedBytes(0),
+      startNs(0),
+      deadlineNs(0),
+      deadlinePolicy("none"),
+      deadlineOutcome("none"),
+      terminalClosure("none") {}
+
+namespace {
+
+void GuardAuditHashWord(uint64_t *hash, uint64_t word) {
+    const uint64_t fnv_prime = 1099511628211ULL;
+    for (uint32_t byte = 0; byte < 8; ++byte) {
+        *hash ^= (word >> (byte * 8)) & 0xffULL;
+        *hash *= fnv_prime;
+    }
+}
+
+uint64_t GuardAuditHashWords(const std::vector<uint64_t> &words) {
+    uint64_t hash = 14695981039346656037ULL;
+    GuardAuditHashWord(&hash, words.size());
+    for (uint64_t word : words) GuardAuditHashWord(&hash, word);
+    return hash;
+}
+
+}  // namespace
 
 TypeId RdmaHw::GetTypeId(void) {
     static TypeId tid =
@@ -272,6 +315,31 @@ TypeId RdmaHw::GetTypeId(void) {
                           MakeBooleanAccessor(
                               &RdmaHw::m_guardTransitionPrefixWireWatchdogEnabled),
                           MakeBooleanChecker())
+            .AddAttribute("GuardTransitionPrefixFailClosed",
+                          "Abort the simulation instead of activating a transition "
+                          "through the prefix-deadline fallback path",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(
+                              &RdmaHw::m_guardTransitionPrefixFailClosed),
+                          MakeBooleanChecker())
+            .AddAttribute("GuardMixedPgVectorFastpath",
+                          "Use one canonical, receiver-capacity-bounded target vector "
+                          "across priority groups; disabled by default",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(&RdmaHw::m_guardMixedPgVectorFastpath),
+                          MakeBooleanChecker())
+            .AddAttribute("GuardSerializedProgressRefresh",
+                          "Route remaining-aware progress refreshes through the "
+                          "serialized V14 vector coordinator; disabled by default",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(&RdmaHw::m_guardSerializedProgressRefresh),
+                          MakeBooleanChecker())
+            .AddAttribute("GuardSerializedDraining",
+                          "Reserve conservatively bounded proactive releases until "
+                          "contiguous receiver completion; disabled by default",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(&RdmaHw::m_guardSerializedDraining),
+                          MakeBooleanChecker())
             .AddAttribute("GuardSrptQuantumPackets",
                           "Maximum consecutive SRPT packets before one round-robin service",
                           UintegerValue(64),
@@ -418,6 +486,10 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardGrantAcksReceived = 0;
     m_guardGrantAckBytesReceived = 0;
     m_guardGrantAcksStale = 0;
+    m_guardRetiredAckClosures = 0;
+    m_guardRetiredAcksReceived = 0;
+    m_guardRetiredAckPeak = 0;
+    m_guardRetiredAckOverflow = 0;
     m_guardStaleGrantsReceived = 0;
     m_guardAckRequiredBatches = 0;
     m_guardAckOptionalBatches = 0;
@@ -451,6 +523,26 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardFastpathPostTransitionFastGrants = 0;
     m_guardFastpathBarrierViolations = 0;
     m_guardFastpathEarlyUnlocks = 0;
+    m_guardVectorFreezes = 0;
+    m_guardVectorMixedPgFreezes = 0;
+    m_guardVectorMaxEntries = 0;
+    m_guardVectorPrepareDecreases = 0;
+    m_guardVectorActivationWaiters = 0;
+    m_guardVectorActivationIncreases = 0;
+    m_guardVectorReleaseRequired = 0;
+    m_guardVectorReleaseOptional = 0;
+    m_guardVectorLastHash = 0;
+    m_guardSerializedProgressRequests = 0;
+    m_guardSerializedProgressTransactions = 0;
+    m_guardSerializedProgressCommits = 0;
+    m_guardSerializedProgressBusyDeferrals = 0;
+    m_guardDrainingRequests = 0;
+    m_guardDrainingPendingTransitions = 0;
+    m_guardDrainingDirectTransitions = 0;
+    m_guardDrainingBoundaryCommits = 0;
+    m_guardDrainingCompletionReleases = 0;
+    m_guardDrainingMaxRecords = 0;
+    m_guardDrainingMaxReservedBps = 0;
     m_guardFastpathJoinQueueMax = 0;
     m_guardFastpathHighTransitionRegisteredN = 0;
     m_guardFastpathHighTransitionWaiters = 0;
@@ -531,12 +623,17 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardSmallSetFastpathLimit = 0;
     m_guardTransitionPrefixBarrierEnabled = false;
     m_guardTransitionPrefixWireWatchdogEnabled = false;
+    m_guardTransitionPrefixFailClosed = false;
+    m_guardMixedPgVectorFastpath = false;
+    m_guardSerializedProgressRefresh = false;
+    m_guardSerializedDraining = false;
     m_guardFastpathPhase = GUARD_FASTPATH_IDLE;
     m_guardFastpathHighFanIn = false;
     m_guardFastpathHighInitialCollectionFlushed = false;
     m_guardFastpathHighInitialCommitted = false;
     m_guardFastpathCollectionReady = false;
     m_guardFastpathTransactionIsTransition = false;
+    m_guardFastpathReleaseRevectorActive = false;
     m_guardFastpathTransaction = 0;
     m_guardFastpathMembershipRevision = 0;
     m_guardFastpathConsumedMembershipRevision = 0;
@@ -546,6 +643,28 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardFastpathEpochTransitionPrepareStartNs = 0;
     m_guardFastpathTransactionTargetN = 0;
     m_guardFastpathTransactionTargetMbps = 0;
+    m_guardFrozenVectorActive = false;
+    m_guardFrozenReceiverNic = 0;
+    m_guardFrozenReceiverCapacityBps = 0;
+    m_guardFrozenActiveRecords = 0;
+    m_guardFrozenDrainingRecords = 0;
+    m_guardFrozenDrainingReservedBps = 0;
+    m_guardFrozenAllocatableCapacityBps = 0;
+    m_guardFrozenEncodedTargetBps = 0;
+    m_guardFrozenMembershipRevision = 0;
+    m_guardAllocationRevision = 0;
+    m_guardProgressRevision = 0;
+    m_guardConsumedProgressRevision = 0;
+    m_guardFrozenAllocationRevision = 0;
+    m_guardFrozenProgressRevision = 0;
+    m_guardFrozenReasonMask = 0;
+    m_guardProgressTransactionRevision = 0;
+    m_guardProgressTransactionActive = false;
+    m_guardProgressTransactionCapacityDirty = false;
+    m_guardCapacityDirty = false;
+    m_guardApplyingPendingDrains = false;
+    m_guardTerminalResetDeferred = false;
+    m_guardFrozenVectorHash = 0;
     m_guardTransitionPrefixBarrierWaiting = false;
     m_guardTransitionPrefixBarrierResolved = false;
     m_guardTransitionPrefixTimedOut = false;
@@ -561,6 +680,8 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardLifecycleTraceSink = NULL;
     m_guardControllerTraceSink = NULL;
     m_guardGrantTraceSink = NULL;
+    m_guardTransitionAuditSink = NULL;
+    m_guardTransitionAuditEpoch = 1;
     m_recoveryNacksGenerated = 0;
     m_recoveryNacksReceived = 0;
     m_irnNacksGenerated = 0;
@@ -644,6 +765,57 @@ uint64_t RdmaHw::GetQpKey(uint32_t dip, uint16_t sport, uint16_t dport,
                           uint16_t pg) {  // Sender perspective
     return ((uint64_t)dip << 32) | ((uint64_t)sport << 16) | (uint64_t)dport | (uint64_t)pg;
 }
+
+GuardQpInsertionDisposition RdmaHw::ClassifyGuardQpInsertion(
+    const GuardQpIdentity *live, const GuardQpIdentity *tombstone,
+    const GuardQpIdentity &candidate) {
+    if (live != NULL) {
+        return *live == candidate ? GUARD_QP_INSERT_LIVE_DUPLICATE
+                                  : GUARD_QP_INSERT_LIVE_COLLISION;
+    }
+    if (tombstone != NULL) {
+        return *tombstone == candidate ? GUARD_QP_INSERT_RETIRED_TUPLE
+                                       : GUARD_QP_INSERT_TOMBSTONE_COLLISION;
+    }
+    return GUARD_QP_INSERT_OK;
+}
+
+GuardFrozenActiveProvenanceDisposition
+RdmaHw::ClassifyGuardFrozenActiveProvenance(
+    const GuardFrozenActiveProvenanceInput &input) {
+    if (input.inCohort) return GUARD_FROZEN_ACTIVE_COHORT;
+
+    bool later_dirty_membership =
+        input.registrationMembershipRevision > input.frozenMembershipRevision &&
+        input.liveMembershipRevision > input.frozenMembershipRevision &&
+        input.registrationMembershipRevision <= input.liveMembershipRevision &&
+        input.pendingMembershipChanges > 0 &&
+        input.pendingMembershipChanges ==
+            input.liveMembershipRevision - input.frozenMembershipRevision;
+    bool zero_grant_authority =
+        input.lastAckedGeneration == 0 &&
+        input.lastAckedUpperBoundBps == 0 &&
+        input.lastIssuedGeneration == 0 &&
+        input.lastIssuedTargetBps == 0 &&
+        input.grantGeneration == 0 && input.grantRateBps == 0 &&
+        input.grantUpperBoundBps == 0 && !input.grantGenerationAcked;
+    bool valid_first_grant_gate =
+        input.registerNs >= 0 && input.flowSizeBytes > 0 &&
+        input.hasFirstGrantGateBytes && input.firstGrantGateBytes > 0 &&
+        std::isfinite(input.baseRttSec) && input.baseRttSec > 0.0;
+    bool same_receiver_resource =
+        input.receiverNic == input.frozenReceiverNic &&
+        input.receiverCapacityBps != 0 &&
+        input.receiverCapacityBps == input.frozenReceiverCapacityBps;
+    if (input.inFastpathWaiters && !input.inIncumbents &&
+        !input.inTransactionWaiters && later_dirty_membership &&
+        zero_grant_authority && valid_first_grant_gate &&
+        same_receiver_resource) {
+        return GUARD_FROZEN_ACTIVE_DEFERRED_WAITER;
+    }
+    return GUARD_FROZEN_ACTIVE_INVALID;
+}
+
 Ptr<RdmaQueuePair> RdmaHw::GetQp(uint64_t key) {
     auto it = m_qpMap.find(key);
 
@@ -653,6 +825,19 @@ Ptr<RdmaQueuePair> RdmaHw::GetQp(uint64_t key) {
     }
 
     return NULL;
+}
+
+Ptr<RdmaQueuePair> RdmaHw::GetQp(uint32_t sip, uint32_t dip, uint16_t sport,
+                                 uint16_t dport, uint16_t pg) {
+    uint64_t key = GetQpKey(dip, sport, dport, pg);
+    GuardQpIdentity identity = {sip, dip, sport, dport, pg};
+    auto live = m_qpIdentity.find(key);
+    NS_ABORT_MSG_IF(live != m_qpIdentity.end() && live->second != identity,
+                    "GUARD QP legacy-key collision on live lookup");
+    auto dead = m_qpTombstoneIdentity.find(key);
+    NS_ABORT_MSG_IF(dead != m_qpTombstoneIdentity.end() && dead->second != identity,
+                    "GUARD QP legacy-key collision on tombstone lookup");
+    return GetQp(key);
 }
 
 void print_rate(RdmaQueuePair *qp) {
@@ -734,9 +919,25 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
         if (receiver_will_register) m_guardFirstGrantGatedFlows++;
     }
 
-    m_nic[nic_idx].qpGrp->AddQp(qp);
     uint64_t key = GetQpKey(dip.Get(), sport, dport, qp_pg);
+    GuardQpIdentity identity = {sip.Get(), dip.Get(), sport, dport, qp_pg};
+    auto live = m_qpIdentity.find(key);
+    auto tombstone = m_qpTombstoneIdentity.find(key);
+    GuardQpInsertionDisposition insertion = ClassifyGuardQpInsertion(
+        live == m_qpIdentity.end() ? NULL : &live->second,
+        tombstone == m_qpTombstoneIdentity.end() ? NULL : &tombstone->second,
+        identity);
+    NS_ABORT_MSG_IF(insertion == GUARD_QP_INSERT_LIVE_DUPLICATE,
+                    "GUARD QP exact live tuple cannot be inserted twice");
+    NS_ABORT_MSG_IF(insertion == GUARD_QP_INSERT_LIVE_COLLISION,
+                    "GUARD QP legacy-key collision on live insertion");
+    NS_ABORT_MSG_IF(insertion == GUARD_QP_INSERT_RETIRED_TUPLE,
+                    "GUARD QP completed tuple cannot be reused");
+    NS_ABORT_MSG_IF(insertion == GUARD_QP_INSERT_TOMBSTONE_COLLISION,
+                    "GUARD QP legacy-key collision against tombstone");
+    m_nic[nic_idx].qpGrp->AddQp(qp);
     m_qpMap[key] = qp;
+    m_qpIdentity[key] = identity;
 
     // set init variables
     DataRate m_bps = m_nic[nic_idx].dev->GetDataRate();
@@ -801,9 +1002,19 @@ void RdmaHw::DeleteQueuePair(Ptr<RdmaQueuePair> qp) {
     // record to Akashic record
     NS_ASSERT(akashic_Qp.find(key) == akashic_Qp.end());  // should not be already existing
     akashic_Qp.insert(key);
+    GuardQpIdentity identity = {qp->sip.Get(), qp->dip.Get(), qp->sport,
+                                qp->dport, qp->m_pg};
+    auto live = m_qpIdentity.find(key);
+    NS_ABORT_MSG_IF(live == m_qpIdentity.end() || live->second != identity,
+                    "GUARD QP identity changed before deletion");
+    auto dead = m_qpTombstoneIdentity.find(key);
+    NS_ABORT_MSG_IF(dead != m_qpTombstoneIdentity.end() && dead->second != identity,
+                    "GUARD QP tombstone collision on deletion");
+    m_qpTombstoneIdentity[key] = identity;
 
     // delete
     m_qpMap.erase(key);
+    m_qpIdentity.erase(key);
 }
 
 // DATA UDP's src = this key's dst (receiver's dst)
@@ -817,6 +1028,20 @@ uint64_t RdmaHw::GetRxQpKey(uint32_t dip, uint16_t dport, uint16_t sport,
 Ptr<RdmaRxQueuePair> RdmaHw::GetRxQp(uint32_t sip, uint32_t dip, uint16_t sport, uint16_t dport,
                                      uint16_t pg, bool create) {
     uint64_t rxKey = GetRxQpKey(dip, dport, sport, pg);
+    GuardQpIdentity identity = {sip, dip, sport, dport, pg};
+    auto live_identity = m_rxQpIdentity.find(rxKey);
+    NS_ABORT_MSG_IF(live_identity != m_rxQpIdentity.end() &&
+                        live_identity->second != identity,
+                    "GUARD RxQP legacy-key collision on live lookup");
+    auto dead_identity = m_rxQpTombstoneIdentity.find(rxKey);
+    NS_ABORT_MSG_IF(dead_identity != m_rxQpTombstoneIdentity.end() &&
+                        dead_identity->second != identity,
+                    "GUARD RxQP legacy-key collision on tombstone lookup");
+    if (dead_identity != m_rxQpTombstoneIdentity.end()) {
+        // Tuple reuse is not supported: delayed DATA for a completed flow
+        // must hit the akashic drop path, never resurrect receiver state.
+        return NULL;
+    }
     auto it = m_rxQpMap.find(rxKey);
 
     // main memory lookup
@@ -833,6 +1058,7 @@ Ptr<RdmaRxQueuePair> RdmaHw::GetRxQp(uint32_t sip, uint32_t dip, uint16_t sport,
         q->m_ecn_source.qIndex = pg;
         q->m_flow_id = -1;     // unknown
         m_rxQpMap[rxKey] = q;  // store in map
+        m_rxQpIdentity[rxKey] = identity;
         return q;
     }
     return NULL;
@@ -854,9 +1080,18 @@ void RdmaHw::DeleteRxQp(uint32_t dip, uint16_t dport, uint16_t sport, uint16_t p
     // record to Akashic record
     NS_ASSERT(akashic_RxQp.find(key) == akashic_RxQp.end());  // should not be already existing
     akashic_RxQp.insert(key);
+    auto live = m_rxQpIdentity.find(key);
+    NS_ABORT_MSG_IF(live == m_rxQpIdentity.end(),
+                    "GUARD RxQP deletion lost its full identity");
+    auto dead = m_rxQpTombstoneIdentity.find(key);
+    NS_ABORT_MSG_IF(dead != m_rxQpTombstoneIdentity.end() &&
+                        dead->second != live->second,
+                    "GUARD RxQP tombstone collision on deletion");
+    m_rxQpTombstoneIdentity[key] = live->second;
 
     // delete
     m_rxQpMap.erase(key);
+    m_rxQpIdentity.erase(key);
 }
 
 int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
@@ -1083,7 +1318,19 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
         // seeing FLOW_END: the nominal last packet may arrive out of order.
         // This is also the sole release path when OFLM is disabled.
         if (v_remain == 0) {
-            if (HandleRccRemove(rxQp, p, ch, GUARD_RELEASE_COMPLETION, 0)) {
+            auto tracked_drain = m_guardDrainingRecords.find(
+                PeekPointer(rxQp));
+            bool pending_drain = m_guardSerializedDraining &&
+                tracked_drain != m_guardDrainingRecords.end() &&
+                tracked_drain->second.state == GUARD_DRAIN_PENDING;
+            bool completion_release =
+                pending_drain
+                    ? HandleRccRemove(rxQp, GUARD_RELEASE_COMPLETION, 0)
+                    : tracked_drain != m_guardDrainingRecords.end()
+                          ? ReleaseGuardDrainingOnCompletion(rxQp)
+                          : HandleRccRemove(
+                                rxQp, GUARD_RELEASE_COMPLETION, 0);
+            if (completion_release) {
                 m_guardCompletionReleases++;
             }
             TraceGuardCompletion(rxQp);
@@ -1109,7 +1356,12 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
             uint64_t v_th = (uint64_t)v_th_double;
 
             if (v_remain < v_th && !rxQp->m_proactive_released) {
-                if (HandleRccRemove(rxQp, p, ch, GUARD_RELEASE_PROACTIVE, v_remain)) {
+                bool released = m_guardSerializedDraining
+                                    ? RequestGuardProactiveDrain(rxQp, v_remain)
+                                    : HandleRccRemove(
+                                          rxQp, GUARD_RELEASE_PROACTIVE,
+                                          v_remain);
+                if (released) {
                     m_guardProactiveReleases++;
                 }
                 rxQp->m_proactive_released = true;
@@ -1121,12 +1373,19 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch) {
                 std::max<uint64_t>(m_mtu,
                                    (uint64_t)(m_guardGrantRefreshBdps * guard_bdp));
             if (currentSeq >= rxQp->m_guard_last_schedule_seq + refresh_bytes) {
-                rxQp->m_guard_last_schedule_seq = currentSeq;
                 m_guardRemainingRefreshEvents++;
-                if (IsGuardMembershipDirty()) {
-                    m_guardProgressEventsCoalesced++;
+                if (m_guardSerializedProgressRefresh) {
+                    RequestGuardProgressRefresh(PeekPointer(rxQp), currentSeq);
                 } else {
-                    RedistributeGuardRates("progress");
+                    rxQp->m_guard_last_schedule_seq = currentSeq;
+                    if (IsGuardMembershipDirty() ||
+                        (m_guardMixedPgVectorFastpath &&
+                         (m_guardFrozenVectorActive ||
+                          m_guardFastpathPhase != GUARD_FASTPATH_IDLE))) {
+                        m_guardProgressEventsCoalesced++;
+                    } else {
+                        RedistributeGuardRates("progress");
+                    }
                 }
             }
         }
@@ -1166,7 +1425,7 @@ int RdmaHw::ReceiveCnp(Ptr<Packet> p, CustomHeader &ch) {
     uint32_t i;
     // get qp
     uint64_t key = GetQpKey(ch.sip, udpport, sport, qIndex);
-    Ptr<RdmaQueuePair> qp = GetQp(key);
+    Ptr<RdmaQueuePair> qp = GetQp(ch.dip, ch.sip, udpport, sport, qIndex);
     if (qp == NULL) {
         // lookup akashic memory
         if (akashic_Qp.find(key) != akashic_Qp.end()) {
@@ -1209,7 +1468,7 @@ int RdmaHw::ReceiveRate(Ptr<Packet> p, CustomHeader &ch) {
     uint16_t dport = compact ? ch.grant.dport : ch.ack.dport;
     uint16_t sport = compact ? ch.grant.sport : ch.ack.sport;
     uint64_t key = GetQpKey(ch.sip, dport, sport, pg);
-    Ptr<RdmaQueuePair> qp = GetQp(key);
+    Ptr<RdmaQueuePair> qp = GetQp(ch.dip, ch.sip, dport, sport, pg);
 
     if (qp == NULL) {
         if (akashic_Qp.find(key) != akashic_Qp.end()) {
@@ -1306,10 +1565,43 @@ int RdmaHw::ReceiveRate(Ptr<Packet> p, CustomHeader &ch) {
 }
 
 int RdmaHw::ReceiveGuardGrantAck(Ptr<Packet> p, CustomHeader &ch) {
-    Ptr<RdmaRxQueuePair> rx_qp = GetRxQp(
-        ch.dip, ch.sip, ch.grant.dport, ch.grant.sport, ch.grant.pg, false);
-    uint32_t generation = ch.grant.generation;
+    GuardQpIdentity wire_identity = {
+        ch.dip, ch.sip, ch.grantAck.dport, ch.grantAck.sport,
+        ch.grantAck.pg};
+    uint32_t generation = ch.grantAck.generation;
+    uint8_t phase_tag = ch.grantAck.phaseTag;
     m_guardGrantAckBytesReceived += p->GetSize();
+
+    // A receiver QP can finish after its required ACK is sent but before that
+    // ACK returns.  Authenticate that packet from the pointer-free retired
+    // ledger before consulting live/tombstoned QP state.
+    size_t retired_index = FindGuardRetiredAckRecord(wire_identity, generation);
+    if (retired_index != m_guardRetiredAckRecords.size()) {
+        const GuardRetiredAckRecord &retired =
+            m_guardRetiredAckRecords[retired_index];
+        if (!DoesGuardRetiredAckMatch(
+                retired, wire_identity, generation, phase_tag)) {
+            m_guardGrantAcksStale++;
+            TraceGuardGrantAckReceive(NULL, ch, p, "ack_stale", &retired);
+            return 0;
+        }
+        NS_ABORT_MSG_IF(
+            retired.targetMbps == 0 || retired.transactionId == 0 ||
+                retired.retiredNs >
+                    static_cast<uint64_t>(Simulator::Now().GetNanoSeconds()),
+            "GUARD V14 retired ACK record lost immutable provenance");
+        m_guardGrantAcksReceived++;
+        m_guardRetiredAcksReceived++;
+        CountGuardAcceptedAck(retired.phaseTag);
+        TraceGuardGrantAckReceive(NULL, ch, p, "ack_retired", &retired);
+        m_guardRetiredAckRecords.erase(
+            m_guardRetiredAckRecords.begin() + retired_index);
+        return 0;
+    }
+
+    Ptr<RdmaRxQueuePair> rx_qp = GetRxQp(
+        ch.dip, ch.sip, ch.grantAck.dport, ch.grantAck.sport,
+        ch.grantAck.pg, false);
     if (rx_qp == NULL ||
         m_rate_flow_ctl_set.find(PeekPointer(rx_qp)) == m_rate_flow_ctl_set.end() ||
         generation == 0 || generation != rx_qp->m_guard_grant_generation ||
@@ -1318,26 +1610,36 @@ int RdmaHw::ReceiveGuardGrantAck(Ptr<Packet> p, CustomHeader &ch) {
         TraceGuardGrantAckReceive(rx_qp, ch, p, "ack_stale");
         return 0;
     }
+    if (m_guardMixedPgVectorFastpath) {
+        auto ledger = m_guardGenerationLedger.find(PeekPointer(rx_qp));
+        GuardQpIdentity identity = {rx_qp->sip, rx_qp->dip, rx_qp->sport,
+                                    rx_qp->dport, rx_qp->m_guard_pg};
+        auto *frozen = GetGuardFrozenTarget(PeekPointer(rx_qp));
+        NS_ABORT_MSG_IF(
+            ledger == m_guardGenerationLedger.end() ||
+                ledger->second.tombstone ||
+                ledger->second.identity != identity ||
+                ledger->second.generation != generation ||
+                ledger->second.phaseTag != phase_tag ||
+                !IsGuardLedgerActionCompatible(ledger->second.action,
+                                               phase_tag) ||
+                frozen == NULL || frozen->identity != identity ||
+                frozen->targetMbps != ledger->second.targetMbps,
+            "GUARD V14 ACK does not match the frozen generation ledger");
+        rx_qp->m_guard_last_acked_generation = ledger->second.generation;
+        rx_qp->m_guard_last_acked_upper_bound_bps =
+            static_cast<uint64_t>(ledger->second.targetMbps) * 1000000ULL;
+    } else {
+        rx_qp->m_guard_last_acked_generation = generation;
+        rx_qp->m_guard_last_acked_upper_bound_bps =
+            rx_qp->m_guard_grant_rate_bps;
+    }
 
     rx_qp->m_guard_grant_generation_acked = true;
-    rx_qp->m_guard_grant_upper_bound_bps = rx_qp->m_guard_grant_rate_bps;
+    rx_qp->m_guard_grant_upper_bound_bps =
+        rx_qp->m_guard_last_acked_upper_bound_bps;
     m_guardGrantAcksReceived++;
-    if (GuardSmallSetFastpathEnabled()) {
-        bool transition = m_guardFastpathTransactionIsTransition;
-        if (m_guardFastpathPhase == GUARD_FASTPATH_PREPARE) {
-            if (transition) {
-                m_guardTransitionPrepareAcks++;
-            } else {
-                m_guardFastpathPrepareAcks++;
-            }
-        } else if (m_guardFastpathPhase == GUARD_FASTPATH_ACTIVATE) {
-            if (transition) {
-                m_guardTransitionActivateAcks++;
-            } else {
-                m_guardFastpathActivateAcks++;
-            }
-        }
-    }
+    CountGuardAcceptedAck(phase_tag);
     if (m_guardPendingGrantAcks > 0) m_guardPendingGrantAcks--;
     TraceGuardGrantAckReceive(rx_qp, ch, p, "ack_received");
     if (m_guardPendingGrantAcks == 0) {
@@ -1425,7 +1727,7 @@ int RdmaHw::ReceiveAck(Ptr<Packet> p, CustomHeader &ch) {
     uint8_t cnp = (ch.ack.flags >> qbbHeader::FLAG_CNP) & 1;
     int i;
     uint64_t key = GetQpKey(ch.sip, port, sport, qIndex);
-    Ptr<RdmaQueuePair> qp = GetQp(key);
+    Ptr<RdmaQueuePair> qp = GetQp(ch.dip, ch.sip, port, sport, qIndex);
     if (qp == NULL) {
         // lookup akashic memory
         if (akashic_Qp.find(key) != akashic_Qp.end()) {
@@ -2196,10 +2498,27 @@ void RdmaHw::HandleRccRequest(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomH
     uint64_t active_before = m_rate_flow_ctl_set.size();
     m_rate_flow_ctl_set.emplace(PeekPointer(rx_qp));
     rx_qp->m_guard_last_schedule_seq = rx_qp->ReceiverNextExpectedSeq;
+    rx_qp->m_guard_pending_progress_seq = rx_qp->ReceiverNextExpectedSeq;
     rx_qp->m_guard_grant_generation = 0;
     rx_qp->m_guard_grant_generation_acked = false;
     rx_qp->m_guard_grant_upper_bound_bps = 0;
+    rx_qp->m_guard_last_acked_generation = 0;
+    rx_qp->m_guard_last_acked_upper_bound_bps = 0;
+    rx_qp->m_guard_last_issued_generation = 0;
+    rx_qp->m_guard_last_issued_target_bps = 0;
     rx_qp->m_guard_register_ns = Simulator::Now().GetNanoSeconds();
+    rx_qp->m_guard_registration_membership_revision = 0;
+    if (GuardSmallSetFastpathEnabled()) {
+        NS_ABORT_MSG_IF(
+            m_guardFastpathMembershipRevision ==
+                std::numeric_limits<uint64_t>::max(),
+            "GUARD V14 registration membership provenance exhausted");
+        // RequestGuardFastpathMembershipUpdate consumes this exact next
+        // revision synchronously.  Latching it before the request lets a
+        // nested vector freeze distinguish this flow from earlier waiters.
+        rx_qp->m_guard_registration_membership_revision =
+            m_guardFastpathMembershipRevision + 1;
+    }
     m_guardRegistrations++;
     if (m_guardSelectiveRegistration) m_guardSelectedRegistrations++;
     m_guardMaxActiveFlows = std::max<uint64_t>(m_guardMaxActiveFlows,
@@ -2215,26 +2534,227 @@ void RdmaHw::HandleRccRequest(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomH
     TraceGuardRegistration(rx_qp, flow_size, active_before, m_rate_flow_ctl_set.size());
 
     RequestGuardMembershipUpdate("registration");
+    if (GuardSmallSetFastpathEnabled()) {
+        NS_ABORT_MSG_IF(
+            rx_qp->m_guard_registration_membership_revision == 0 ||
+                rx_qp->m_guard_registration_membership_revision >
+                    m_guardFastpathMembershipRevision,
+            "GUARD V14 registration lost its membership provenance");
+        if (m_guardMixedPgVectorFastpath && m_guardFrozenVectorActive &&
+            m_guardFrozenTargetByFlow.find(PeekPointer(rx_qp)) ==
+                m_guardFrozenTargetByFlow.end()) {
+            uint32_t receiver_nic = GetNicIdxOfRxQp(rx_qp);
+            uint64_t receiver_capacity_bps =
+                m_nic[receiver_nic].dev->GetDataRate().GetBitRate();
+            GuardFrozenActiveProvenanceInput provenance = {
+                false,
+                m_guardFastpathWaiters.find(PeekPointer(rx_qp)) !=
+                    m_guardFastpathWaiters.end(),
+                m_guardFastpathIncumbents.find(PeekPointer(rx_qp)) !=
+                    m_guardFastpathIncumbents.end(),
+                m_guardFastpathTransactionWaiters.find(PeekPointer(rx_qp)) !=
+                    m_guardFastpathTransactionWaiters.end(),
+                rx_qp->m_guard_registration_membership_revision,
+                m_guardFastpathMembershipRevision,
+                m_guardFrozenMembershipRevision,
+                m_guardPendingMembershipChanges,
+                receiver_nic,
+                m_guardFrozenReceiverNic,
+                receiver_capacity_bps,
+                m_guardFrozenReceiverCapacityBps,
+                rx_qp->m_guard_last_acked_generation,
+                rx_qp->m_guard_last_acked_upper_bound_bps,
+                rx_qp->m_guard_last_issued_generation,
+                rx_qp->m_guard_last_issued_target_bps,
+                rx_qp->m_guard_grant_generation,
+                rx_qp->m_guard_grant_rate_bps,
+                rx_qp->m_guard_grant_upper_bound_bps,
+                rx_qp->m_guard_grant_generation_acked,
+                rx_qp->m_guard_register_ns,
+                rx_qp->m_guard_flow_size,
+                rx_qp->m_guard_has_first_grant_gate_bytes,
+                rx_qp->m_guard_first_grant_gate_bytes,
+                rx_qp->m_base_rtt_sec};
+            NS_ABORT_MSG_IF(
+                ClassifyGuardFrozenActiveProvenance(provenance) !=
+                    GUARD_FROZEN_ACTIVE_DEFERRED_WAITER,
+                "GUARD V14 live registration violates frozen cohort provenance");
+        }
+    }
     ScheduleGuardRebalance();
 }
 
-bool RdmaHw::HandleRccRemove(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomHeader &ch,
-                             GuardReleaseReason reason, uint64_t remaining_bytes) {
+bool RdmaHw::RequestGuardProactiveDrain(Ptr<RdmaRxQueuePair> rx_qp,
+                                        uint64_t remaining_bytes) {
+    NS_ABORT_MSG_IF(!m_guardSerializedDraining ||
+                        m_rate_flow_ctl_set.find(PeekPointer(rx_qp)) ==
+                            m_rate_flow_ctl_set.end(),
+                    "GUARD V14 proactive drain requires an ACTIVE flow");
+    if (m_guardDrainingRecords.find(PeekPointer(rx_qp)) !=
+        m_guardDrainingRecords.end()) {
+        return false;
+    }
+    uint64_t effective_min_mbps = m_minRate.GetBitRate() / 1000000ULL +
+        (m_minRate.GetBitRate() % 1000000ULL != 0 ? 1 : 0);
+    NS_ABORT_MSG_IF(
+        effective_min_mbps >
+            std::numeric_limits<uint64_t>::max() / 1000000ULL,
+        "GUARD V14 effective minimum rate overflow");
+    uint64_t effective_min_bps = effective_min_mbps * 1000000ULL;
+    uint64_t reserved_bps = ComputeGuardDrainingReservationBps(
+        rx_qp->m_guard_last_acked_upper_bound_bps,
+        rx_qp->m_guard_last_issued_target_bps, effective_min_bps);
+    bool transaction_busy = m_guardFastpathPhase != GUARD_FASTPATH_IDLE ||
+                            m_guardPendingGrantAcks != 0 ||
+                            m_guardFrozenVectorActive ||
+                            m_guardProgressTransactionActive;
+    GuardQpIdentity identity = {rx_qp->sip, rx_qp->dip, rx_qp->sport,
+                                rx_qp->dport, rx_qp->m_guard_pg};
+    uint32_t receiver_nic = GetNicIdxOfRxQp(rx_qp);
+    AssertGuardDrainReplacementFits(PeekPointer(rx_qp), receiver_nic,
+                                    reserved_bps);
+    m_guardDrainingRecords.emplace(
+        PeekPointer(rx_qp),
+        GuardDrainingRecord{
+            identity, rx_qp, receiver_nic, rx_qp->m_guard_pg,
+            rx_qp->m_guard_last_acked_upper_bound_bps,
+            rx_qp->m_guard_last_issued_target_bps, reserved_bps,
+            rx_qp->m_guard_last_issued_generation, remaining_bytes,
+            static_cast<uint64_t>(Simulator::Now().GetNanoSeconds()),
+            transaction_busy ? GUARD_DRAIN_PENDING : GUARD_DRAINING});
+    m_guardDrainingRequests++;
+    if (transaction_busy) {
+        m_guardDrainingPendingTransitions++;
+    } else {
+        m_guardDrainingDirectTransitions++;
+    }
+    m_guardDrainingMaxRecords = std::max<uint64_t>(
+        m_guardDrainingMaxRecords, m_guardDrainingRecords.size());
+    __uint128_t draining_sum = 0;
+    for (const auto &item : m_guardDrainingRecords) {
+        NS_ABORT_MSG_IF(item.second.receiverNic != receiver_nic,
+                        "GUARD V14 draining records span receiver NICs");
+        draining_sum += item.second.reservedBps;
+    }
+    NS_ABORT_MSG_IF(
+        draining_sum > std::numeric_limits<uint64_t>::max(),
+        "GUARD V14 pending draining reservation sum overflow");
+    m_guardDrainingMaxReservedBps = std::max(
+        m_guardDrainingMaxReservedBps,
+        static_cast<uint64_t>(draining_sum));
+    if (transaction_busy) return true;
+    return HandleRccRemove(rx_qp, GUARD_RELEASE_PROACTIVE, remaining_bytes);
+}
+
+bool RdmaHw::ReleaseGuardDrainingOnCompletion(
+    Ptr<RdmaRxQueuePair> rx_qp) {
+    auto found = m_guardDrainingRecords.find(PeekPointer(rx_qp));
+    if (found == m_guardDrainingRecords.end()) return false;
+    NS_ABORT_MSG_IF(
+        !CanReleaseGuardDraining(rx_qp->m_guard_flow_size,
+                                 rx_qp->ReceiverNextExpectedSeq),
+        "GUARD V14 draining reservation released before contiguous completion");
+    if (found->second.state == GUARD_DRAIN_PENDING) {
+        // The live transaction still owns this ACTIVE flow.  Preserve the
+        // record through its boundary so the ACTIVE potential is atomically
+        // replaced by D before the already-proven completion releases D.
+        return false;
+    }
+    NS_ABORT_MSG_IF(found->second.state != GUARD_DRAINING,
+                    "GUARD V14 completion found an invalid drain state");
+    m_guardDrainingRecords.erase(found);
+    m_guardDrainingCompletionReleases++;
+    if (m_rate_flow_ctl_set.empty()) {
+        // More than one D can complete at the same simulation time after the
+        // last ACTIVE flow has left.  The first completion must preserve the
+        // remaining reservation and its epoch; the shared settlement path
+        // resets only after the final D has been released.
+        SettleGuardActiveEmptyState();
+        return true;
+    }
+    NS_ABORT_MSG_IF(
+        m_guardProgressRevision == std::numeric_limits<uint64_t>::max(),
+        "GUARD V14 draining-release progress revision exhausted");
+    m_guardProgressRevision++;
+    m_guardCapacityDirty = true;
+    bool busy = m_guardProgressTransactionActive ||
+                m_guardFastpathPhase != GUARD_FASTPATH_IDLE ||
+                m_guardPendingGrantAcks != 0 || m_guardFrozenVectorActive ||
+                IsGuardMembershipDirty() || m_guardFastpathCollectionReady;
+    if (busy) {
+        m_guardProgressEventsCoalesced++;
+    } else {
+        StartGuardProgressTransaction();
+    }
+    return true;
+}
+
+bool RdmaHw::HandleRccRemove(Ptr<RdmaRxQueuePair> rx_qp,
+                             GuardReleaseReason reason,
+                             uint64_t remaining_bytes) {
     if (m_rate_flow_ctl_set.find(PeekPointer(rx_qp)) == m_rate_flow_ctl_set.end()) {
         return false;
     }
     uint64_t active_before = m_rate_flow_ctl_set.size();
-    if (rx_qp->m_guard_grant_generation == m_guardGrantGeneration &&
-        !rx_qp->m_guard_grant_generation_acked && m_guardPendingGrantAcks > 0) {
+    bool closes_required_ack =
+        rx_qp->m_guard_grant_generation == m_guardGrantGeneration &&
+        !rx_qp->m_guard_grant_generation_acked && m_guardPendingGrantAcks > 0;
+    if (closes_required_ack && m_guardMixedPgVectorFastpath) {
+        GuardQpIdentity identity = {
+            rx_qp->sip, rx_qp->dip, rx_qp->sport, rx_qp->dport,
+            rx_qp->m_guard_pg};
+        auto ledger = m_guardGenerationLedger.find(PeekPointer(rx_qp));
+        auto frozen = GetGuardFrozenTarget(PeekPointer(rx_qp));
+        uint8_t expected_phase = GetGuardFastpathWirePhaseTag("none");
+        NS_ABORT_MSG_IF(
+            !m_guardFrozenVectorActive ||
+                ledger == m_guardGenerationLedger.end() ||
+                ledger->second.tombstone ||
+                ledger->second.identity != identity ||
+                ledger->second.generation !=
+                    rx_qp->m_guard_grant_generation ||
+                ledger->second.phaseTag != expected_phase ||
+                !IsGuardLedgerActionCompatible(
+                    ledger->second.action, ledger->second.phaseTag) ||
+                frozen == NULL || frozen->tombstone ||
+                frozen->identity != identity ||
+                frozen->targetMbps != ledger->second.targetMbps,
+            "GUARD V14 removal cannot authenticate its required ACK");
+        // Materialize immutable wire provenance before either the pending
+        // barrier or the live frozen ledger is changed.
+        RetireGuardRequiredAck(rx_qp, ledger->second);
+        m_guardPendingGrantAcks--;
+        TraceGuardGrant(
+            rx_qp, "ack_retire_close", "none", active_before,
+            m_nic[GetNicIdxOfRxQp(rx_qp)].dev->GetDataRate().GetBitRate(),
+            static_cast<uint64_t>(ledger->second.targetMbps) * 1000000ULL,
+            rx_qp->ReceiverNextExpectedSeq, 0, ledger->second.generation,
+            m_guardPendingGrantAcks, true, ledger->second.phaseTag);
+    } else if (closes_required_ack) {
         m_guardPendingGrantAcks--;
     }
     m_rate_flow_ctl_set.erase(PeekPointer(rx_qp));
+    m_guardProgressDirtyFlows.erase(PeekPointer(rx_qp));
+    m_guardProgressTransactionFlows.erase(PeekPointer(rx_qp));
     if (GuardSmallSetFastpathEnabled()) {
         m_guardFastpathIncumbents.erase(PeekPointer(rx_qp));
         m_guardFastpathWaiters.erase(PeekPointer(rx_qp));
         m_guardFastpathTransactionWaiters.erase(PeekPointer(rx_qp));
+        if (m_guardMixedPgVectorFastpath && m_guardFrozenVectorActive) {
+            auto frozen = m_guardFrozenTargetByFlow.find(PeekPointer(rx_qp));
+            if (frozen != m_guardFrozenTargetByFlow.end()) {
+                NS_ABORT_MSG_IF(frozen->second >= m_guardFrozenTargetVector.size(),
+                                "GUARD V14 removal found an invalid frozen index");
+                m_guardFrozenTargetVector[frozen->second].tombstone = true;
+            }
+            auto ledger = m_guardGenerationLedger.find(PeekPointer(rx_qp));
+            if (ledger != m_guardGenerationLedger.end()) {
+                ledger->second.tombstone = true;
+            }
+        }
     }
     if (m_guardTransitionPrefixBarrierEnabled) {
+        RetireGuardTransitionAuditPrefix(PeekPointer(rx_qp));
         m_guardFastpathReadyWaiters.erase(PeekPointer(rx_qp));
         auto order_it = std::find(m_guardTransitionActivationOrder.begin(),
                                   m_guardTransitionActivationOrder.end(),
@@ -2254,36 +2774,42 @@ bool RdmaHw::HandleRccRemove(Ptr<RdmaRxQueuePair> rx_qp, Ptr<Packet> p, CustomHe
     }
     if (m_guardTransitionPrefixBarrierEnabled &&
         m_guardTransitionPrefixBarrierWaiting) {
+        bool previous_defer = m_guardTerminalResetDeferred;
+        m_guardTerminalResetDeferred = true;
         CheckGuardTransitionPrefixBarrier();
+        m_guardTerminalResetDeferred = previous_defer;
     }
     TraceGuardRelease(rx_qp, reason, remaining_bytes, active_before,
                       m_rate_flow_ctl_set.size());
+    if (reason == GUARD_RELEASE_COMPLETION) {
+        auto drain = m_guardDrainingRecords.find(PeekPointer(rx_qp));
+        if (drain != m_guardDrainingRecords.end() &&
+            drain->second.state != GUARD_DRAIN_PENDING) {
+            m_guardDrainingRecords.erase(drain);
+        }
+    }
+    if (m_guardApplyingPendingDrains) return true;
+
+    if (m_rate_flow_ctl_set.empty() && m_guardSerializedDraining &&
+        !m_guardDrainingRecords.empty() &&
+        m_guardFastpathPhase != GUARD_FASTPATH_IDLE) {
+        NS_ABORT_MSG_IF(
+            m_guardPendingGrantAcks != 0,
+            "GUARD V14 ACTIVE-empty drain cannot close pending ACKs");
+        bool previous_defer = m_guardTerminalResetDeferred;
+        m_guardTerminalResetDeferred = true;
+        FinishGuardFastpathGeneration();
+        m_guardTerminalResetDeferred = previous_defer;
+        NS_ABORT_MSG_IF(
+            m_guardFastpathPhase != GUARD_FASTPATH_IDLE ||
+                m_guardFrozenVectorActive,
+            "GUARD V14 ACTIVE-empty drain failed to close its transaction");
+    }
 
     // No grant needs to be sent after the last controlled flow leaves.  In
     // particular, do not compute C / N for N == 0.
     if (m_rate_flow_ctl_set.empty()) {
-        if (m_guardMembershipEvent.IsRunning()) {
-            Simulator::Cancel(m_guardMembershipEvent);
-            m_guardMembershipEmptyCancellations++;
-            if (m_guardInitialCollectionPending) {
-                m_guardInitialCollectionCancellations++;
-            }
-        }
-        m_guardPendingMembershipChanges = 0;
-        m_guardMembershipBatchStart = Time(0);
-        m_guardInitialCollectionStart = Time(0);
-        m_guardInitialCollectionDeadline = Time(0);
-        m_guardInitialCollectionTarget = Time(0);
-        m_guardLastVectorActiveFlows = 0;
-        m_guardHasEmittedVectorThisEpoch = false;
-        m_guardInitialCollectionPending = false;
-        if (m_guardRebalanceEvent.IsRunning()) Simulator::Cancel(m_guardRebalanceEvent);
-        if (m_guardReliabilityRefreshEvent.IsRunning()) {
-            Simulator::Cancel(m_guardReliabilityRefreshEvent);
-        }
-        m_guardPendingGrantAcks = 0;
-        if (GuardSmallSetFastpathEnabled()) ResetGuardFastpathEpoch();
-        m_guardLastRebalanceTime = Time(0);
+        SettleGuardActiveEmptyState();
         return true;
     }
     RequestGuardMembershipUpdate("release");
@@ -2399,6 +2925,26 @@ void RdmaHw::CountGuardFastpathAckFrame(uint8_t phase_tag) {
     }
 }
 
+void RdmaHw::CountGuardAcceptedAck(uint8_t phase_tag) {
+    if (!GuardSmallSetFastpathEnabled()) return;
+    switch (phase_tag) {
+        case GUARD_GRANT_PHASE_FAST_PREPARE:
+            m_guardFastpathPrepareAcks++;
+            break;
+        case GUARD_GRANT_PHASE_FAST_ACTIVATE:
+            m_guardFastpathActivateAcks++;
+            break;
+        case GUARD_GRANT_PHASE_TRANSITION_PREPARE:
+            m_guardTransitionPrepareAcks++;
+            break;
+        case GUARD_GRANT_PHASE_TRANSITION_ACTIVATE:
+            m_guardTransitionActivateAcks++;
+            break;
+        default:
+            NS_ABORT_MSG("GUARD required ACK has no exact fast-path phase");
+    }
+}
+
 uint32_t RdmaHw::NextGuardGrantGeneration() {
     NS_ABORT_MSG_IF(
         m_guardGrantGeneration == std::numeric_limits<uint32_t>::max(),
@@ -2407,6 +2953,22 @@ uint32_t RdmaHw::NextGuardGrantGeneration() {
 }
 
 void RdmaHw::ResetGuardFastpathEpoch() {
+    NS_ABORT_MSG_IF(m_guardSerializedDraining &&
+                        !m_guardDrainingRecords.empty(),
+                    "GUARD V14 cannot reset with draining reservations");
+    if (m_guardTransitionAuditRecord.active) {
+        if (m_guardTransitionAuditRecord.deadlineOutcome == "pending") {
+            ResolveGuardTransitionAudit("epoch_reset_unresolved");
+        }
+        FinalizeGuardTransitionAudit("epoch_reset");
+    }
+    if (m_guardTransitionAuditSink != NULL &&
+        m_guardTransitionAuditSink->file != NULL) {
+        NS_ABORT_MSG_IF(
+            m_guardTransitionAuditEpoch == std::numeric_limits<uint64_t>::max(),
+            "GUARD V14 transition audit epoch exhausted");
+        m_guardTransitionAuditEpoch++;
+    }
     if (m_guardMembershipEvent.IsRunning()) Simulator::Cancel(m_guardMembershipEvent);
     if (m_guardReliabilityRefreshEvent.IsRunning()) {
         Simulator::Cancel(m_guardReliabilityRefreshEvent);
@@ -2420,6 +2982,7 @@ void RdmaHw::ResetGuardFastpathEpoch() {
     m_guardFastpathHighInitialCommitted = false;
     m_guardFastpathCollectionReady = false;
     m_guardFastpathTransactionIsTransition = false;
+    m_guardFastpathReleaseRevectorActive = false;
     m_guardFastpathMembershipRevision = 0;
     m_guardFastpathConsumedMembershipRevision = 0;
     m_guardFastpathReadyMembershipRevision = 0;
@@ -2428,6 +2991,36 @@ void RdmaHw::ResetGuardFastpathEpoch() {
     m_guardFastpathEpochTransitionPrepareStartNs = 0;
     m_guardFastpathTransactionTargetN = 0;
     m_guardFastpathTransactionTargetMbps = 0;
+    m_guardFrozenVectorActive = false;
+    m_guardFrozenReceiverNic = 0;
+    m_guardFrozenReceiverCapacityBps = 0;
+    m_guardFrozenActiveRecords = 0;
+    m_guardFrozenDrainingRecords = 0;
+    m_guardFrozenDrainingReservedBps = 0;
+    m_guardFrozenAllocatableCapacityBps = 0;
+    m_guardFrozenEncodedTargetBps = 0;
+    m_guardFrozenMembershipRevision = 0;
+    // Allocation revision is a run-lifetime trace identity.  Membership and
+    // progress revisions are epoch-local, but reusing an allocation revision
+    // would make two frozen tuples indistinguishable in one bounded trace.
+    m_guardProgressRevision = 0;
+    m_guardConsumedProgressRevision = 0;
+    m_guardFrozenAllocationRevision = 0;
+    m_guardFrozenProgressRevision = 0;
+    m_guardFrozenReasonMask = 0;
+    m_guardProgressTransactionRevision = 0;
+    m_guardProgressTransactionActive = false;
+    m_guardProgressTransactionCapacityDirty = false;
+    m_guardCapacityDirty = false;
+    m_guardApplyingPendingDrains = false;
+    m_guardTerminalResetDeferred = false;
+    m_guardProgressDirtyFlows.clear();
+    m_guardProgressTransactionFlows.clear();
+    m_guardFrozenVectorHash = 0;
+    m_guardFrozenTargetVector.clear();
+    m_guardFrozenTargetHolds.clear();
+    m_guardFrozenTargetByFlow.clear();
+    m_guardGenerationLedger.clear();
     m_guardFastpathIncumbents.clear();
     m_guardFastpathWaiters.clear();
     m_guardFastpathTransactionWaiters.clear();
@@ -2516,6 +3109,251 @@ void RdmaHw::RequestGuardFastpathMembershipUpdate(const char *set_change) {
             m_guardFastpathMembershipRevision);
         SendGuardFastpathOptionalRelease();
     }
+}
+
+void RdmaHw::RequestGuardProgressRefresh(RdmaRxQueuePair *flow,
+                                         uint64_t progress_seq) {
+    NS_ABORT_MSG_IF(!m_guardSerializedProgressRefresh ||
+                        !m_guardMixedPgVectorFastpath,
+                    "GUARD V14 progress refresh escaped its vector coordinator");
+    if (m_rate_flow_ctl_set.find(flow) == m_rate_flow_ctl_set.end() ||
+        progress_seq <= flow->m_guard_pending_progress_seq) {
+        return;
+    }
+    flow->m_guard_pending_progress_seq = progress_seq;
+    bool first_dirty = m_guardProgressDirtyFlows.emplace(flow).second;
+    if (first_dirty) {
+        NS_ABORT_MSG_IF(
+            m_guardProgressRevision == std::numeric_limits<uint64_t>::max(),
+            "GUARD V14 progress revision exhausted");
+        m_guardProgressRevision++;
+        m_guardSerializedProgressRequests++;
+    }
+    bool busy = m_guardProgressTransactionActive ||
+                m_guardFastpathPhase != GUARD_FASTPATH_IDLE ||
+                m_guardPendingGrantAcks != 0 || m_guardFrozenVectorActive ||
+                IsGuardMembershipDirty() || m_guardFastpathCollectionReady;
+    if (busy) {
+        m_guardProgressEventsCoalesced++;
+        m_guardSerializedProgressBusyDeferrals++;
+        return;
+    }
+    StartGuardProgressTransaction();
+}
+
+void RdmaHw::StartGuardProgressTransaction() {
+    NS_ABORT_MSG_IF(!m_guardSerializedProgressRefresh ||
+                        m_guardProgressTransactionActive ||
+                        (m_guardProgressDirtyFlows.empty() &&
+                         !m_guardCapacityDirty) ||
+                        m_guardFastpathPhase != GUARD_FASTPATH_IDLE ||
+                        m_guardPendingGrantAcks != 0 || m_guardFrozenVectorActive,
+                    "GUARD V14 progress transaction crossed serialized state");
+    m_guardProgressTransactionFlows.swap(m_guardProgressDirtyFlows);
+    m_guardProgressTransactionCapacityDirty = m_guardCapacityDirty;
+    m_guardCapacityDirty = false;
+    m_guardProgressTransactionRevision = m_guardProgressRevision;
+    m_guardProgressTransactionActive = true;
+    m_guardSerializedProgressTransactions++;
+    SendGuardFastpathOptionalRelease();
+}
+
+void RdmaHw::CloseGuardProgressTransaction() {
+    if (!m_guardProgressTransactionActive) return;
+    NS_ABORT_MSG_IF(!m_guardFrozenVectorActive ||
+                        m_guardPendingGrantAcks != 0,
+                    "GUARD V14 progress committed before its vector barrier closed");
+    for (auto *flow : m_guardProgressTransactionFlows) {
+        if (m_rate_flow_ctl_set.find(flow) == m_rate_flow_ctl_set.end()) continue;
+        auto *target = GetGuardFrozenTarget(flow);
+        NS_ABORT_MSG_IF(target == NULL || target->tombstone ||
+                            target->progressRevision !=
+                                m_guardProgressTransactionRevision,
+                        "GUARD V14 progress commit lost its frozen record");
+        flow->m_guard_last_schedule_seq = std::max(
+            flow->m_guard_last_schedule_seq, target->frozenProgressSeq);
+        if (flow->m_guard_pending_progress_seq <=
+            flow->m_guard_last_schedule_seq) {
+            m_guardProgressDirtyFlows.erase(flow);
+        }
+    }
+    m_guardConsumedProgressRevision = std::max(
+        m_guardConsumedProgressRevision, m_guardProgressTransactionRevision);
+    m_guardProgressTransactionFlows.clear();
+    m_guardProgressTransactionRevision = 0;
+    m_guardProgressTransactionActive = false;
+    m_guardProgressTransactionCapacityDirty = false;
+    m_guardSerializedProgressCommits++;
+}
+
+uint64_t RdmaHw::CommitGuardPendingDrains() {
+    std::vector<RdmaRxQueuePair*> pending;
+    for (auto &item : m_guardDrainingRecords) {
+        if (item.second.state == GUARD_DRAIN_PENDING)
+            pending.push_back(item.first);
+    }
+    if (pending.empty()) return 0;
+    m_guardApplyingPendingDrains = true;
+    uint64_t committed = 0;
+    uint64_t proactive_removals = 0;
+    for (auto *flow : pending) {
+        auto found = m_guardDrainingRecords.find(flow);
+        if (found == m_guardDrainingRecords.end() ||
+            found->second.state != GUARD_DRAIN_PENDING) {
+            continue;
+        }
+        bool active = m_rate_flow_ctl_set.find(flow) !=
+                      m_rate_flow_ctl_set.end();
+        bool completed = CanReleaseGuardDraining(
+            found->second.hold->m_guard_flow_size,
+            found->second.hold->ReceiverNextExpectedSeq);
+        if (!active) {
+            NS_ABORT_MSG_IF(
+                !completed,
+                "GUARD V14 pending drain lost ACTIVE before contiguous completion");
+            found->second.state = GUARD_DRAINING;
+            m_guardDrainingRecords.erase(found);
+            m_guardDrainingCompletionReleases++;
+            committed++;
+            continue;
+        }
+        uint64_t effective_min_mbps =
+            m_minRate.GetBitRate() / 1000000ULL +
+            (m_minRate.GetBitRate() % 1000000ULL != 0 ? 1 : 0);
+        NS_ABORT_MSG_IF(
+            effective_min_mbps >
+                std::numeric_limits<uint64_t>::max() / 1000000ULL,
+            "GUARD V14 effective minimum rate overflow");
+        GuardDrainingRecord &record = found->second;
+        record.lastAckedUpperBoundBps =
+            flow->m_guard_last_acked_upper_bound_bps;
+        record.lastIssuedTargetBps = flow->m_guard_last_issued_target_bps;
+        record.generation = flow->m_guard_last_issued_generation;
+        record.reservedBps = ComputeGuardDrainingReservationBps(
+            record.lastAckedUpperBoundBps, record.lastIssuedTargetBps,
+            effective_min_mbps * 1000000ULL);
+        AssertGuardDrainReplacementFits(flow, record.receiverNic,
+                                        record.reservedBps);
+        found->second.state = GUARD_DRAINING;
+        m_guardDrainingMaxReservedBps = std::max(
+            m_guardDrainingMaxReservedBps,
+            GetGuardDrainingReservedBps(record.receiverNic));
+        Ptr<RdmaRxQueuePair> hold = found->second.hold;
+        bool removed = HandleRccRemove(
+            hold, GUARD_RELEASE_PROACTIVE,
+            found->second.remainingBytesAtRelease);
+        if (removed) {
+            committed++;
+            proactive_removals++;
+            if (CanReleaseGuardDraining(hold->m_guard_flow_size,
+                                        hold->ReceiverNextExpectedSeq)) {
+                auto completed_record = m_guardDrainingRecords.find(flow);
+                NS_ABORT_MSG_IF(
+                    completed_record == m_guardDrainingRecords.end() ||
+                        completed_record->second.state != GUARD_DRAINING,
+                    "GUARD V14 boundary completion lost its draining record");
+                m_guardDrainingRecords.erase(completed_record);
+                m_guardDrainingCompletionReleases++;
+                m_guardCompletionReleases++;
+            }
+        }
+    }
+    m_guardApplyingPendingDrains = false;
+    m_guardDrainingBoundaryCommits += committed;
+    if (proactive_removals > 0 && !m_rate_flow_ctl_set.empty()) {
+        NS_ABORT_MSG_IF(
+            proactive_removals > std::numeric_limits<uint64_t>::max() -
+                                     m_guardFastpathMembershipRevision,
+            "GUARD V14 pending-drain membership revision exhausted");
+        m_guardMembershipChangesDeferred += proactive_removals;
+        m_guardFastpathMembershipRevision += proactive_removals;
+        m_guardPendingMembershipChanges =
+            m_guardFastpathMembershipRevision -
+            m_guardFastpathConsumedMembershipRevision;
+    }
+    return committed;
+}
+
+void RdmaHw::SettleGuardActiveEmptyState() {
+    NS_ABORT_MSG_IF(!m_rate_flow_ctl_set.empty(),
+                    "GUARD active-empty cleanup retained an ACTIVE flow");
+    if (m_guardMembershipEvent.IsRunning()) {
+        Simulator::Cancel(m_guardMembershipEvent);
+        m_guardMembershipEmptyCancellations++;
+        if (m_guardInitialCollectionPending) {
+            m_guardInitialCollectionCancellations++;
+        }
+    }
+    m_guardPendingMembershipChanges = 0;
+    m_guardMembershipBatchStart = Time(0);
+    m_guardInitialCollectionStart = Time(0);
+    m_guardInitialCollectionDeadline = Time(0);
+    m_guardInitialCollectionTarget = Time(0);
+    m_guardLastVectorActiveFlows = 0;
+    m_guardHasEmittedVectorThisEpoch = false;
+    m_guardInitialCollectionPending = false;
+    if (m_guardRebalanceEvent.IsRunning()) Simulator::Cancel(m_guardRebalanceEvent);
+    if (m_guardReliabilityRefreshEvent.IsRunning()) {
+        Simulator::Cancel(m_guardReliabilityRefreshEvent);
+    }
+    NS_ABORT_MSG_IF(
+        m_guardSerializedDraining &&
+            (m_guardFastpathPhase != GUARD_FASTPATH_IDLE ||
+             m_guardPendingGrantAcks != 0 || m_guardFrozenVectorActive),
+        "GUARD V14 ACTIVE-empty state crossed a live transaction");
+    m_guardPendingGrantAcks = 0;
+    if (GuardSmallSetFastpathEnabled() && m_guardSerializedDraining) {
+        m_guardFastpathConsumedMembershipRevision =
+            m_guardFastpathMembershipRevision;
+        m_guardConsumedProgressRevision = m_guardProgressRevision;
+        m_guardProgressDirtyFlows.clear();
+        m_guardProgressTransactionFlows.clear();
+        m_guardProgressTransactionRevision = 0;
+        m_guardProgressTransactionActive = false;
+        m_guardProgressTransactionCapacityDirty = false;
+        m_guardCapacityDirty = false;
+        if (m_guardDrainingRecords.empty()) {
+            NS_ABORT_MSG_IF(!CanResetGuardCoordinator(),
+                            "GUARD V14 terminal cleanup retained coordinator state");
+            ResetGuardFastpathEpoch();
+        }
+    } else if (GuardSmallSetFastpathEnabled()) {
+        ResetGuardFastpathEpoch();
+    }
+    m_guardLastRebalanceTime = Time(0);
+}
+
+bool RdmaHw::CanResetGuardCoordinator() const {
+    bool prefix_clean = !m_guardTransitionPrefixBarrierWaiting &&
+                        !m_guardTransitionFallbackActive &&
+                        !m_guardTransitionPrefixWatchdogBudgetActive &&
+                        m_guardTransitionActivationOrder.empty() &&
+                        m_guardTransitionActivationHolds.empty() &&
+                        m_guardTransitionPrefixTargets.empty() &&
+                        m_guardTransitionCurrentBatch.empty();
+    bool vector_clean = !m_guardFrozenVectorActive &&
+                        m_guardFrozenTargetVector.empty() &&
+                        m_guardFrozenTargetHolds.empty() &&
+                        m_guardFrozenTargetByFlow.empty() &&
+                        m_guardGenerationLedger.empty();
+    bool revisions_clean =
+        m_guardPendingMembershipChanges == 0 &&
+        m_guardFastpathConsumedMembershipRevision ==
+            m_guardFastpathMembershipRevision &&
+        m_guardConsumedProgressRevision == m_guardProgressRevision;
+    return m_rate_flow_ctl_set.empty() && m_guardDrainingRecords.empty() &&
+           m_guardFastpathIncumbents.empty() &&
+           m_guardFastpathWaiters.empty() &&
+           m_guardFastpathTransactionWaiters.empty() &&
+           m_guardFastpathReadyWaiters.empty() && vector_clean &&
+           prefix_clean && revisions_clean &&
+           m_guardFastpathPhase == GUARD_FASTPATH_IDLE &&
+           m_guardPendingGrantAcks == 0 &&
+           !m_guardProgressTransactionActive &&
+           !m_guardProgressTransactionCapacityDirty &&
+           !m_guardTerminalResetDeferred &&
+           m_guardProgressDirtyFlows.empty() &&
+           m_guardProgressTransactionFlows.empty() && !m_guardCapacityDirty;
 }
 
 void RdmaHw::ScheduleGuardFastpathHighCollection(const char *set_change) {
@@ -2643,6 +3481,395 @@ void RdmaHw::FlushGuardFastpathHighCollection() {
     }
 }
 
+void RdmaHw::FreezeGuardFastpathTargetVector(uint64_t membership_revision) {
+    NS_ABORT_MSG_IF(!m_guardMixedPgVectorFastpath ||
+                        m_guardFrozenVectorActive,
+                    "GUARD V14 vector freeze crossed transaction state");
+    std::vector<RdmaRxQueuePair*> cohort;
+    std::unordered_set<RdmaRxQueuePair*> cohort_set;
+    cohort.reserve(m_guardFastpathIncumbents.size() +
+                   m_guardFastpathTransactionWaiters.size());
+    for (auto *flow : m_guardFastpathIncumbents) {
+        if (m_rate_flow_ctl_set.find(flow) != m_rate_flow_ctl_set.end()) {
+            NS_ABORT_MSG_IF(!cohort_set.emplace(flow).second,
+                            "GUARD V14 frozen cohort contains duplicate roles");
+            cohort.push_back(flow);
+        }
+    }
+    for (auto *flow : m_guardFastpathTransactionWaiters) {
+        if (m_rate_flow_ctl_set.find(flow) != m_rate_flow_ctl_set.end()) {
+            NS_ABORT_MSG_IF(!cohort_set.emplace(flow).second,
+                            "GUARD V14 frozen cohort contains duplicate roles");
+            cohort.push_back(flow);
+        }
+    }
+    NS_ABORT_MSG_IF(cohort.empty(), "GUARD V14 cannot freeze an empty vector");
+    uint32_t receiver_nic = GetNicIdxOfRxQp(cohort.front());
+    uint64_t capacity_bps =
+        m_nic[receiver_nic].dev->GetDataRate().GetBitRate();
+    NS_ABORT_MSG_IF(capacity_bps == 0,
+                    "GUARD V14 vector receiver has zero capacity");
+    // The frozen cohort and the live ACTIVE set are intentionally distinct.
+    // A busy collection can leave a later registration in the global set;
+    // prove that every such record is a gated, zero-authority deferred waiter
+    // instead of silently admitting it to this immutable vector.
+    for (auto *flow : m_rate_flow_ctl_set) {
+        uint32_t flow_nic = GetNicIdxOfRxQp(flow);
+        uint64_t flow_capacity_bps =
+            m_nic[flow_nic].dev->GetDataRate().GetBitRate();
+        GuardFrozenActiveProvenanceInput provenance = {
+            cohort_set.find(flow) != cohort_set.end(),
+            m_guardFastpathWaiters.find(flow) != m_guardFastpathWaiters.end(),
+            m_guardFastpathIncumbents.find(flow) !=
+                m_guardFastpathIncumbents.end(),
+            m_guardFastpathTransactionWaiters.find(flow) !=
+                m_guardFastpathTransactionWaiters.end(),
+            flow->m_guard_registration_membership_revision,
+            m_guardFastpathMembershipRevision,
+            membership_revision,
+            m_guardPendingMembershipChanges,
+            flow_nic,
+            receiver_nic,
+            flow_capacity_bps,
+            capacity_bps,
+            flow->m_guard_last_acked_generation,
+            flow->m_guard_last_acked_upper_bound_bps,
+            flow->m_guard_last_issued_generation,
+            flow->m_guard_last_issued_target_bps,
+            flow->m_guard_grant_generation,
+            flow->m_guard_grant_rate_bps,
+            flow->m_guard_grant_upper_bound_bps,
+            flow->m_guard_grant_generation_acked,
+            flow->m_guard_register_ns,
+            flow->m_guard_flow_size,
+            flow->m_guard_has_first_grant_gate_bytes,
+            flow->m_guard_first_grant_gate_bytes,
+            flow->m_base_rtt_sec};
+        NS_ABORT_MSG_IF(
+            ClassifyGuardFrozenActiveProvenance(provenance) ==
+                GUARD_FROZEN_ACTIVE_INVALID,
+            "GUARD V14 live ACTIVE record violates frozen cohort provenance");
+    }
+    uint64_t draining_reserved_bps =
+        GetGuardDrainingReservedBps(receiver_nic);
+    NS_ABORT_MSG_IF(draining_reserved_bps > capacity_bps,
+                    "GUARD V14 draining reservation exceeds receiver capacity");
+    uint64_t allocatable_bps = capacity_bps - draining_reserved_bps;
+    uint64_t effective_min_mbps = m_minRate.GetBitRate() / 1000000ULL +
+        (m_minRate.GetBitRate() % 1000000ULL != 0 ? 1 : 0);
+    uint64_t effective_min_bps = effective_min_mbps * 1000000ULL;
+    __uint128_t waiter_floor = static_cast<__uint128_t>(
+        m_guardFastpathTransactionWaiters.size()) * effective_min_bps;
+    NS_ABORT_MSG_IF(
+        waiter_floor > allocatable_bps,
+        "GUARD V14 draining capacity cannot admit the frozen waiter floor");
+    std::vector<GuardVectorTargetInput> inputs;
+    inputs.reserve(cohort.size());
+    for (auto *flow : cohort) {
+        uint32_t nic = GetNicIdxOfRxQp(flow);
+        uint64_t flow_capacity = m_nic[nic].dev->GetDataRate().GetBitRate();
+        NS_ABORT_MSG_IF(nic != receiver_nic || flow_capacity != capacity_bps,
+                        "GUARD V14 vector spans receiver NICs or capacities");
+        uint64_t remaining =
+            flow->m_guard_flow_size > flow->ReceiverNextExpectedSeq
+                ? flow->m_guard_flow_size - flow->ReceiverNextExpectedSeq
+                : 0;
+        uint8_t role = m_guardFastpathTransactionWaiters.find(flow) !=
+                               m_guardFastpathTransactionWaiters.end()
+                           ? GUARD_VECTOR_WAITER
+                           : GUARD_VECTOR_INCUMBENT;
+        GuardQpIdentity identity = {flow->sip, flow->dip, flow->sport,
+                                    flow->dport, flow->m_guard_pg};
+        inputs.push_back({identity, role, remaining,
+                          flow->ReceiverNextExpectedSeq, 0, flow});
+    }
+    NS_ABORT_MSG_IF(
+        !ComputeGuardFrozenRequestedTargets(allocatable_bps, &inputs),
+        "GUARD V14 frozen remaining-aware allocation is infeasible");
+    NS_ABORT_MSG_IF(
+        m_guardAllocationRevision == std::numeric_limits<uint64_t>::max(),
+        "GUARD V14 allocation revision exhausted");
+    uint64_t allocation_revision = ++m_guardAllocationRevision;
+    uint64_t frozen_progress_revision = m_guardProgressTransactionActive
+                                            ? m_guardProgressTransactionRevision
+                                            : m_guardProgressRevision;
+    uint64_t reason_mask = 0;
+    if (!m_guardProgressTransactionActive) reason_mask |= 1ULL;
+    if (m_guardProgressTransactionActive &&
+        !m_guardProgressTransactionFlows.empty())
+        reason_mask |= 2ULL;
+    if (m_guardProgressTransactionActive &&
+        m_guardProgressTransactionCapacityDirty)
+        reason_mask |= 4ULL;
+    for (const auto &item : m_guardDrainingRecords) {
+        if (item.second.state == GUARD_DRAIN_PENDING) {
+            reason_mask |= 8ULL;
+            break;
+        }
+    }
+    NS_ABORT_MSG_IF(reason_mask == 0,
+                    "GUARD V14 frozen vector lost its scheduling reason");
+    NS_ABORT_MSG_IF(
+        !EncodeGuardTargetVector(inputs, receiver_nic, capacity_bps,
+                                 draining_reserved_bps, allocatable_bps,
+                                 m_minRate.GetBitRate(), membership_revision,
+                                 allocation_revision, frozen_progress_revision,
+                                 reason_mask,
+                                 &m_guardFrozenTargetVector,
+                                 &m_guardFrozenVectorHash),
+        "GUARD V14 target vector cannot be encoded within receiver capacity");
+    m_guardFrozenTargetByFlow.clear();
+    m_guardFrozenTargetHolds.clear();
+    for (size_t index = 0; index < m_guardFrozenTargetVector.size(); ++index) {
+        RdmaRxQueuePair *flow = m_guardFrozenTargetVector[index].flow;
+        NS_ABORT_MSG_IF(flow == NULL ||
+                            !m_guardFrozenTargetByFlow.emplace(flow, index).second,
+                        "GUARD V14 vector contains a duplicate live recipient");
+        m_guardFrozenTargetHolds.push_back(Ptr<RdmaRxQueuePair>(flow));
+    }
+    m_guardFrozenReceiverNic = receiver_nic;
+    m_guardFrozenReceiverCapacityBps = capacity_bps;
+    uint64_t frozen_draining_records = 0;
+    for (const auto &item : m_guardDrainingRecords) {
+        if (item.second.state != GUARD_DRAINING) continue;
+        NS_ABORT_MSG_IF(item.second.receiverNic != receiver_nic,
+                        "GUARD V14 frozen drain count spans receiver resources");
+        frozen_draining_records++;
+    }
+    __uint128_t encoded_target_bps = 0;
+    for (const auto &target : m_guardFrozenTargetVector) {
+        encoded_target_bps +=
+            static_cast<uint64_t>(target.targetMbps) * 1000000ULL;
+    }
+    NS_ABORT_MSG_IF(encoded_target_bps > allocatable_bps,
+                    "GUARD V14 frozen encoded vector exceeds allocatable capacity");
+    m_guardFrozenActiveRecords = cohort.size();
+    m_guardFrozenDrainingRecords = frozen_draining_records;
+    m_guardFrozenDrainingReservedBps = draining_reserved_bps;
+    m_guardFrozenAllocatableCapacityBps = allocatable_bps;
+    m_guardFrozenEncodedTargetBps =
+        static_cast<uint64_t>(encoded_target_bps);
+    m_guardFrozenMembershipRevision = membership_revision;
+    m_guardFrozenAllocationRevision = allocation_revision;
+    m_guardFrozenProgressRevision = frozen_progress_revision;
+    m_guardFrozenReasonMask = reason_mask;
+    m_guardFrozenVectorActive = true;
+    m_guardVectorFreezes++;
+    m_guardVectorMaxEntries = std::max<uint64_t>(
+        m_guardVectorMaxEntries, m_guardFrozenTargetVector.size());
+    std::unordered_set<uint16_t> priority_groups;
+    for (const auto &target : m_guardFrozenTargetVector)
+        priority_groups.emplace(target.identity.pg);
+    if (priority_groups.size() > 1) m_guardVectorMixedPgFreezes++;
+    m_guardVectorLastHash = m_guardFrozenVectorHash;
+}
+
+const GuardFrozenTargetRecord *RdmaHw::GetGuardFrozenTarget(
+    RdmaRxQueuePair *flow) const {
+    auto found = m_guardFrozenTargetByFlow.find(flow);
+    if (found == m_guardFrozenTargetByFlow.end()) return NULL;
+    NS_ABORT_MSG_IF(found->second >= m_guardFrozenTargetVector.size(),
+                    "GUARD V14 frozen-vector index escaped its bounds");
+    return &m_guardFrozenTargetVector[found->second];
+}
+
+uint64_t RdmaHw::GetGuardPotentialUpperBoundBps(RdmaRxQueuePair *flow) const {
+    return std::max(flow->m_guard_last_acked_upper_bound_bps,
+                    flow->m_guard_last_issued_target_bps);
+}
+
+void RdmaHw::AssertGuardFrozenPotentialFits() {
+    NS_ABORT_MSG_IF(!m_guardFrozenVectorActive ||
+                        m_guardFrozenReceiverCapacityBps == 0,
+                    "GUARD V14 potential check lost its frozen resource");
+    __uint128_t potential_bps = m_guardFrozenDrainingReservedBps;
+    for (auto *flow : m_rate_flow_ctl_set) {
+        NS_ABORT_MSG_IF(GetNicIdxOfRxQp(flow) != m_guardFrozenReceiverNic,
+                        "GUARD V14 potential check spans receiver NICs");
+        potential_bps += GetGuardPotentialUpperBoundBps(flow);
+    }
+    NS_ABORT_MSG_IF(
+        potential_bps > m_guardFrozenReceiverCapacityBps,
+        "GUARD V14 offered potential exceeds frozen receiver capacity");
+}
+
+void RdmaHw::AssertGuardDrainReplacementFits(RdmaRxQueuePair *flow,
+                                             uint32_t receiver_nic,
+                                             uint64_t reserved_bps) {
+    NS_ABORT_MSG_IF(flow == NULL || reserved_bps == 0 ||
+                        m_rate_flow_ctl_set.find(flow) ==
+                            m_rate_flow_ctl_set.end(),
+                    "GUARD V14 drain replacement requires one active flow");
+    uint64_t capacity_bps =
+        m_nic[receiver_nic].dev->GetDataRate().GetBitRate();
+    __uint128_t replacement_bps =
+        GetGuardDrainingReservedBps(receiver_nic);
+    for (auto *active : m_rate_flow_ctl_set) {
+        NS_ABORT_MSG_IF(GetNicIdxOfRxQp(active) != receiver_nic,
+                        "GUARD V14 drain replacement spans receiver NICs");
+        if (active != flow)
+            replacement_bps += GetGuardPotentialUpperBoundBps(active);
+    }
+    replacement_bps += reserved_bps;
+    NS_ABORT_MSG_IF(
+        replacement_bps > capacity_bps,
+        "GUARD V14 drain replacement exceeds receiver capacity");
+}
+
+uint64_t RdmaHw::GetGuardDrainingReservedBps(uint32_t receiver_nic) const {
+    __uint128_t reserved = 0;
+    for (const auto &item : m_guardDrainingRecords) {
+        const GuardDrainingRecord &record = item.second;
+        if (record.state != GUARD_DRAINING) continue;
+        NS_ABORT_MSG_IF(record.receiverNic != receiver_nic,
+                        "GUARD V14 draining record spans receiver NICs");
+        reserved += record.reservedBps;
+        NS_ABORT_MSG_IF(
+            reserved > std::numeric_limits<uint64_t>::max(),
+            "GUARD V14 draining reservation sum overflow");
+    }
+    return static_cast<uint64_t>(reserved);
+}
+
+bool RdmaHw::ValidateGuardGrantTraceSnapshot(
+    uint64_t frozen_capacity_bps, uint64_t frozen_draining_bps,
+    uint64_t frozen_allocatable_bps, uint64_t frozen_encoded_target_bps,
+    uint64_t grant_rate_bps, uint64_t live_draining_bps,
+    bool capacity_recompute_pending) {
+    return frozen_capacity_bps > 0 &&
+           frozen_draining_bps <= frozen_capacity_bps &&
+           frozen_allocatable_bps ==
+               frozen_capacity_bps - frozen_draining_bps &&
+           frozen_encoded_target_bps <= frozen_allocatable_bps &&
+           grant_rate_bps <= frozen_allocatable_bps &&
+           live_draining_bps <= frozen_draining_bps &&
+           (live_draining_bps == frozen_draining_bps ||
+            capacity_recompute_pending);
+}
+
+uint64_t RdmaHw::ComputeGuardDrainingReservationBps(
+    uint64_t last_acked_bps, uint64_t last_issued_bps,
+    uint64_t effective_min_bps) {
+    return std::max(effective_min_bps,
+                    std::max(last_acked_bps, last_issued_bps));
+}
+
+bool RdmaHw::CanReleaseGuardDraining(uint64_t flow_size_bytes,
+                                     uint64_t next_expected_seq) {
+    return flow_size_bytes > 0 && next_expected_seq >= flow_size_bytes;
+}
+
+bool RdmaHw::ComputeGuardFrozenRequestedTargets(
+    uint64_t allocatable_bps,
+    std::vector<GuardVectorTargetInput> *inputs) const {
+    if (inputs == NULL || inputs->empty() || allocatable_bps == 0) return false;
+    uint64_t effective_min_mbps = m_minRate.GetBitRate() / 1000000ULL +
+        (m_minRate.GetBitRate() % 1000000ULL != 0 ? 1 : 0);
+    uint64_t effective_min_bps = effective_min_mbps * 1000000ULL;
+    __uint128_t floor_budget =
+        static_cast<__uint128_t>(effective_min_bps) * inputs->size();
+    if (floor_budget > allocatable_bps) return false;
+    uint64_t equal_share = allocatable_bps / inputs->size();
+    if (!m_guardRemainingAware) {
+        for (auto &input : *inputs) input.requestedBps = equal_share;
+        return true;
+    }
+
+    uint64_t minimum_remaining = std::numeric_limits<uint64_t>::max();
+    for (const auto &input : *inputs) {
+        minimum_remaining = std::min(
+            minimum_remaining, std::max<uint64_t>(input.remainingBytes, m_mtu));
+    }
+    uint64_t configured_floor = static_cast<uint64_t>(
+        static_cast<long double>(equal_share) * m_guardMinShareFraction);
+    uint64_t floor_share = std::max(effective_min_bps, configured_floor);
+    __uint128_t total_floor =
+        static_cast<__uint128_t>(floor_share) * inputs->size();
+    if (total_floor > allocatable_bps) return false;
+    uint64_t residual = allocatable_bps - static_cast<uint64_t>(total_floor);
+    std::vector<long double> weights;
+    weights.reserve(inputs->size());
+    long double weight_sum = 0.0L;
+    for (const auto &input : *inputs) {
+        uint64_t remaining = std::max<uint64_t>(input.remainingBytes, m_mtu);
+        long double weight = std::pow(
+            static_cast<long double>(minimum_remaining) / remaining,
+            m_guardRemainingExponent);
+        weights.push_back(weight);
+        weight_sum += weight;
+    }
+    if (!(weight_sum > 0.0L)) return false;
+    for (size_t index = 0; index < inputs->size(); ++index) {
+        (*inputs)[index].requestedBps = floor_share +
+            static_cast<uint64_t>(static_cast<long double>(residual) *
+                                  weights[index] / weight_sum);
+    }
+    return true;
+}
+
+bool RdmaHw::IsGuardLedgerActionCompatible(uint8_t action,
+                                           uint8_t phase_tag) {
+    bool prepare = phase_tag == GUARD_GRANT_PHASE_FAST_PREPARE ||
+                   phase_tag == GUARD_GRANT_PHASE_TRANSITION_PREPARE;
+    bool activate = phase_tag == GUARD_GRANT_PHASE_FAST_ACTIVATE ||
+                    phase_tag == GUARD_GRANT_PHASE_TRANSITION_ACTIVATE;
+    if (action == GUARD_VECTOR_PREPARE_DECREASE ||
+        action == GUARD_VECTOR_RELEASE_DECREASE) {
+        return prepare;
+    }
+    if (action == GUARD_VECTOR_ACTIVATE_WAITER ||
+        action == GUARD_VECTOR_ACTIVATE_INCREASE ||
+        action == GUARD_VECTOR_RELEASE_INCREASE) {
+        return activate;
+    }
+    return false;
+}
+
+bool RdmaHw::DoesGuardRetiredAckMatch(
+    const GuardRetiredAckRecord &record,
+    const GuardQpIdentity &wire_identity, uint32_t generation,
+    uint8_t phase_tag) {
+    return record.identity == wire_identity &&
+           record.generation == generation &&
+           record.phaseTag == phase_tag &&
+           IsGuardLedgerActionCompatible(record.action, phase_tag);
+}
+
+size_t RdmaHw::FindGuardRetiredAckRecord(
+    const GuardQpIdentity &identity, uint32_t generation) const {
+    for (size_t index = 0; index < m_guardRetiredAckRecords.size(); ++index) {
+        const GuardRetiredAckRecord &record = m_guardRetiredAckRecords[index];
+        if (record.identity == identity && record.generation == generation) {
+            return index;
+        }
+    }
+    return m_guardRetiredAckRecords.size();
+}
+
+void RdmaHw::RetireGuardRequiredAck(
+    Ptr<RdmaRxQueuePair> qp,
+    const GuardGenerationLedgerEntry &ledger) {
+    static const size_t kGuardRetiredAckRecordCap = 4096;
+    NS_ABORT_MSG_IF(qp == NULL,
+                    "GUARD V14 cannot retire an ACK without its receiver QP");
+    NS_ABORT_MSG_IF(
+        FindGuardRetiredAckRecord(ledger.identity, ledger.generation) !=
+            m_guardRetiredAckRecords.size(),
+        "GUARD V14 duplicate retired ACK identity and generation");
+    if (m_guardRetiredAckRecords.size() >= kGuardRetiredAckRecordCap) {
+        m_guardRetiredAckOverflow++;
+        NS_ABORT_MSG("GUARD V14 retired ACK ledger exhausted");
+    }
+    GuardRetiredAckRecord record = {
+        ledger.identity, ledger.generation, ledger.phaseTag, ledger.action,
+        ledger.targetMbps, qp->m_flow_id, m_guardFastpathTransaction,
+        static_cast<uint64_t>(Simulator::Now().GetNanoSeconds())};
+    m_guardRetiredAckRecords.emplace_back(record);
+    m_guardRetiredAckClosures++;
+    m_guardRetiredAckPeak = std::max<uint64_t>(
+        m_guardRetiredAckPeak, m_guardRetiredAckRecords.size());
+}
+
 void RdmaHw::StartGuardFastpathTransaction() {
     NS_ABORT_MSG_IF(m_guardFastpathPhase != GUARD_FASTPATH_IDLE ||
                         m_guardPendingGrantAcks != 0,
@@ -2676,6 +3903,12 @@ void RdmaHw::StartGuardFastpathTransaction() {
         FinishGuardFastpathTransaction();
         return;
     }
+    if (m_guardTransitionAuditSink != NULL &&
+        m_guardTransitionAuditSink->file != NULL) {
+        NS_ABORT_MSG_IF(
+            m_guardFastpathTransaction == std::numeric_limits<uint64_t>::max(),
+            "GUARD V14 transition audit transaction exhausted");
+    }
     m_guardFastpathTransaction++;
     m_guardFastpathTransactions++;
     m_guardFastpathTransactionTargetN =
@@ -2690,6 +3923,9 @@ void RdmaHw::StartGuardFastpathTransaction() {
         m_nic[GetNicIdxOfRxQp(sample)].dev->GetDataRate().GetBitRate();
     m_guardFastpathTransactionTargetMbps = std::max<uint32_t>(
         1, line_rate_bps / m_guardFastpathTransactionTargetN / 1000000);
+    if (m_guardMixedPgVectorFastpath) {
+        FreezeGuardFastpathTargetVector(snapshot_revision);
+    }
     if (m_guardFastpathTransactionIsTransition) {
         m_guardFastpathHighTransitionRegisteredN =
             m_guardFastpathTransactionTargetN;
@@ -2740,11 +3976,13 @@ bool RdmaHw::ValidateGuardTransitionQueueCohort() {
             expected_capacity_bps = capacity_bps;
             return;
         }
-        if (nic != expected_nic || flow->m_guard_pg != expected_pg ||
+        bool priority_group_mismatch =
+            !m_guardMixedPgVectorFastpath && flow->m_guard_pg != expected_pg;
+        if (nic != expected_nic || priority_group_mismatch ||
             capacity_bps != expected_capacity_bps) {
             m_guardTransitionPrefixBarrierViolations++;
             m_guardFastpathBarrierViolations++;
-            NS_ABORT_MSG("GUARD V12 transition spans receiver NICs or priority groups");
+            NS_ABORT_MSG("GUARD transition spans receiver capacities or a disallowed priority group");
         }
     };
     for (auto *flow : m_guardFastpathIncumbents) validate(flow);
@@ -2754,12 +3992,25 @@ bool RdmaHw::ValidateGuardTransitionQueueCohort() {
 
 void RdmaHw::StartGuardFastpathPrepare() {
     std::unordered_set<RdmaRxQueuePair*> recipients;
-    uint64_t target_bps =
-        static_cast<uint64_t>(m_guardFastpathTransactionTargetMbps) * 1000000;
     for (auto *flow : m_guardFastpathIncumbents) {
         NS_ABORT_MSG_IF(flow->m_guard_grant_upper_bound_bps == 0,
                         "GUARD fast-path incumbent lacks an acknowledged cap");
-        if (flow->m_guard_grant_upper_bound_bps > target_bps) {
+        uint64_t target_bps =
+            static_cast<uint64_t>(m_guardFastpathTransactionTargetMbps) *
+            1000000ULL;
+        if (m_guardMixedPgVectorFastpath) {
+            const GuardFrozenTargetRecord *target =
+                GetGuardFrozenTarget(flow);
+            NS_ABORT_MSG_IF(target == NULL ||
+                                target->role != GUARD_VECTOR_INCUMBENT,
+                            "GUARD V14 prepare lost an incumbent target");
+            target_bps = static_cast<uint64_t>(target->targetMbps) *
+                         1000000ULL;
+        }
+        bool requires_decrease = m_guardMixedPgVectorFastpath
+                                     ? GetGuardPotentialUpperBoundBps(flow) > target_bps
+                                     : flow->m_guard_grant_upper_bound_bps > target_bps;
+        if (requires_decrease) {
             recipients.emplace(flow);
         }
     }
@@ -2798,6 +4049,8 @@ void RdmaHw::StartGuardFastpathPrepare() {
         StartGuardFastpathActivate();
         return;
     }
+    if (m_guardMixedPgVectorFastpath)
+        m_guardVectorPrepareDecreases += recipients.size();
     m_guardFastpathPhase = GUARD_FASTPATH_PREPARE;
     if (transition) {
         m_guardTransitionPrepareBatches++;
@@ -2824,11 +4077,27 @@ void RdmaHw::StartGuardFastpathActivate() {
     }
     if (transition && m_guardTransitionPrefixBarrierEnabled) {
         std::vector<RdmaRxQueuePair*> recipients;
-        for (auto *flow : m_guardTransitionActivationOrder) {
-            if (m_rate_flow_ctl_set.find(flow) != m_rate_flow_ctl_set.end() &&
-                m_guardFastpathTransactionWaiters.find(flow) !=
-                    m_guardFastpathTransactionWaiters.end()) {
-                recipients.push_back(flow);
+        if (m_guardMixedPgVectorFastpath) {
+            for (const auto &target : m_guardFrozenTargetVector) {
+                RdmaRxQueuePair *flow = target.flow;
+                if (m_rate_flow_ctl_set.find(flow) ==
+                    m_rate_flow_ctl_set.end()) {
+                    continue;
+                }
+                uint64_t target_bps =
+                    static_cast<uint64_t>(target.targetMbps) * 1000000ULL;
+                if (target.role == GUARD_VECTOR_WAITER ||
+                    GetGuardPotentialUpperBoundBps(flow) < target_bps) {
+                    recipients.push_back(flow);
+                }
+            }
+        } else {
+            for (auto *flow : m_guardTransitionActivationOrder) {
+                if (m_rate_flow_ctl_set.find(flow) != m_rate_flow_ctl_set.end() &&
+                    m_guardFastpathTransactionWaiters.find(flow) !=
+                        m_guardFastpathTransactionWaiters.end()) {
+                    recipients.push_back(flow);
+                }
             }
         }
         if (recipients.empty()) {
@@ -2853,6 +4122,19 @@ void RdmaHw::StartGuardFastpathActivate() {
             recipients.emplace(flow);
         }
     }
+    if (m_guardMixedPgVectorFastpath) {
+        for (auto *flow : m_guardFastpathIncumbents) {
+            if (m_rate_flow_ctl_set.find(flow) == m_rate_flow_ctl_set.end())
+                continue;
+            const GuardFrozenTargetRecord *target = GetGuardFrozenTarget(flow);
+            NS_ABORT_MSG_IF(target == NULL,
+                            "GUARD V14 activation lost an incumbent target");
+            uint64_t target_bps =
+                static_cast<uint64_t>(target->targetMbps) * 1000000ULL;
+            if (GetGuardPotentialUpperBoundBps(flow) < target_bps)
+                recipients.emplace(flow);
+        }
+    }
     if (recipients.empty()) {
         FinishGuardFastpathTransaction();
         return;
@@ -2875,12 +4157,14 @@ void RdmaHw::StartGuardFastpathActivate() {
 bool RdmaHw::ComputeGuardTransitionPrefixWireBudget(
     const std::vector<GuardTransitionPrefixWaiterBudgetInput> &waiters,
     const std::vector<GuardTransitionPrefixIncumbentBudgetInput> &incumbents,
+    const std::vector<GuardTransitionPrefixDrainingBudgetInput> &draining,
     uint32_t mtu, uint32_t header_bytes_per_packet,
     uint64_t receiver_capacity_bps,
     GuardTransitionPrefixWireBudget *budget) {
     if (budget == NULL || waiters.empty() || mtu == 0 ||
         header_bytes_per_packet == 0 || receiver_capacity_bps == 0 ||
-        incumbents.size() > std::numeric_limits<uint64_t>::max()) {
+        incumbents.size() > std::numeric_limits<uint64_t>::max() ||
+        draining.size() > std::numeric_limits<uint64_t>::max()) {
         return false;
     }
     const __uint128_t wide_max = ~static_cast<__uint128_t>(0);
@@ -2939,10 +4223,22 @@ bool RdmaHw::ComputeGuardTransitionPrefixWireBudget(
         occupancy_bps += incumbent.acknowledgedUpperBoundBps;
         max_rtt_ns = std::max(max_rtt_ns, incumbent.baseRttNs);
     }
+    __uint128_t draining_bps = 0;
+    for (const auto &record : draining) {
+        if (record.reservedUpperBoundBps == 0 || record.baseRttNs == 0 ||
+            occupancy_bps > wide_max - record.reservedUpperBoundBps ||
+            draining_bps > wide_max - record.reservedUpperBoundBps) {
+            return false;
+        }
+        occupancy_bps += record.reservedUpperBoundBps;
+        draining_bps += record.reservedUpperBoundBps;
+        max_rtt_ns = std::max(max_rtt_ns, record.baseRttNs);
+    }
     if ((!incumbents.empty() && occupancy_bps == 0) ||
         occupancy_bps >= receiver_capacity_bps ||
         rounded_payload_budget_bytes > u64_max || packet_count > u64_max ||
-        wire_bytes > u64_max || occupancy_bps > u64_max) {
+        wire_bytes > u64_max || occupancy_bps > u64_max ||
+        draining_bps > u64_max) {
         return false;
     }
     uint64_t occupancy = static_cast<uint64_t>(occupancy_bps);
@@ -2975,6 +4271,8 @@ bool RdmaHw::ComputeGuardTransitionPrefixWireBudget(
     budget->headerBytesPerPacket = header_bytes_per_packet;
     budget->wireBytes = static_cast<uint64_t>(wire_bytes);
     budget->incumbentCount = static_cast<uint64_t>(incumbents.size());
+    budget->drainingCount = static_cast<uint64_t>(draining.size());
+    budget->drainingReservedBps = static_cast<uint64_t>(draining_bps);
     budget->occupancyBps = occupancy;
     budget->receiverCapacityBps = receiver_capacity_bps;
     budget->residualBps = residual_bps;
@@ -2989,6 +4287,316 @@ bool RdmaHw::IsGuardTransitionPrefixWatchdogAggregateInconsistent(
     bool non_reconstructable) {
     return non_reconstructable || budget_records > 1 ||
            contributing_hardware > 1;
+}
+
+bool RdmaHw::EncodeGuardTargetVector(
+    const std::vector<GuardVectorTargetInput> &inputs,
+    uint32_t receiver_nic, uint64_t receiver_capacity_bps,
+    uint64_t draining_reserved_bps, uint64_t allocatable_capacity_bps,
+    uint64_t minimum_wire_rate_bps, uint64_t membership_revision,
+    uint64_t allocation_revision, uint64_t progress_revision,
+    uint64_t reason_mask,
+    std::vector<GuardFrozenTargetRecord> *records,
+    uint64_t *vector_hash) {
+    if (records == NULL || vector_hash == NULL || inputs.empty() ||
+        receiver_capacity_bps < 1000000ULL ||
+        draining_reserved_bps > receiver_capacity_bps ||
+        allocatable_capacity_bps !=
+            receiver_capacity_bps - draining_reserved_bps ||
+        minimum_wire_rate_bps == 0 ||
+        minimum_wire_rate_bps > allocatable_capacity_bps || reason_mask == 0) {
+        return false;
+    }
+    std::vector<GuardVectorTargetInput> canonical = inputs;
+    std::sort(canonical.begin(), canonical.end(),
+              [](const GuardVectorTargetInput &left,
+                 const GuardVectorTargetInput &right) {
+                  const GuardQpIdentity &a = left.identity;
+                  const GuardQpIdentity &b = right.identity;
+                  return std::tie(a.sip, a.dip, a.sport, a.dport, a.pg,
+                                  left.role, left.remainingBytes) <
+                         std::tie(b.sip, b.dip, b.sport, b.dport, b.pg,
+                                  right.role, right.remainingBytes);
+              });
+    records->clear();
+    records->reserve(canonical.size());
+    __uint128_t encoded_sum = 0;
+    GuardQpIdentity previous = {};
+    bool have_previous = false;
+    for (const auto &input : canonical) {
+        if (input.role != GUARD_VECTOR_INCUMBENT &&
+            input.role != GUARD_VECTOR_WAITER) {
+            return false;
+        }
+        if (have_previous && input.identity == previous) return false;
+        previous = input.identity;
+        have_previous = true;
+        uint64_t bounded = std::min(input.requestedBps,
+                                    allocatable_capacity_bps);
+        uint64_t mbps = bounded / 1000000ULL;
+        uint64_t minimum_mbps =
+            minimum_wire_rate_bps / 1000000ULL +
+            (minimum_wire_rate_bps % 1000000ULL != 0 ? 1 : 0);
+        mbps = std::max(mbps, minimum_mbps);
+        if (mbps > std::numeric_limits<uint32_t>::max()) return false;
+        encoded_sum += mbps * 1000000ULL;
+        if (encoded_sum > allocatable_capacity_bps) return false;
+        records->push_back({input.identity, input.role, input.remainingBytes,
+                            input.frozenProgressSeq, allocation_revision,
+                            progress_revision, static_cast<uint32_t>(mbps),
+                            input.flow, false});
+    }
+
+    // Versioned, pointer-free hash.  Include the frozen receiver resource and
+    // membership revision before each canonical full-identity record.
+    std::vector<uint64_t> words;
+    words.reserve(10 + records->size() * 11);
+    words.push_back(14);
+    words.push_back(receiver_nic);
+    words.push_back(receiver_capacity_bps);
+    words.push_back(draining_reserved_bps);
+    words.push_back(allocatable_capacity_bps);
+    words.push_back(membership_revision);
+    words.push_back(allocation_revision);
+    words.push_back(progress_revision);
+    words.push_back(reason_mask);
+    words.push_back(records->size());
+    for (const auto &record : *records) {
+        words.push_back(record.identity.sip);
+        words.push_back(record.identity.dip);
+        words.push_back(record.identity.sport);
+        words.push_back(record.identity.dport);
+        words.push_back(record.identity.pg);
+        words.push_back(record.role);
+        words.push_back(record.remainingBytes);
+        words.push_back(record.frozenProgressSeq);
+        words.push_back(record.allocationRevision);
+        words.push_back(record.progressRevision);
+        words.push_back(record.targetMbps);
+    }
+    *vector_hash = GuardAuditHashWords(words);
+    return true;
+}
+
+void RdmaHw::BeginGuardTransitionAudit(
+    uint32_t receiver_nic, uint16_t receiver_pg,
+    uint64_t receiver_capacity_bps,
+    const GuardTransitionPrefixWireBudget *watchdog_budget) {
+    GuardTransitionAuditSink *sink = m_guardTransitionAuditSink;
+    if (sink == NULL || sink->file == NULL) return;
+    NS_ABORT_MSG_IF(m_guardTransitionAuditRecord.active,
+                    "GUARD V14 transition audit overlapped records");
+    NS_ABORT_MSG_IF(sink->records == std::numeric_limits<uint64_t>::max(),
+                    "GUARD V14 transition audit record counter overflow");
+
+    GuardTransitionAuditRecord record;
+    record.active = true;
+    record.receiverNode = m_node->GetId();
+    record.receiverNic = receiver_nic;
+    record.epoch = m_guardTransitionAuditEpoch;
+    record.transaction = m_guardFastpathTransaction;
+    record.receiverCapacityBps = receiver_capacity_bps;
+    record.startNs = static_cast<uint64_t>(
+        m_guardTransitionPrefixBarrierStart.GetNanoSeconds());
+    record.deadlineNs = static_cast<uint64_t>(
+        m_guardTransitionPrefixDeadline.GetNanoSeconds());
+    record.deadlinePolicy = m_guardTransitionPrefixWireWatchdogEnabled
+                                ? "wire_residual_watchdog"
+                                : "legacy_remaining_payload";
+    record.deadlineOutcome = "pending";
+    record.terminalClosure = "pending";
+
+    std::vector<uint16_t> priority_groups;
+    std::vector<std::tuple<int32_t, uint64_t, uint64_t, uint64_t> > targets;
+    priority_groups.reserve(m_guardFastpathIncumbents.size() +
+                            m_guardTransitionActivationOrder.size());
+    targets.reserve(m_guardFastpathIncumbents.size() +
+                    m_guardTransitionActivationOrder.size());
+
+    __uint128_t active_upper_bps = 0;
+    for (auto *flow : m_guardFastpathIncumbents) {
+        if (m_rate_flow_ctl_set.find(flow) == m_rate_flow_ctl_set.end()) continue;
+        active_upper_bps += flow->m_guard_last_acked_upper_bound_bps;
+        priority_groups.push_back(flow->m_guard_pg);
+        targets.push_back(std::make_tuple(
+            flow->m_flow_id, 0,
+            static_cast<uint64_t>(m_guardFastpathTransactionTargetMbps) *
+                1000000ULL,
+            0));
+    }
+    __uint128_t reserved_draining_upper_bps = 0;
+    for (const auto &item : m_guardDrainingRecords) {
+        const GuardDrainingRecord &draining = item.second;
+        if (draining.state != GUARD_DRAINING) continue;
+        NS_ABORT_MSG_IF(draining.receiverNic != receiver_nic ||
+                            draining.reservedBps == 0,
+                        "GUARD V14 audit found an invalid draining reservation");
+        active_upper_bps += draining.reservedBps;
+        reserved_draining_upper_bps += draining.reservedBps;
+        priority_groups.push_back(draining.priorityGroup);
+    }
+    __uint128_t draining_upper_bps = 0;
+    __uint128_t draining_wire_bytes = 0;
+    __uint128_t prefix_target_bytes = 0;
+    uint32_t header_bytes = CustomHeader::GetStaticWholeHeaderSize();
+    for (auto *flow : m_guardTransitionActivationOrder) {
+        if (m_rate_flow_ctl_set.find(flow) == m_rate_flow_ctl_set.end()) continue;
+        auto target_it = m_guardTransitionPrefixTargets.find(flow);
+        NS_ABORT_MSG_IF(target_it == m_guardTransitionPrefixTargets.end(),
+                        "GUARD V14 audit lost a frozen prefix target");
+        uint64_t target = target_it->second;
+        uint64_t packets = target / m_mtu + (target % m_mtu != 0 ? 1 : 0);
+        __uint128_t rounded_payload = static_cast<__uint128_t>(packets) * m_mtu;
+        __uint128_t payload_upper = std::min(
+            static_cast<__uint128_t>(flow->m_guard_flow_size), rounded_payload);
+        draining_wire_bytes += payload_upper +
+                               static_cast<__uint128_t>(packets) * header_bytes;
+        draining_upper_bps += receiver_capacity_bps;
+        prefix_target_bytes += target;
+        priority_groups.push_back(flow->m_guard_pg);
+        targets.push_back(std::make_tuple(
+            flow->m_flow_id, 1,
+            static_cast<uint64_t>(m_guardFastpathTransactionTargetMbps) *
+                1000000ULL,
+            target));
+    }
+    const __uint128_t u64_max = static_cast<__uint128_t>(
+        std::numeric_limits<uint64_t>::max());
+    NS_ABORT_MSG_IF(active_upper_bps > u64_max ||
+                        reserved_draining_upper_bps > u64_max ||
+                        draining_upper_bps > u64_max ||
+                        active_upper_bps + draining_upper_bps > u64_max ||
+                        draining_wire_bytes > u64_max ||
+                        prefix_target_bytes > u64_max,
+                    "GUARD V14 transition audit aggregate overflow");
+    record.activeUpperBoundBps = static_cast<uint64_t>(active_upper_bps);
+    record.drainingUpperBoundBps = static_cast<uint64_t>(draining_upper_bps);
+    record.activeDrainingUpperBoundBps = static_cast<uint64_t>(
+        active_upper_bps + draining_upper_bps);
+    record.drainingWireUpperBoundBytes = static_cast<uint64_t>(
+        draining_wire_bytes);
+    record.prefixTargetBytes = static_cast<uint64_t>(prefix_target_bytes);
+    if (watchdog_budget != NULL) {
+        NS_ABORT_MSG_IF(
+            record.activeUpperBoundBps != watchdog_budget->occupancyBps ||
+                static_cast<uint64_t>(reserved_draining_upper_bps) !=
+                    watchdog_budget->drainingReservedBps ||
+                record.drainingWireUpperBoundBytes != watchdog_budget->wireBytes,
+            "GUARD V14 audit/watchdog source budget mismatch");
+    }
+
+    std::sort(priority_groups.begin(), priority_groups.end());
+    priority_groups.erase(
+        std::unique(priority_groups.begin(), priority_groups.end()),
+        priority_groups.end());
+    NS_ABORT_MSG_IF(priority_groups.empty() ||
+                        (!m_guardMixedPgVectorFastpath &&
+                         (priority_groups.size() != 1 ||
+                          priority_groups.front() != receiver_pg)),
+                    "GUARD V14 audit priority-group source mismatch");
+    std::vector<uint64_t> pg_words;
+    pg_words.reserve(priority_groups.size());
+    for (uint16_t pg : priority_groups) pg_words.push_back(pg);
+    record.priorityGroupSetHash = GuardAuditHashWords(pg_words);
+
+    std::sort(targets.begin(), targets.end());
+    std::vector<uint64_t> target_words;
+    target_words.reserve(targets.size() * 4);
+    for (const auto &entry : targets) {
+        target_words.push_back(static_cast<uint32_t>(std::get<0>(entry)));
+        target_words.push_back(std::get<1>(entry));
+        target_words.push_back(std::get<2>(entry));
+        target_words.push_back(std::get<3>(entry));
+    }
+    record.targetVectorEntries = targets.size();
+    record.targetVectorHash = GuardAuditHashWords(target_words);
+    if (m_guardMixedPgVectorFastpath) {
+        NS_ABORT_MSG_IF(!m_guardFrozenVectorActive ||
+                            m_guardFrozenReceiverNic != receiver_nic ||
+                            m_guardFrozenReceiverCapacityBps !=
+                                receiver_capacity_bps ||
+                            m_guardFrozenVectorHash == 0,
+                        "GUARD V14 audit lost its frozen vector source");
+        record.targetVectorEntries = m_guardFrozenTargetVector.size();
+        record.targetVectorHash = m_guardFrozenVectorHash;
+    }
+    m_guardTransitionAuditRecord = record;
+    sink->records++;
+}
+
+void RdmaHw::RetireGuardTransitionAuditPrefix(RdmaRxQueuePair *flow) {
+    if (!m_guardTransitionAuditRecord.active) return;
+    auto target_it = m_guardTransitionPrefixTargets.find(flow);
+    if (target_it == m_guardTransitionPrefixTargets.end()) return;
+    uint64_t observed = std::min<uint64_t>(
+        target_it->second, flow->ReceiverNextExpectedSeq);
+    NS_ABORT_MSG_IF(
+        m_guardTransitionAuditRecord.prefixRetiredObservedBytes >
+            std::numeric_limits<uint64_t>::max() - observed,
+        "GUARD V14 retired prefix evidence overflow");
+    m_guardTransitionAuditRecord.prefixRetiredObservedBytes += observed;
+}
+
+void RdmaHw::ResolveGuardTransitionAudit(const char *outcome) {
+    if (!m_guardTransitionAuditRecord.active) return;
+    uint64_t observed = m_guardTransitionAuditRecord.prefixRetiredObservedBytes;
+    for (auto *flow : m_guardTransitionActivationOrder) {
+        if (m_rate_flow_ctl_set.find(flow) == m_rate_flow_ctl_set.end()) continue;
+        auto target_it = m_guardTransitionPrefixTargets.find(flow);
+        NS_ABORT_MSG_IF(target_it == m_guardTransitionPrefixTargets.end(),
+                        "GUARD V14 audit resolution lost a prefix target");
+        uint64_t flow_observed = std::min<uint64_t>(
+            target_it->second, flow->ReceiverNextExpectedSeq);
+        NS_ABORT_MSG_IF(observed > std::numeric_limits<uint64_t>::max() -
+                                      flow_observed,
+                        "GUARD V14 observed prefix evidence overflow");
+        observed += flow_observed;
+    }
+    NS_ABORT_MSG_IF(observed > m_guardTransitionAuditRecord.prefixTargetBytes,
+                    "GUARD V14 observed prefix exceeds frozen target");
+    m_guardTransitionAuditRecord.prefixObservedBytes = observed;
+    m_guardTransitionAuditRecord.deadlineOutcome = outcome;
+}
+
+void RdmaHw::FinalizeGuardTransitionAudit(const char *terminal_closure) {
+    if (!m_guardTransitionAuditRecord.active) return;
+    GuardTransitionAuditSink *sink = m_guardTransitionAuditSink;
+    NS_ABORT_MSG_IF(sink == NULL || sink->file == NULL,
+                    "GUARD V14 active transition audit lost its sink");
+    NS_ABORT_MSG_IF(sink->attempted == std::numeric_limits<uint64_t>::max(),
+                    "GUARD V14 transition audit attempted counter overflow");
+    if (m_guardTransitionAuditRecord.deadlineOutcome == "pending") {
+        ResolveGuardTransitionAudit("unresolved");
+    }
+    m_guardTransitionAuditRecord.terminalClosure = terminal_closure;
+    sink->attempted++;
+    if (sink->written < sink->max_records) {
+        const GuardTransitionAuditRecord &record = m_guardTransitionAuditRecord;
+        fprintf(
+            sink->file,
+            "%u,%u,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%s,%s,%s\n",
+            record.receiverNode, record.receiverNic, record.epoch,
+            record.transaction, record.priorityGroupSetHash,
+            record.targetVectorHash, record.targetVectorEntries,
+            record.receiverCapacityBps, record.activeUpperBoundBps,
+            record.drainingUpperBoundBps,
+            record.activeDrainingUpperBoundBps,
+            record.drainingWireUpperBoundBytes, record.prefixTargetBytes,
+            record.prefixObservedBytes, record.startNs, record.deadlineNs,
+            record.deadlinePolicy.c_str(), record.deadlineOutcome.c_str(),
+            record.terminalClosure.c_str());
+        sink->written++;
+        fflush(sink->file);
+    }
+    m_guardTransitionAuditRecord = GuardTransitionAuditRecord();
+}
+
+void RdmaHw::FlushGuardTransitionAudit() {
+    if (!m_guardTransitionAuditRecord.active) return;
+    if (m_guardTransitionAuditRecord.deadlineOutcome == "pending") {
+        ResolveGuardTransitionAudit("simulation_stop_unresolved");
+    }
+    FinalizeGuardTransitionAudit("simulation_stop");
 }
 
 void RdmaHw::StartGuardTransitionPrefixBarrier() {
@@ -3059,8 +4667,9 @@ void RdmaHw::StartGuardTransitionPrefixBarrier() {
         uint64_t capacity_bps = m_nic[flow_nic].dev->GetDataRate().GetBitRate();
         NS_ABORT_MSG_IF(flow_nic != receiver_nic ||
                             capacity_bps != receiver_capacity_bps ||
-                            flow->m_guard_pg != receiver_pg,
-                        "GUARD V12 transition spans receiver NICs or priority groups");
+                            (!m_guardMixedPgVectorFastpath &&
+                             flow->m_guard_pg != receiver_pg),
+                        "GUARD transition spans receiver capacities or a disallowed priority group");
         long double rtt_ns_value =
             std::ceil(static_cast<long double>(flow->m_base_rtt_sec) * 1.0e9L);
         NS_ABORT_MSG_IF(
@@ -3106,7 +4715,7 @@ void RdmaHw::StartGuardTransitionPrefixBarrier() {
         for (auto *flow : m_guardFastpathIncumbents) {
             NS_ABORT_MSG_IF(
                 m_rate_flow_ctl_set.find(flow) == m_rate_flow_ctl_set.end() ||
-                    flow->m_guard_grant_upper_bound_bps == 0 ||
+                    flow->m_guard_last_acked_upper_bound_bps == 0 ||
                     !std::isfinite(flow->m_base_rtt_sec) ||
                     flow->m_base_rtt_sec <= 0.0,
                 "GUARD V13 incumbent lacks an acknowledged upper bound or base RTT");
@@ -3118,12 +4727,31 @@ void RdmaHw::StartGuardTransitionPrefixBarrier() {
                         std::numeric_limits<uint64_t>::max()),
                 "GUARD V13 incumbent base RTT does not fit uint64 nanoseconds");
             incumbent_inputs.push_back({
-                flow->m_guard_grant_upper_bound_bps,
+                flow->m_guard_last_acked_upper_bound_bps,
                 static_cast<uint64_t>(rtt_ns_value)});
+        }
+        std::vector<GuardTransitionPrefixDrainingBudgetInput> draining_inputs;
+        for (const auto &item : m_guardDrainingRecords) {
+            const GuardDrainingRecord &record = item.second;
+            if (record.state != GUARD_DRAINING) continue;
+            NS_ABORT_MSG_IF(
+                record.receiverNic != receiver_nic || record.reservedBps == 0 ||
+                    !std::isfinite(record.hold->m_base_rtt_sec) ||
+                    record.hold->m_base_rtt_sec <= 0.0,
+                "GUARD V14 watchdog found an invalid draining reservation");
+            long double rtt_ns_value = std::ceil(
+                static_cast<long double>(record.hold->m_base_rtt_sec) * 1.0e9L);
+            NS_ABORT_MSG_IF(
+                rtt_ns_value <= 0.0L ||
+                    rtt_ns_value > static_cast<long double>(
+                        std::numeric_limits<uint64_t>::max()),
+                "GUARD V14 draining base RTT does not fit uint64 nanoseconds");
+            draining_inputs.push_back({
+                record.reservedBps, static_cast<uint64_t>(rtt_ns_value)});
         }
         NS_ABORT_MSG_IF(
             !ComputeGuardTransitionPrefixWireBudget(
-                waiter_inputs, incumbent_inputs, m_mtu,
+                waiter_inputs, incumbent_inputs, draining_inputs, m_mtu,
                 CustomHeader::GetStaticWholeHeaderSize(),
                 receiver_capacity_bps, &watchdog_budget),
             "GUARD V13 prefix wire watchdog budget is invalid or overflowed");
@@ -3188,6 +4816,9 @@ void RdmaHw::StartGuardTransitionPrefixBarrier() {
             m_guardTransitionPrefixDeadline.GetNanoSeconds());
         m_guardTransitionPrefixWatchdogBudgetActive = true;
     }
+    BeginGuardTransitionAudit(
+        receiver_nic, receiver_pg, receiver_capacity_bps,
+        m_guardTransitionPrefixWireWatchdogEnabled ? &watchdog_budget : NULL);
     m_guardTransitionPrefixBarrierWaiting = true;
     m_guardTransitionPrefixBarrierStarts++;
     m_guardTransitionPrefixWaitersRequired +=
@@ -3260,6 +4891,7 @@ void RdmaHw::CheckGuardTransitionPrefixBarrier() {
     }
 
     if (ready) {
+        ResolveGuardTransitionAudit("ready");
         m_guardTransitionPrefixBarrierReady++;
         m_guardTransitionPrefixTimedOut = false;
         m_guardTransitionPrefixReadyNs = std::max<uint64_t>(
@@ -3273,6 +4905,15 @@ void RdmaHw::CheckGuardTransitionPrefixBarrier() {
     m_guardTransitionPrefixBarrierTimeouts++;
     m_guardTransitionPrefixDegradedTransitions++;
     m_guardTransitionPrefixTimedOut = true;
+    ResolveGuardTransitionAudit(
+        m_guardTransitionPrefixFailClosed
+            ? "timeout_fail_closed"
+            : "timeout_fallback");
+    if (m_guardTransitionPrefixFailClosed) {
+        FinalizeGuardTransitionAudit("fail_closed_abort");
+        NS_ABORT_MSG(
+            "GUARD V14 fail-closed transition prefix deadline expired");
+    }
     m_guardTransitionFallbackActive = true;
     m_guardTransitionActivationCursor = 0;
     m_guardTransitionActivationBatchIndex = 0;
@@ -3355,21 +4996,78 @@ void RdmaHw::SendGuardFastpathRequiredGeneration(
     uint32_t generation = NextGuardGrantGeneration();
     m_guardPendingGrantAcks = recipients.size();
     m_guardAckRequiredBatches++;
+    if (m_guardMixedPgVectorFastpath) m_guardGenerationLedger.clear();
     for (auto *flow : recipients) {
         bool waiter = m_guardFastpathWaiters.find(flow) !=
                       m_guardFastpathWaiters.end();
+        bool allowed_vector_increase = false;
+        if (m_guardMixedPgVectorFastpath &&
+            m_guardFastpathPhase == GUARD_FASTPATH_ACTIVATE && !waiter) {
+            const GuardFrozenTargetRecord *target = GetGuardFrozenTarget(flow);
+            allowed_vector_increase =
+                target != NULL && target->role == GUARD_VECTOR_INCUMBENT &&
+                GetGuardPotentialUpperBoundBps(flow) <
+                    static_cast<uint64_t>(target->targetMbps) * 1000000ULL;
+        }
         if ((m_guardFastpathPhase == GUARD_FASTPATH_PREPARE && waiter) ||
-            (m_guardFastpathPhase == GUARD_FASTPATH_ACTIVATE && !waiter)) {
+            (m_guardFastpathPhase == GUARD_FASTPATH_ACTIVATE && !waiter &&
+             !allowed_vector_increase)) {
             m_guardFastpathBarrierViolations++;
             NS_ABORT_MSG("GUARD fast-path recipient role violates phase barrier");
         }
+        uint32_t target_mbps = m_guardFastpathTransactionTargetMbps;
+        if (m_guardMixedPgVectorFastpath) {
+            const GuardFrozenTargetRecord *target = GetGuardFrozenTarget(flow);
+            NS_ABORT_MSG_IF(target == NULL,
+                            "GUARD V14 required generation lost its target");
+            target_mbps = target->targetMbps;
+            uint8_t action = m_guardFastpathPhase == GUARD_FASTPATH_PREPARE
+                                 ? m_guardFastpathReleaseRevectorActive
+                                       ? GUARD_VECTOR_RELEASE_DECREASE
+                                       : GUARD_VECTOR_PREPARE_DECREASE
+                                 : m_guardFastpathReleaseRevectorActive
+                                       ? GUARD_VECTOR_RELEASE_INCREASE
+                                       : target->role == GUARD_VECTOR_WAITER
+                                             ? GUARD_VECTOR_ACTIVATE_WAITER
+                                             : GUARD_VECTOR_ACTIVATE_INCREASE;
+            m_guardGenerationLedger.emplace(
+                flow, GuardGenerationLedgerEntry{
+                          target->identity, generation,
+                          GetGuardFastpathWirePhaseTag(set_change), action,
+                          target_mbps, false});
+            if (action == GUARD_VECTOR_ACTIVATE_WAITER)
+                m_guardVectorActivationWaiters++;
+            else if (action == GUARD_VECTOR_ACTIVATE_INCREASE ||
+                     action == GUARD_VECTOR_RELEASE_INCREASE)
+                m_guardVectorActivationIncreases++;
+        }
         flow->m_guard_grant_generation = generation;
         flow->m_guard_grant_generation_acked = false;
+        flow->m_guard_last_issued_generation = generation;
+        flow->m_guard_last_issued_target_bps =
+            static_cast<uint64_t>(target_mbps) * 1000000ULL;
         flow->m_guard_grant_rate_bps =
-            static_cast<uint64_t>(m_guardFastpathTransactionTargetMbps) *
-            1000000;
-        SendRateControlPacket(flow, m_guardFastpathTransactionTargetMbps,
+            static_cast<uint64_t>(target_mbps) * 1000000ULL;
+        if (m_guardMixedPgVectorFastpath) AssertGuardFrozenPotentialFits();
+        SendRateControlPacket(flow, target_mbps,
                               set_change, generation, true);
+    }
+    if (m_guardMixedPgVectorFastpath) {
+        __uint128_t potential_sum = 0;
+        for (auto *flow : m_guardFastpathIncumbents) {
+            if (m_rate_flow_ctl_set.find(flow) != m_rate_flow_ctl_set.end())
+                potential_sum += GetGuardPotentialUpperBoundBps(flow);
+        }
+        if (m_guardFastpathPhase == GUARD_FASTPATH_ACTIVATE) {
+            for (auto *flow : m_guardFastpathTransactionWaiters) {
+                if (m_rate_flow_ctl_set.find(flow) != m_rate_flow_ctl_set.end())
+                    potential_sum += GetGuardPotentialUpperBoundBps(flow);
+            }
+        }
+        NS_ABORT_MSG_IF(
+            potential_sum + m_guardFrozenDrainingReservedBps >
+                m_guardFrozenReceiverCapacityBps,
+                        "GUARD V14 issued vector exceeds receiver capacity");
     }
     ResetGuardReliabilityRefresh();
 }
@@ -3382,23 +5080,71 @@ void RdmaHw::SendGuardFastpathRequiredGenerationOrdered(
     uint32_t generation = NextGuardGrantGeneration();
     m_guardPendingGrantAcks = recipients.size();
     m_guardAckRequiredBatches++;
+    if (m_guardMixedPgVectorFastpath) m_guardGenerationLedger.clear();
     for (auto *flow : recipients) {
         bool waiter = m_guardFastpathWaiters.find(flow) !=
                       m_guardFastpathWaiters.end();
-        if (m_guardFastpathPhase != GUARD_FASTPATH_ACTIVATE || !waiter ||
-            m_guardFastpathTransactionWaiters.find(flow) ==
-                m_guardFastpathTransactionWaiters.end()) {
+        const GuardFrozenTargetRecord *target =
+            m_guardMixedPgVectorFastpath ? GetGuardFrozenTarget(flow) : NULL;
+        bool valid_vector_recipient =
+            m_guardMixedPgVectorFastpath && target != NULL &&
+            ((target->role == GUARD_VECTOR_WAITER && waiter &&
+              m_guardFastpathTransactionWaiters.find(flow) !=
+                  m_guardFastpathTransactionWaiters.end()) ||
+             (target->role == GUARD_VECTOR_INCUMBENT && !waiter &&
+              GetGuardPotentialUpperBoundBps(flow) <
+                  static_cast<uint64_t>(target->targetMbps) * 1000000ULL));
+        if (m_guardFastpathPhase != GUARD_FASTPATH_ACTIVATE ||
+            (!valid_vector_recipient &&
+             (!waiter || m_guardFastpathTransactionWaiters.find(flow) ==
+                             m_guardFastpathTransactionWaiters.end()))) {
             m_guardTransitionPrefixBarrierViolations++;
             m_guardFastpathBarrierViolations++;
             NS_ABORT_MSG("GUARD V12 ordered recipient violates activation barrier");
         }
+        uint32_t target_mbps = m_guardFastpathTransactionTargetMbps;
+        if (m_guardMixedPgVectorFastpath) {
+            NS_ABORT_MSG_IF(target == NULL,
+                            "GUARD V14 ordered activation lost its target");
+            target_mbps = target->targetMbps;
+            uint8_t action = target->role == GUARD_VECTOR_WAITER
+                                 ? GUARD_VECTOR_ACTIVATE_WAITER
+                                 : GUARD_VECTOR_ACTIVATE_INCREASE;
+            m_guardGenerationLedger.emplace(
+                flow, GuardGenerationLedgerEntry{
+                          target->identity, generation,
+                          GetGuardFastpathWirePhaseTag(set_change), action,
+                          target_mbps, false});
+            if (action == GUARD_VECTOR_ACTIVATE_WAITER)
+                m_guardVectorActivationWaiters++;
+            else
+                m_guardVectorActivationIncreases++;
+        }
         flow->m_guard_grant_generation = generation;
         flow->m_guard_grant_generation_acked = false;
+        flow->m_guard_last_issued_generation = generation;
+        flow->m_guard_last_issued_target_bps =
+            static_cast<uint64_t>(target_mbps) * 1000000ULL;
         flow->m_guard_grant_rate_bps =
-            static_cast<uint64_t>(m_guardFastpathTransactionTargetMbps) *
-            1000000;
-        SendRateControlPacket(flow, m_guardFastpathTransactionTargetMbps,
+            static_cast<uint64_t>(target_mbps) * 1000000ULL;
+        if (m_guardMixedPgVectorFastpath) AssertGuardFrozenPotentialFits();
+        SendRateControlPacket(flow, target_mbps,
                               set_change, generation, true);
+    }
+    if (m_guardMixedPgVectorFastpath) {
+        __uint128_t potential_sum = 0;
+        for (auto *flow : m_guardFastpathIncumbents) {
+            if (m_rate_flow_ctl_set.find(flow) != m_rate_flow_ctl_set.end())
+                potential_sum += GetGuardPotentialUpperBoundBps(flow);
+        }
+        for (auto *flow : m_guardFastpathTransactionWaiters) {
+            if (m_rate_flow_ctl_set.find(flow) != m_rate_flow_ctl_set.end())
+                potential_sum += GetGuardPotentialUpperBoundBps(flow);
+        }
+        NS_ABORT_MSG_IF(
+            potential_sum + m_guardFrozenDrainingReservedBps >
+                m_guardFrozenReceiverCapacityBps,
+                        "GUARD V14 activation vector exceeds receiver capacity");
     }
     ResetGuardReliabilityRefresh();
 }
@@ -3408,6 +5154,37 @@ void RdmaHw::SendGuardFastpathOptionalRelease() {
     NS_ABORT_MSG_IF(m_guardFastpathPhase != GUARD_FASTPATH_IDLE ||
                         m_guardPendingGrantAcks != 0,
                     "GUARD optional release crossed an ACK barrier");
+    if (m_guardMixedPgVectorFastpath) {
+        NS_ABORT_MSG_IF(m_guardFrozenVectorActive,
+                        "GUARD V14 release inherited a frozen vector");
+        m_guardGenerationLedger.clear();
+        FreezeGuardFastpathTargetVector(
+            m_guardFastpathConsumedMembershipRevision);
+        bool requires_barrier = false;
+        for (const auto &target : m_guardFrozenTargetVector) {
+            if (m_rate_flow_ctl_set.find(target.flow) ==
+                m_rate_flow_ctl_set.end()) {
+                continue;
+            }
+            uint64_t target_bps =
+                static_cast<uint64_t>(target.targetMbps) * 1000000ULL;
+            if (GetGuardPotentialUpperBoundBps(target.flow) > target_bps) {
+                requires_barrier = true;
+                break;
+            }
+        }
+        if (requires_barrier) {
+            m_guardVectorReleaseRequired++;
+            m_guardFastpathReleaseRevectorActive = true;
+            m_guardFastpathTransaction++;
+            m_guardFastpathTransactions++;
+            m_guardFastpathTransactionTargetN =
+                m_guardFrozenTargetVector.size();
+            m_guardFastpathTransactionTargetMbps = 0;
+            StartGuardFastpathPrepare();
+            return;
+        }
+    }
     RdmaRxQueuePair *sample = *m_guardFastpathIncumbents.begin();
     uint64_t line_rate_bps =
         m_nic[GetNicIdxOfRxQp(sample)].dev->GetDataRate().GetBitRate();
@@ -3415,27 +5192,71 @@ void RdmaHw::SendGuardFastpathOptionalRelease() {
         1, line_rate_bps / m_guardFastpathIncumbents.size() / 1000000);
     uint64_t rate_bps = static_cast<uint64_t>(rate_mbps) * 1000000;
     for (auto *flow : m_guardFastpathIncumbents) {
-        NS_ABORT_MSG_IF(rate_bps < flow->m_guard_grant_upper_bound_bps,
+        uint64_t flow_rate_bps = rate_bps;
+        if (m_guardMixedPgVectorFastpath) {
+            const GuardFrozenTargetRecord *target = GetGuardFrozenTarget(flow);
+            NS_ABORT_MSG_IF(target == NULL,
+                            "GUARD V14 optional release lost its target");
+            flow_rate_bps =
+                static_cast<uint64_t>(target->targetMbps) * 1000000ULL;
+        }
+        NS_ABORT_MSG_IF(flow_rate_bps < flow->m_guard_grant_upper_bound_bps,
                         "GUARD release-only generation decreased an incumbent");
     }
     uint32_t generation = NextGuardGrantGeneration();
+    if (m_guardMixedPgVectorFastpath) m_guardVectorReleaseOptional++;
     m_guardPendingGrantAcks = 0;
     m_guardAckOptionalBatches++;
     m_guardFastpathOptionalReleaseGenerations++;
     m_guardFastpathOptionalReleaseGrants += m_guardFastpathIncumbents.size();
     for (auto *flow : m_guardFastpathIncumbents) {
+        uint32_t flow_rate_mbps = rate_mbps;
+        if (m_guardMixedPgVectorFastpath) {
+            flow_rate_mbps = GetGuardFrozenTarget(flow)->targetMbps;
+        }
+        uint64_t flow_rate_bps =
+            static_cast<uint64_t>(flow_rate_mbps) * 1000000ULL;
         flow->m_guard_grant_generation = generation;
         flow->m_guard_grant_generation_acked = true;
-        flow->m_guard_grant_rate_bps = rate_bps;
+        flow->m_guard_last_issued_generation = generation;
+        flow->m_guard_last_issued_target_bps = flow_rate_bps;
+        flow->m_guard_last_acked_generation = generation;
+        flow->m_guard_last_acked_upper_bound_bps = flow_rate_bps;
+        flow->m_guard_grant_rate_bps = flow_rate_bps;
         flow->m_guard_grant_upper_bound_bps = std::max(
-            flow->m_guard_grant_upper_bound_bps, rate_bps);
-        SendRateControlPacket(flow, rate_mbps, "release", generation, false);
+            flow->m_guard_grant_upper_bound_bps, flow_rate_bps);
+        if (m_guardMixedPgVectorFastpath) AssertGuardFrozenPotentialFits();
+        SendRateControlPacket(flow, flow_rate_mbps, "release", generation, false);
+    }
+    if (m_guardProgressTransactionActive) CloseGuardProgressTransaction();
+    if (m_guardMixedPgVectorFastpath) {
+        m_guardFrozenVectorActive = false;
+        m_guardFrozenReceiverNic = 0;
+        m_guardFrozenReceiverCapacityBps = 0;
+        m_guardFrozenActiveRecords = 0;
+        m_guardFrozenDrainingRecords = 0;
+        m_guardFrozenDrainingReservedBps = 0;
+        m_guardFrozenAllocatableCapacityBps = 0;
+        m_guardFrozenEncodedTargetBps = 0;
+        m_guardFrozenMembershipRevision = 0;
+        m_guardFrozenAllocationRevision = 0;
+        m_guardFrozenProgressRevision = 0;
+        m_guardFrozenReasonMask = 0;
+        m_guardFrozenTargetVector.clear();
+        m_guardFrozenTargetHolds.clear();
+        m_guardFrozenTargetByFlow.clear();
+        m_guardFrozenVectorHash = 0;
     }
     m_guardLastVectorActiveFlows = m_guardFastpathIncumbents.size();
     m_guardHasEmittedVectorThisEpoch = true;
     if (m_guardFastpathHighFanIn && !m_guardFastpathWaiters.empty() &&
         !m_guardMembershipEvent.IsRunning()) {
         ScheduleGuardFastpathHighCollection("registration");
+    } else if (m_guardSerializedProgressRefresh &&
+               !m_guardProgressTransactionActive &&
+               (!m_guardProgressDirtyFlows.empty() || m_guardCapacityDirty) &&
+               m_guardPendingMembershipChanges == 0) {
+        StartGuardProgressTransaction();
     }
 }
 
@@ -3465,6 +5286,7 @@ void RdmaHw::FinishGuardFastpathGeneration() {
 
 void RdmaHw::FinishGuardFastpathTransaction() {
     bool transition = m_guardFastpathTransactionIsTransition;
+    bool release_revector = m_guardFastpathReleaseRevectorActive;
     if (transition && m_guardTransitionPrefixBarrierEnabled) {
         NS_ABORT_MSG_IF(m_guardTransitionPrefixBarrierWaiting ||
                             m_guardTransitionPrefixDeadlineEvent.IsRunning() ||
@@ -3472,6 +5294,10 @@ void RdmaHw::FinishGuardFastpathTransaction() {
                         "GUARD V12 transaction closed across a live barrier");
         NS_ABORT_MSG_IF(!m_guardTransitionCurrentBatch.empty(),
                         "GUARD V12 transaction closed with an active batch");
+        FinalizeGuardTransitionAudit(
+            m_guardTransitionPrefixTimedOut
+                ? "fallback_activation_ack_closed"
+                : "activation_ack_closed");
     }
     for (auto *flow : m_guardFastpathTransactionWaiters) {
         if (m_rate_flow_ctl_set.find(flow) == m_rate_flow_ctl_set.end()) continue;
@@ -3484,11 +5310,33 @@ void RdmaHw::FinishGuardFastpathTransaction() {
     m_guardFastpathTransactionTargetMbps = 0;
     m_guardFastpathPhase = GUARD_FASTPATH_IDLE;
     m_guardFastpathTransactionIsTransition = false;
+    m_guardFastpathReleaseRevectorActive = false;
     m_guardFastpathLastTransactionCloseNs = static_cast<uint64_t>(
         Simulator::Now().GetNanoSeconds());
     m_guardLastVectorActiveFlows = m_guardFastpathIncumbents.size();
     m_guardHasEmittedVectorThisEpoch = true;
     if (transition) m_guardFastpathHighInitialCommitted = true;
+    if (m_guardProgressTransactionActive) CloseGuardProgressTransaction();
+    if (m_guardMixedPgVectorFastpath) {
+        m_guardFrozenVectorActive = false;
+        m_guardFrozenReceiverNic = 0;
+        m_guardFrozenReceiverCapacityBps = 0;
+        m_guardFrozenActiveRecords = 0;
+        m_guardFrozenDrainingRecords = 0;
+        m_guardFrozenDrainingReservedBps = 0;
+        m_guardFrozenAllocatableCapacityBps = 0;
+        m_guardFrozenEncodedTargetBps = 0;
+        m_guardFrozenMembershipRevision = 0;
+        m_guardFrozenAllocationRevision = 0;
+        m_guardFrozenProgressRevision = 0;
+        m_guardFrozenReasonMask = 0;
+        m_guardFrozenVectorHash = 0;
+        m_guardFrozenTargetVector.clear();
+        m_guardFrozenTargetHolds.clear();
+        m_guardFrozenTargetByFlow.clear();
+        m_guardGenerationLedger.clear();
+    }
+    if (m_guardSerializedDraining) CommitGuardPendingDrains();
     if (transition && m_guardTransitionPrefixBarrierEnabled) {
         m_guardTransitionPrefixBarrierResolved = false;
         m_guardTransitionPrefixTimedOut = false;
@@ -3506,7 +5354,20 @@ void RdmaHw::FinishGuardFastpathTransaction() {
         m_guardTransitionLastRegisterNs = -1;
         m_guardTransitionLastFlowId = -1;
     }
+    if (m_guardSerializedDraining && m_rate_flow_ctl_set.empty() &&
+        m_guardDrainingRecords.empty()) {
+        if (!m_guardTerminalResetDeferred) SettleGuardActiveEmptyState();
+        return;
+    }
 
+    if (release_revector && m_guardPendingMembershipChanges == 0) {
+        if (m_guardSerializedProgressRefresh &&
+            !m_rate_flow_ctl_set.empty() &&
+            (!m_guardProgressDirtyFlows.empty() || m_guardCapacityDirty)) {
+            StartGuardProgressTransaction();
+        }
+        return;
+    }
     if (m_guardFastpathHighFanIn) {
         if (m_guardFastpathCollectionReady) {
             if (!m_guardFastpathReadyWaiters.empty()) {
@@ -3528,6 +5389,11 @@ void RdmaHw::FinishGuardFastpathTransaction() {
         } else if (m_guardPendingMembershipChanges > 0 &&
                    !m_guardMembershipEvent.IsRunning()) {
             ScheduleGuardFastpathHighCollection("release");
+        } else if (m_guardSerializedProgressRefresh &&
+                   !m_rate_flow_ctl_set.empty() &&
+                   (!m_guardProgressDirtyFlows.empty() ||
+                    m_guardCapacityDirty)) {
+            StartGuardProgressTransaction();
         }
         return;
     }
@@ -3537,6 +5403,10 @@ void RdmaHw::FinishGuardFastpathTransaction() {
         ConsumeGuardFastpathMembershipThrough(
             m_guardFastpathMembershipRevision);
         SendGuardFastpathOptionalRelease();
+    } else if (m_guardSerializedProgressRefresh &&
+               !m_rate_flow_ctl_set.empty() &&
+               (!m_guardProgressDirtyFlows.empty() || m_guardCapacityDirty)) {
+        StartGuardProgressTransaction();
     }
 }
 
@@ -3737,9 +5607,21 @@ void RdmaHw::RefreshGuardGrantsForReliability() {
             flow->m_guard_grant_generation_acked) {
             continue;
         }
-        if (flow->m_guard_grant_rate_bps == 0) continue;
-        uint32_t rate_mbps = std::max<uint32_t>(
-            1, flow->m_guard_grant_rate_bps / 1000000);
+        uint32_t rate_mbps = 0;
+        if (m_guardMixedPgVectorFastpath) {
+            auto ledger = m_guardGenerationLedger.find(flow);
+            NS_ABORT_MSG_IF(
+                ledger == m_guardGenerationLedger.end() ||
+                    ledger->second.tombstone ||
+                    ledger->second.generation != m_guardGrantGeneration,
+                "GUARD V14 required retry lost its frozen generation ledger");
+            rate_mbps = ledger->second.targetMbps;
+        } else if (flow->m_guard_grant_rate_bps > 0) {
+            rate_mbps = std::max<uint32_t>(
+                1, flow->m_guard_grant_rate_bps / 1000000);
+        }
+        if (rate_mbps == 0) continue;
+        if (m_guardMixedPgVectorFastpath) AssertGuardFrozenPotentialFits();
         SendRateControlPacket(flow, rate_mbps, "reliability_refresh",
                               m_guardGrantGeneration, true);
         m_guardReliabilityGrantUpdates++;
@@ -3801,11 +5683,17 @@ void RdmaHw::RedistributeGuardRates(const char *set_change, uint32_t generation)
         for (auto *flow : m_rate_flow_ctl_set) {
             flow->m_guard_grant_generation = generation;
             flow->m_guard_grant_generation_acked = !ack_required_generation;
+            flow->m_guard_last_issued_generation = generation;
+            flow->m_guard_last_issued_target_bps =
+                static_cast<uint64_t>(encoded_rates[flow]) * 1000000ULL;
             if (!ack_required_generation) {
                 uint64_t rate_bps =
                     static_cast<uint64_t>(encoded_rates[flow]) * 1000000;
                 flow->m_guard_grant_upper_bound_bps = std::max(
                     flow->m_guard_grant_upper_bound_bps, rate_bps);
+                flow->m_guard_last_acked_generation = generation;
+                flow->m_guard_last_acked_upper_bound_bps =
+                    flow->m_guard_grant_upper_bound_bps;
             }
         }
     }
@@ -4197,6 +6085,12 @@ void RdmaHw::ConfigureGuardGrantTrace(GuardGrantTraceSink *sink) {
     m_guardGrantTraceSink = sink;
 }
 
+void RdmaHw::ConfigureGuardTransitionAudit(GuardTransitionAuditSink *sink) {
+    NS_ABORT_MSG_IF(m_guardTransitionAuditRecord.active,
+                    "GUARD V14 transition audit sink changed mid-record");
+    m_guardTransitionAuditSink = sink;
+}
+
 void RdmaHw::TraceGuardControllerEvent(Ptr<RdmaQueuePair> qp, const char *event_type,
                                        DataRate hpcc_rate, const char *binding,
                                        bool rate_changed, bool fast_react, uint32_t nhop,
@@ -4291,7 +6185,8 @@ void RdmaHw::FlushGuardLifecycleTrace() {
 
 void RdmaHw::AppendGuardFastpathTraceFields(
     FILE *file, const char *event, const char *set_change,
-    RdmaRxQueuePair *qp, uint8_t phase_tag, bool receiver_authoritative) {
+    RdmaRxQueuePair *qp, uint8_t phase_tag, bool receiver_authoritative,
+    uint64_t grant_rate_bps, const GuardRetiredAckRecord *retired) {
     if (!GuardSmallSetFastpathEnabled()) return;
     const char *phase = GetGuardGrantPhaseTagName(phase_tag);
     const char *role = "none";
@@ -4305,7 +6200,10 @@ void RdmaHw::AppendGuardFastpathTraceFields(
     }
     uint64_t transaction_id = 0;
     uint64_t membership_target_n = 0;
-    if (receiver_authoritative && phase_tag != GUARD_GRANT_PHASE_NONE) {
+    if (retired != NULL) {
+        transaction_id = retired->transactionId;
+    } else if (receiver_authoritative &&
+               phase_tag != GUARD_GRANT_PHASE_NONE) {
         if (phase_tag == GUARD_GRANT_PHASE_RELEASE) {
             membership_target_n = m_guardFastpathIncumbents.size();
         } else {
@@ -4343,6 +6241,62 @@ void RdmaHw::AppendGuardFastpathTraceFields(
                 prefix_target_bytes, prefix_observed_bytes, drain_outcome,
                 activation_batch_index, activation_batch_size, register_ns);
     }
+    if (m_guardSerializedProgressRefresh && m_guardSerializedDraining) {
+        bool snapshot_authoritative =
+            receiver_authoritative && retired == NULL;
+        bool snapshot_valid =
+            receiver_authoritative && m_guardFrozenVectorActive &&
+            retired == NULL;
+        uint64_t live_active_records = 0;
+        uint64_t live_draining_records = 0;
+        __uint128_t live_draining_wide = 0;
+        bool capacity_recompute_pending = false;
+        if (snapshot_authoritative) {
+            live_active_records = m_rate_flow_ctl_set.size();
+            for (const auto &item : m_guardDrainingRecords) {
+                if (item.second.state == GUARD_DRAINING) {
+                    live_draining_wide += item.second.reservedBps;
+                    live_draining_records++;
+                }
+            }
+            capacity_recompute_pending =
+                m_guardCapacityDirty ||
+                m_guardProgressTransactionCapacityDirty;
+        }
+        NS_ABORT_MSG_IF(
+            live_draining_wide > std::numeric_limits<uint64_t>::max(),
+            "GUARD V14 trace live draining reservation sum overflow");
+        uint64_t live_draining_bps =
+            static_cast<uint64_t>(live_draining_wide);
+        if (snapshot_valid) {
+            NS_ABORT_MSG_IF(
+                !ValidateGuardGrantTraceSnapshot(
+                    m_guardFrozenReceiverCapacityBps,
+                    m_guardFrozenDrainingReservedBps,
+                    m_guardFrozenAllocatableCapacityBps,
+                    m_guardFrozenEncodedTargetBps,
+                    std::string(event) == "sent" ? grant_rate_bps : 0,
+                    live_draining_bps, capacity_recompute_pending),
+                "GUARD V14 grant trace snapshot violates frozen/live capacity provenance");
+        }
+        fprintf(file,
+                ",%lu,%lu,%lu,%u,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%u,%lu",
+                snapshot_valid ? m_guardFrozenAllocationRevision : 0,
+                snapshot_valid ? m_guardFrozenProgressRevision : 0,
+                snapshot_valid ? m_guardFrozenMembershipRevision : 0,
+                snapshot_valid ? 1 : 0,
+                snapshot_valid ? m_guardFrozenReceiverCapacityBps : 0,
+                snapshot_valid ? m_guardFrozenActiveRecords : 0,
+                snapshot_valid ? m_guardFrozenDrainingRecords : 0,
+                snapshot_valid ? m_guardFrozenDrainingReservedBps : 0,
+                snapshot_valid ? m_guardFrozenAllocatableCapacityBps : 0,
+                snapshot_valid ? m_guardFrozenEncodedTargetBps : 0,
+                snapshot_authoritative ? live_active_records : 0,
+                snapshot_authoritative ? live_draining_records : 0,
+                snapshot_authoritative ? live_draining_bps : 0,
+                snapshot_authoritative && capacity_recompute_pending ? 1 : 0,
+                snapshot_valid ? m_guardFrozenReasonMask : 0);
+    }
 }
 
 void RdmaHw::TraceGuardGrant(Ptr<RdmaRxQueuePair> qp, const char *event,
@@ -4350,7 +6304,7 @@ void RdmaHw::TraceGuardGrant(Ptr<RdmaRxQueuePair> qp, const char *event,
                              uint64_t line_rate_bps, uint64_t grant_rate_bps,
                              uint64_t next_seq, uint64_t serialized_bytes,
                              uint32_t generation, uint64_t pending_acks,
-                             bool ack_required) {
+                             bool ack_required, uint8_t phase_tag) {
     GuardGrantTraceSink *sink = m_guardGrantTraceSink;
     if (sink == NULL || sink->file == NULL) return;
     sink->attempted++;
@@ -4362,7 +6316,7 @@ void RdmaHw::TraceGuardGrant(Ptr<RdmaRxQueuePair> qp, const char *event,
             ack_required ? 1 : 0);
     AppendGuardFastpathTraceFields(
         sink->file, event, set_change, PeekPointer(qp),
-        GetGuardFastpathWirePhaseTag(set_change), true);
+        phase_tag, true, grant_rate_bps);
     fprintf(sink->file, "\n");
     sink->written++;
 }
@@ -4385,18 +6339,21 @@ void RdmaHw::TraceGuardGrantReceive(Ptr<RdmaQueuePair> qp, Ptr<Packet> packet,
             qp->sip.Get(), qp->dip.Get(), line_rate_bps, grant_rate_bps,
             qp->snd_nxt, packet->GetSize(), generation, ack_required ? 1 : 0);
     AppendGuardFastpathTraceFields(sink->file, event, "none", NULL,
-                                   phase_tag, false);
+                                   phase_tag, false, grant_rate_bps);
     fprintf(sink->file, "\n");
     sink->written++;
 }
 
 void RdmaHw::TraceGuardGrantAckReceive(Ptr<RdmaRxQueuePair> qp, CustomHeader &ch,
-                                       Ptr<Packet> packet, const char *event) {
+                                       Ptr<Packet> packet, const char *event,
+                                       const GuardRetiredAckRecord *retired) {
     GuardGrantTraceSink *sink = m_guardGrantTraceSink;
     if (sink == NULL || sink->file == NULL) return;
     sink->attempted++;
     if (sink->written >= sink->max_lines) return;
-    int32_t flow_id = qp == NULL ? -1 : qp->m_flow_id;
+    int32_t flow_id = qp == NULL
+                          ? retired == NULL ? -1 : retired->flowId
+                          : qp->m_flow_id;
     uint64_t line_rate_bps = 0;
     uint64_t next_seq = 0;
     if (qp != NULL) {
@@ -4406,17 +6363,22 @@ void RdmaHw::TraceGuardGrantAckReceive(Ptr<RdmaRxQueuePair> qp, CustomHeader &ch
         }
         next_seq = qp->ReceiverNextExpectedSeq;
     }
-    fprintf(sink->file, "%ld,%s,none,%u,%d,%u,%u,%lu,%lu,0,%lu,%u,%u,%lu,1",
+    uint64_t retired_target_bps =
+        retired == NULL
+            ? 0
+            : static_cast<uint64_t>(retired->targetMbps) * 1000000ULL;
+    fprintf(sink->file, "%ld,%s,none,%u,%d,%u,%u,%lu,%lu,%lu,%lu,%u,%u,%lu,1",
             Simulator::Now().GetNanoSeconds(), event, m_node->GetId(), flow_id,
-            ch.sip, ch.dip, m_rate_flow_ctl_set.size(), line_rate_bps, next_seq,
-            packet->GetSize(), ch.grant.generation, m_guardPendingGrantAcks);
-    bool authoritative = std::string(event) == "ack_received" && qp != NULL;
-    uint8_t phase_tag = authoritative
-                            ? GetGuardFastpathWirePhaseTag("none")
-                            : GUARD_GRANT_PHASE_NONE;
+            ch.sip, ch.dip, m_rate_flow_ctl_set.size(), line_rate_bps,
+            retired_target_bps, next_seq,
+            packet->GetSize(), ch.grantAck.generation, m_guardPendingGrantAcks);
+    bool authoritative =
+        (std::string(event) == "ack_received" && qp != NULL) ||
+        (std::string(event) == "ack_retired" && retired != NULL);
+    uint8_t phase_tag = ch.grantAck.phaseTag;
     AppendGuardFastpathTraceFields(sink->file, event, "none",
                                    PeekPointer(qp), phase_tag,
-                                   authoritative);
+                                   authoritative, retired_target_bps, retired);
     fprintf(sink->file, "\n");
     sink->written++;
 }
@@ -4437,7 +6399,7 @@ void RdmaHw::TraceGuardGrantAckSend(Ptr<RdmaQueuePair> qp, Ptr<Packet> packet,
             qp->sip.Get(), qp->dip.Get(), line_rate_bps, qp->snd_nxt,
             packet->GetSize(), generation);
     AppendGuardFastpathTraceFields(sink->file, "ack_sent", "none", NULL,
-                                   phase_tag, false);
+                                   phase_tag, false, 0);
     fprintf(sink->file, "\n");
     sink->written++;
 }
@@ -4484,7 +6446,7 @@ void RdmaHw::SendRateControlPacket(Ptr<RdmaRxQueuePair> rx_qp,
                     m_nic[GetNicIdxOfRxQp(rx_qp)].dev->GetDataRate().GetBitRate(),
                     static_cast<uint64_t>(rate_data) * 1000000,
                     rx_qp->ReceiverNextExpectedSeq, newp->GetSize(), generation,
-                    m_guardPendingGrantAcks, ack_required);
+                    m_guardPendingGrantAcks, ack_required, phase_tag);
 
     // send
     uint32_t nic_idx = GetNicIdxOfRxQp(rx_qp);
@@ -4499,6 +6461,7 @@ void RdmaHw::SendGuardGrantAck(Ptr<RdmaQueuePair> qp, uint32_t generation,
     ack.SetDport(qp->dport);
     ack.SetPG(qp->m_pg);
     ack.SetGeneration(generation);
+    ack.SetPhaseTag(phase_tag);
 
     Ptr<Packet> packet = Create<Packet>(
         std::max(60 - 14 - 20 - (int)ack.GetSerializedSize(), 0));
@@ -4674,7 +6637,7 @@ int RdmaHw::ReceiveHomaSimpleCredit(Ptr<Packet> p, CustomHeader &ch) {
     uint16_t port = ch.ack.dport;
     uint16_t sport = ch.ack.sport;
     uint64_t key = GetQpKey(ch.sip, port, sport, qIndex);
-    Ptr<RdmaQueuePair> qp = GetQp(key);
+    Ptr<RdmaQueuePair> qp = GetQp(ch.dip, ch.sip, port, sport, qIndex);
     if (qp == NULL) {
         // Race-tolerant: receiver scheduler may emit a credit just as the
         // sender QP is being torn down. Drop silently like ReceiveAck.
@@ -4887,7 +6850,7 @@ int RdmaHw::ReceiveHomaControl(Ptr<Packet> /*p*/, CustomHeader &ch) {
     uint16_t port = ch.ack.dport;
     uint16_t sport = ch.ack.sport;
     uint64_t key = GetQpKey(ch.sip, port, sport, qIndex);
-    Ptr<RdmaQueuePair> qp = GetQp(key);
+    Ptr<RdmaQueuePair> qp = GetQp(ch.dip, ch.sip, port, sport, qIndex);
     if (qp == NULL) {
         // Race-tolerant like ReceiveAck / ReceiveHomaSimpleCredit.
         return 1;

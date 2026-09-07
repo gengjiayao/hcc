@@ -157,6 +157,14 @@ public:
 		  uint32_t generation;
 		  uint8_t ackRequired;
 	  } grant;
+	  // Compact GUARD grant acknowledgement.  Keep this distinct from grant:
+	  // ACK phase is an independent wire field, not grant.ackRequired bits.
+	  struct {
+		  uint16_t sport, dport;
+		  uint16_t pg;
+		  uint32_t generation;
+		  uint8_t phaseTag;
+	  } grantAck;
 	  // PauseHeader
 	  struct {
 		  uint32_t time;

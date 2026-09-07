@@ -140,11 +140,13 @@ public:
   void SetDport (uint16_t dport);
   void SetPG (uint16_t pg);
   void SetGeneration (uint32_t generation);
+  void SetPhaseTag (uint8_t phaseTag);
 
   uint16_t GetSport () const;
   uint16_t GetDport () const;
   uint16_t GetPG () const;
   uint32_t GetGeneration () const;
+  uint8_t GetPhaseTag () const;
 
   static TypeId GetTypeId (void);
   virtual TypeId GetInstanceTypeId (void) const;
@@ -158,6 +160,9 @@ private:
   uint16_t m_dport;
   uint16_t m_pg;
   uint32_t m_generation;
+  // Zero preserves the pre-V14 acknowledgement semantics.  V14 uses the
+  // explicit tag to bind an ACK to the frozen prepare/activate action.
+  uint8_t m_phaseTag;
 };
 
 }; // namespace ns3

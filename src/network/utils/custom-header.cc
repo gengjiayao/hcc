@@ -213,10 +213,11 @@ void CustomHeader::Serialize (Buffer::Iterator start) const{
 		  i.WriteU32(grant.generation);
 		  i.WriteU8(grant.ackRequired);
 	  }else if (l3Prot == GUARD_RATE_GRANT_ACK){
-		  i.WriteU16(grant.sport);
-		  i.WriteU16(grant.dport);
-		  i.WriteU16(grant.pg);
-		  i.WriteU32(grant.generation);
+		  i.WriteU16(grantAck.sport);
+		  i.WriteU16(grantAck.dport);
+		  i.WriteU16(grantAck.pg);
+		  i.WriteU32(grantAck.generation);
+		  i.WriteU8(grantAck.phaseTag);
 	  }else if (l3Prot == 0xFC || l3Prot == 0xFD || l3Prot == 0xFB){ // ACK or NACK
 		  i.WriteU16(ack.sport);
 		  i.WriteU16(ack.dport);
@@ -425,10 +426,11 @@ CustomHeader::Deserialize (Buffer::Iterator start)
 		  grant.ackRequired = i.ReadU8();
 		  l4Size = GetGuardGrantSerializedSize();
 	  }else if (l3Prot == GUARD_RATE_GRANT_ACK){
-		  grant.sport = i.ReadU16();
-		  grant.dport = i.ReadU16();
-		  grant.pg = i.ReadU16();
-		  grant.generation = i.ReadU32();
+		  grantAck.sport = i.ReadU16();
+		  grantAck.dport = i.ReadU16();
+		  grantAck.pg = i.ReadU16();
+		  grantAck.generation = i.ReadU32();
+		  grantAck.phaseTag = i.ReadU8();
 		  l4Size = GetGuardGrantAckSerializedSize();
 	  }else if (l3Prot == 0xFC || l3Prot == 0xFD || l3Prot == 0xFB){ // ACK or NACK
 		  ack.sport = i.ReadU16();
@@ -496,8 +498,8 @@ uint32_t CustomHeader::GetGuardGrantSerializedSize(void){
 }
 
 uint32_t CustomHeader::GetGuardGrantAckSerializedSize(void){
-	return sizeof(grant.sport) + sizeof(grant.dport) + sizeof(grant.pg)
-	     + sizeof(grant.generation);
+	return sizeof(grantAck.sport) + sizeof(grantAck.dport) + sizeof(grantAck.pg)
+	     + sizeof(grantAck.generation) + sizeof(grantAck.phaseTag);
 }
 
 uint32_t CustomHeader::GetUdpHeaderSize(void){

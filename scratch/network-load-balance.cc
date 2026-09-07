@@ -25,6 +25,8 @@
 #include <ns3/rdma.h>
 #include <ns3/sim-setting.h>
 #include <ns3/switch-node.h>
+#include <limits.h>
+#include <stdlib.h>
 #include <time.h>
 
 #include <fstream>
@@ -139,6 +141,7 @@ std::string guard_stats_output_file = "guard_stats.txt";
 std::string guard_lifecycle_trace_output_file = "guard_lifecycle.csv";
 std::string guard_controller_trace_output_file = "guard_controller.csv";
 std::string guard_grant_trace_output_file = "guard_grants.csv";
+std::string guard_transition_audit_output_file = "guard_transition_audit.csv";
 std::string queue_stats_output_file = "queue_stats.txt";
 std::string cnp_output_file = "cnp.txt";
 std::string qlen_mon_file = "qlen.txt";
@@ -149,6 +152,26 @@ std::string conn_mon_file = "conn.txt";
 std::string est_error_output_file = "est_error.txt";
 std::string bw_output_file = "bw.txt";
 std::string flow_bw_output_file = "flow_bw.txt";
+
+std::string NormalizeGuardArtifactPath(const std::string &path) {
+    char resolved[PATH_MAX];
+    if (realpath(path.c_str(), resolved) != NULL) {
+        return std::string(resolved);
+    }
+    std::string::size_type slash = path.find_last_of('/');
+    std::string parent = slash == std::string::npos
+                             ? "."
+                             : (slash == 0 ? "/" : path.substr(0, slash));
+    std::string leaf = slash == std::string::npos
+                           ? path
+                           : path.substr(slash + 1);
+    if (!leaf.empty() && realpath(parent.c_str(), resolved) != NULL) {
+        std::string normalized_parent(resolved);
+        if (normalized_parent.back() != '/') normalized_parent.push_back('/');
+        return normalized_parent + leaf;
+    }
+    return path;
+}
 
 // CC params
 double alpha_resume_interval = 55, rp_timer = 300, ewma_gain = 1 / 16;
@@ -199,6 +222,10 @@ uint32_t guard_initial_collection_full_deadline = 1;
 uint32_t guard_small_set_fastpath_limit = 0;
 bool guard_transition_prefix_barrier = false;
 bool guard_transition_prefix_wire_watchdog = false;
+bool guard_transition_prefix_fail_closed = false;
+bool guard_mixed_pg_vector_fastpath = false;
+bool guard_serialized_progress_refresh = false;
+bool guard_serialized_draining = false;
 double guard_grant_reliability_rtts = 0.0;
 uint32_t guard_srpt_quantum_packets = 64;
 bool guard_work_conserving = false;
@@ -221,6 +248,9 @@ const uint64_t guard_controller_trace_hard_max_lines = 300000;
 bool guard_grant_trace = false;
 uint64_t guard_grant_trace_max_lines = 1000;
 const uint64_t guard_grant_trace_hard_max_lines = 10000;
+bool guard_transition_audit = false;
+uint64_t guard_transition_audit_max_records = 10000;
+const uint64_t guard_transition_audit_hard_max_records = 10000;
 uint32_t int_multi = 1;
 bool rate_bound = true;
 unordered_map<uint64_t, uint32_t> rate2kmax, rate2kmin;
@@ -1402,6 +1432,45 @@ int main(int argc, char *argv[]) {
                 guard_transition_prefix_wire_watchdog = enabled != 0;
                 std::cerr << "GUARD_TRANSITION_PREFIX_WIRE_WATCHDOG\t"
                           << enabled << '\n';
+            } else if (key.compare("GUARD_TRANSITION_PREFIX_FAIL_CLOSED") == 0) {
+                uint32_t enabled;
+                conf >> enabled;
+                if (enabled > 1) {
+                    std::cerr << "GUARD_TRANSITION_PREFIX_FAIL_CLOSED must be 0 or 1\n";
+                    return 1;
+                }
+                guard_transition_prefix_fail_closed = enabled != 0;
+                std::cerr << "GUARD_TRANSITION_PREFIX_FAIL_CLOSED\t"
+                          << enabled << '\n';
+            } else if (key.compare("GUARD_MIXED_PG_VECTOR_FASTPATH") == 0) {
+                uint32_t enabled;
+                conf >> enabled;
+                if (enabled > 1) {
+                    std::cerr << "GUARD_MIXED_PG_VECTOR_FASTPATH must be 0 or 1\n";
+                    return 1;
+                }
+                guard_mixed_pg_vector_fastpath = enabled != 0;
+                std::cerr << "GUARD_MIXED_PG_VECTOR_FASTPATH\t"
+                          << enabled << '\n';
+            } else if (key.compare("GUARD_SERIALIZED_PROGRESS_REFRESH") == 0) {
+                uint32_t enabled;
+                conf >> enabled;
+                if (enabled > 1) {
+                    std::cerr << "GUARD_SERIALIZED_PROGRESS_REFRESH must be 0 or 1\n";
+                    return 1;
+                }
+                guard_serialized_progress_refresh = enabled != 0;
+                std::cerr << "GUARD_SERIALIZED_PROGRESS_REFRESH\t"
+                          << enabled << '\n';
+            } else if (key.compare("GUARD_SERIALIZED_DRAINING") == 0) {
+                uint32_t enabled;
+                conf >> enabled;
+                if (enabled > 1) {
+                    std::cerr << "GUARD_SERIALIZED_DRAINING must be 0 or 1\n";
+                    return 1;
+                }
+                guard_serialized_draining = enabled != 0;
+                std::cerr << "GUARD_SERIALIZED_DRAINING\t" << enabled << '\n';
             } else if (key.compare("GUARD_SRPT_QUANTUM_PACKETS") == 0) {
                 conf >> guard_srpt_quantum_packets;
                 std::cerr << "GUARD_SRPT_QUANTUM_PACKETS\t"
@@ -1452,6 +1521,20 @@ int main(int argc, char *argv[]) {
                 conf >> guard_grant_trace_max_lines;
                 std::cerr << "GUARD_GRANT_TRACE_MAX_LINES\t"
                           << guard_grant_trace_max_lines << '\n';
+            } else if (key.compare("GUARD_TRANSITION_AUDIT") == 0) {
+                uint32_t enabled;
+                conf >> enabled;
+                if (enabled > 1) {
+                    std::cerr << "GUARD_TRANSITION_AUDIT must be 0 or 1\n";
+                    return 1;
+                }
+                guard_transition_audit = enabled != 0;
+                std::cerr << "GUARD_TRANSITION_AUDIT\t"
+                          << enabled << '\n';
+            } else if (key.compare("GUARD_TRANSITION_AUDIT_MAX_RECORDS") == 0) {
+                conf >> guard_transition_audit_max_records;
+                std::cerr << "GUARD_TRANSITION_AUDIT_MAX_RECORDS\t"
+                          << guard_transition_audit_max_records << '\n';
             } else if (key.compare("HOMA_OVERCOMMIT") == 0) {
                 conf >> homa_overcommit;
                 std::cerr << "HOMA_OVERCOMMIT\t\t" << homa_overcommit << '\n';
@@ -1503,6 +1586,10 @@ int main(int argc, char *argv[]) {
                 conf >> guard_grant_trace_output_file;
                 std::cerr << "GUARD_GRANT_TRACE_OUTPUT_FILE\t"
                           << guard_grant_trace_output_file << '\n';
+            } else if (key.compare("GUARD_TRANSITION_AUDIT_OUTPUT_FILE") == 0) {
+                conf >> guard_transition_audit_output_file;
+                std::cerr << "GUARD_TRANSITION_AUDIT_OUTPUT_FILE\t"
+                          << guard_transition_audit_output_file << '\n';
             } else if (key.compare("QUEUE_STATS_OUTPUT_FILE") == 0) {
                 conf >> queue_stats_output_file;
                 std::cerr << "QUEUE_STATS_OUTPUT_FILE\t\t" << queue_stats_output_file << '\n';
@@ -1731,6 +1818,63 @@ int main(int argc, char *argv[]) {
                   << guard_grant_trace_hard_max_lines << "]\n";
         return 1;
     }
+    if (guard_transition_audit && cc_mode != 11) {
+        std::cerr << "GUARD_TRANSITION_AUDIT requires CC_MODE 11\n";
+        return 1;
+    }
+    if (guard_transition_audit && !guard_transition_prefix_barrier) {
+        std::cerr << "GUARD_TRANSITION_AUDIT requires "
+                  << "GUARD_TRANSITION_PREFIX_BARRIER 1\n";
+        return 1;
+    }
+    if (guard_transition_audit &&
+        (guard_transition_audit_max_records == 0 ||
+         guard_transition_audit_max_records >
+             guard_transition_audit_hard_max_records)) {
+        std::cerr << "GUARD_TRANSITION_AUDIT_MAX_RECORDS must be in [1, "
+                  << guard_transition_audit_hard_max_records << "]\n";
+        return 1;
+    }
+    if (guard_transition_audit) {
+        const std::string normalized_audit = NormalizeGuardArtifactPath(
+            guard_transition_audit_output_file);
+        const std::string *reserved_outputs[] = {
+            &flow_input_file,
+            &fct_output_file,
+            &pfc_output_file,
+            &guard_stats_output_file,
+            &guard_lifecycle_trace_output_file,
+            &guard_controller_trace_output_file,
+            &guard_grant_trace_output_file,
+            &queue_stats_output_file,
+            &cnp_output_file,
+            &qlen_mon_file,
+            &voq_mon_file,
+            &voq_mon_detail_file,
+            &uplink_mon_file,
+            &conn_mon_file,
+            &est_error_output_file,
+            &bw_output_file,
+            &flow_bw_output_file,
+            &topology_file,
+            &flow_file,
+        };
+        for (const std::string *reserved : reserved_outputs) {
+            if (normalized_audit == NormalizeGuardArtifactPath(*reserved)) {
+                std::cerr << "GUARD_TRANSITION_AUDIT_OUTPUT_FILE must be a "
+                          << "dedicated path\n";
+                return 1;
+            }
+        }
+#ifndef PGO_TRAINING
+        if (argc > 1 &&
+            normalized_audit == NormalizeGuardArtifactPath(argv[1])) {
+            std::cerr << "GUARD_TRANSITION_AUDIT_OUTPUT_FILE must not overwrite "
+                      << "the simulator config\n";
+            return 1;
+        }
+#endif
+    }
     if (guard_initial_collection_full_deadline > 1) {
         std::cerr << "GUARD_INITIAL_COLLECTION_FULL_DEADLINE must be 0 or 1\n";
         return 1;
@@ -1750,11 +1894,12 @@ int main(int argc, char *argv[]) {
                       << "five windows, and sliding initial mode\n";
             return 1;
         }
-        if (guard_remaining_aware || guard_receiver_concurrency != 0) {
-            std::cerr << "GUARD V11 small-set fast path currently requires "
-                      << "GUARD_REMAINING_AWARE 0 and "
-                      << "GUARD_RECEIVER_CONCURRENCY 0 for one equal-share "
-                      << "transaction target\n";
+        if ((guard_remaining_aware &&
+             !guard_serialized_progress_refresh) ||
+            guard_receiver_concurrency != 0) {
+            std::cerr << "GUARD V11 small-set fast path permits remaining-aware "
+                      << "grants only through the V14 serialized bundle and "
+                      << "forbids receiver concurrency\n";
             return 1;
         }
     }
@@ -1770,6 +1915,34 @@ int main(int argc, char *argv[]) {
                   << "GUARD_TRANSITION_PREFIX_BARRIER 1\n";
         return 1;
     }
+    if (guard_transition_prefix_fail_closed &&
+        !guard_transition_prefix_wire_watchdog) {
+        std::cerr << "GUARD V14 fail-closed prefix deadlines require "
+                  << "GUARD_TRANSITION_PREFIX_WIRE_WATCHDOG 1\n";
+        return 1;
+    }
+    if (guard_transition_prefix_fail_closed && cc_mode != 11) {
+        std::cerr << "GUARD V14 fail-closed prefix deadlines require "
+                  << "CC_MODE 11\n";
+        return 1;
+    }
+    if (guard_mixed_pg_vector_fastpath &&
+        (!guard_transition_prefix_fail_closed || cc_mode != 11)) {
+        std::cerr << "GUARD V14 mixed-PG vector fast path requires CC_MODE 11 "
+                  << "and the fail-closed V14 prefix chain\n";
+        return 1;
+    }
+    if (guard_serialized_progress_refresh != guard_serialized_draining) {
+        std::cerr << "GUARD V14 refresh/draining must be enabled as one fail-closed bundle\n";
+        return 1;
+    }
+    if (guard_serialized_progress_refresh &&
+        (!guard_mixed_pg_vector_fastpath || !guard_remaining_aware ||
+         guard_grant_refresh_bdps <= 0 || !guard_proactive_release || cc_mode != 11)) {
+        std::cerr << "GUARD V14 refresh/draining requires full GUARD, the mixed-PG "
+                  << "vector, remaining-aware refresh, and proactive release\n";
+        return 1;
+    }
     if (guard_membership_coalesce_ns > 0) {
         if (cc_mode != 11 && cc_mode != 13) {
             std::cerr << "GUARD membership coalescing requires CC_MODE 11 or 13\n";
@@ -1783,10 +1956,11 @@ int main(int argc, char *argv[]) {
             std::cerr << "GUARD membership coalescing requires GUARD_FIXED_WINDOW 1\n";
             return 1;
         }
-        if (guard_proactive_release) {
+        if (guard_proactive_release &&
+            !guard_serialized_progress_refresh) {
             std::cerr << "GUARD membership coalescing currently requires "
-                      << "GUARD_PROACTIVE_RELEASE 0 because geometric release "
-                      << "batching is safe only after completed flows stop sending\n";
+                      << "GUARD_PROACTIVE_RELEASE 0 unless the V14 serialized "
+                      << "draining coordinator is enabled\n";
             return 1;
         }
         if (guard_grant_reliability_rtts < 1.0) {
@@ -1794,12 +1968,14 @@ int main(int argc, char *argv[]) {
                       << "GUARD_GRANT_RELIABILITY_RTTS >= 1\n";
             return 1;
         }
-        if (guard_grant_refresh_bdps > 0 || guard_work_conserving ||
+        if ((guard_grant_refresh_bdps > 0 &&
+             !guard_serialized_progress_refresh) ||
+            guard_work_conserving ||
             guard_cap_aware_reclaim) {
             std::cerr << "GUARD membership coalescing currently requires "
-                      << "GUARD_GRANT_REFRESH_BDPS 0, GUARD_WORK_CONSERVING 0, "
-                      << "and GUARD_CAP_AWARE_RECLAIM 0 so every rate update "
-                      << "uses an ordered membership generation\n";
+                      << "serialized V14 refresh or GUARD_GRANT_REFRESH_BDPS 0, "
+                      << "plus GUARD_WORK_CONSERVING 0 and "
+                      << "GUARD_CAP_AWARE_RECLAIM 0\n";
             return 1;
         }
     }
@@ -1858,7 +2034,37 @@ int main(int argc, char *argv[]) {
                     "activation_batch_index,activation_batch_size,"
                     "activation_register_ns");
         }
+        if (guard_serialized_progress_refresh && guard_serialized_draining) {
+            fprintf(guard_grant_trace_sink.file,
+                    ",allocation_revision,progress_revision,membership_revision,"
+                    "snapshot_valid,frozen_capacity_bps,frozen_active_records,"
+                    "frozen_draining_records,frozen_draining_reserved_bps,"
+                    "frozen_allocatable_bps,frozen_encoded_target_bps,"
+                    "live_active_records,live_draining_records,"
+                    "live_draining_reserved_bps,capacity_recompute_pending,"
+                    "reason_mask");
+        }
         fprintf(guard_grant_trace_sink.file, "\n");
+    }
+    GuardTransitionAuditSink guard_transition_audit_sink;
+    if (guard_transition_audit) {
+        guard_transition_audit_sink.file =
+            fopen(guard_transition_audit_output_file.c_str(), "w");
+        if (guard_transition_audit_sink.file == NULL) {
+            std::cerr << "Cannot open GUARD transition audit: "
+                      << guard_transition_audit_output_file << '\n';
+            return 1;
+        }
+        guard_transition_audit_sink.max_records =
+            guard_transition_audit_max_records;
+        fprintf(
+            guard_transition_audit_sink.file,
+            "receiver_node,receiver_nic,epoch,transaction,priority_group_set_hash,"
+            "target_vector_hash,target_vector_entries,capacity_bps,"
+            "active_upper_bound_bps,draining_upper_bound_bps,"
+            "active_plus_draining_upper_bound_bps,draining_wire_upper_bound_bytes,"
+            "prefix_target_bytes,prefix_observed_bytes,start_ns,deadline_ns,"
+            "deadline_policy,deadline_outcome,terminal_closure\n");
     }
     // HPCC's congestion metric is normalized load plus a normalized queue
     // term, not physical link utilization alone.  Therefore lambda * 0.95
@@ -2269,6 +2475,18 @@ int main(int argc, char *argv[]) {
             rdmaHw->SetAttribute(
                 "GuardTransitionPrefixWireWatchdog",
                 BooleanValue(guard_transition_prefix_wire_watchdog));
+            rdmaHw->SetAttribute(
+                "GuardTransitionPrefixFailClosed",
+                BooleanValue(guard_transition_prefix_fail_closed));
+            rdmaHw->SetAttribute(
+                "GuardMixedPgVectorFastpath",
+                BooleanValue(guard_mixed_pg_vector_fastpath));
+            rdmaHw->SetAttribute(
+                "GuardSerializedProgressRefresh",
+                BooleanValue(guard_serialized_progress_refresh));
+            rdmaHw->SetAttribute(
+                "GuardSerializedDraining",
+                BooleanValue(guard_serialized_draining));
             rdmaHw->SetAttribute("GuardSrptQuantumPackets",
                                  UintegerValue(guard_srpt_quantum_packets));
             rdmaHw->SetAttribute("GuardWorkConserving", BooleanValue(guard_work_conserving));
@@ -2297,6 +2515,10 @@ int main(int argc, char *argv[]) {
             }
             if (guard_grant_trace) {
                 rdmaHw->ConfigureGuardGrantTrace(&guard_grant_trace_sink);
+            }
+            if (guard_transition_audit) {
+                rdmaHw->ConfigureGuardTransitionAudit(
+                    &guard_transition_audit_sink);
             }
             rdmaHw->SetAttribute("RateBound", BooleanValue(rate_bound));
             rdmaHw->SetAttribute("DctcpRateAI", DataRateValue(DataRate(dctcp_rate_ai)));
@@ -2705,6 +2927,23 @@ int main(int argc, char *argv[]) {
     Simulator::Stop(Seconds(flowgen_stop_time + 10.0));
     Simulator::Run();
 
+    if (guard_transition_audit) {
+        for (uint32_t i = 0; i < node_num; i++) {
+            if (n.Get(i)->GetNodeType() != 0) continue;
+            Ptr<RdmaDriver> driver = n.Get(i)->GetObject<RdmaDriver>();
+            driver->m_rdma->FlushGuardTransitionAudit();
+        }
+        fprintf(guard_transition_audit_sink.file,
+                "# records %lu attempted %lu written %lu truncated %lu\n",
+                guard_transition_audit_sink.records,
+                guard_transition_audit_sink.attempted,
+                guard_transition_audit_sink.written,
+                guard_transition_audit_sink.attempted -
+                    guard_transition_audit_sink.written);
+        fclose(guard_transition_audit_sink.file);
+        guard_transition_audit_sink.file = NULL;
+    }
+
     if (guard_controller_trace) {
         fprintf(guard_controller_trace_sink.file,
                 "# attempted %lu written %lu truncated %lu\n",
@@ -2864,6 +3103,11 @@ int main(int argc, char *argv[]) {
     uint64_t total_guard_grant_acks_received = 0;
     uint64_t total_guard_grant_ack_bytes_received = 0;
     uint64_t total_guard_grant_acks_stale = 0;
+    uint64_t total_guard_retired_ack_closures = 0;
+    uint64_t total_guard_retired_acks_received = 0;
+    uint64_t max_guard_retired_ack_peak = 0;
+    uint64_t terminal_guard_retired_ack_records = 0;
+    uint64_t total_guard_retired_ack_overflow = 0;
     uint64_t total_guard_stale_grants_received = 0;
     uint64_t total_guard_ack_required_batches = 0;
     uint64_t total_guard_ack_optional_batches = 0;
@@ -2899,6 +3143,32 @@ int main(int argc, char *argv[]) {
     uint64_t total_post_transition_fast_grants = 0;
     uint64_t total_barrier_violations = 0;
     uint64_t total_early_unlocks = 0;
+    uint64_t total_vector_freezes = 0;
+    uint64_t total_vector_mixed_pg_freezes = 0;
+    uint64_t max_vector_entries = 0;
+    uint64_t total_vector_prepare_decreases = 0;
+    uint64_t total_vector_activation_waiters = 0;
+    uint64_t total_vector_activation_increases = 0;
+    uint64_t total_vector_release_required = 0;
+    uint64_t total_vector_release_optional = 0;
+    uint64_t vector_last_hash_xor = 0;
+    uint64_t terminal_vector_records = 0;
+    uint64_t terminal_vector_holds = 0;
+    uint64_t terminal_vector_ledger = 0;
+    uint64_t total_serialized_progress_requests = 0;
+    uint64_t total_serialized_progress_transactions = 0;
+    uint64_t total_serialized_progress_commits = 0;
+    uint64_t total_serialized_progress_busy_deferrals = 0;
+    uint64_t total_draining_requests = 0;
+    uint64_t total_draining_pending_transitions = 0;
+    uint64_t total_draining_direct_transitions = 0;
+    uint64_t total_draining_boundary_commits = 0;
+    uint64_t total_draining_completion_releases = 0;
+    uint64_t max_draining_records = 0;
+    uint64_t max_draining_reserved_bps = 0;
+    uint64_t terminal_draining_records = 0;
+    uint64_t terminal_draining_reserved_bps = 0;
+    uint64_t terminal_progress_dirty = 0;
     uint64_t max_join_queue = 0;
     uint64_t max_high_transition_registered_n = 0;
     uint64_t max_high_transition_waiters = 0;
@@ -3087,6 +3357,13 @@ int main(int argc, char *argv[]) {
         total_guard_grant_acks_received += hw->m_guardGrantAcksReceived;
         total_guard_grant_ack_bytes_received += hw->m_guardGrantAckBytesReceived;
         total_guard_grant_acks_stale += hw->m_guardGrantAcksStale;
+        total_guard_retired_ack_closures += hw->m_guardRetiredAckClosures;
+        total_guard_retired_acks_received += hw->m_guardRetiredAcksReceived;
+        max_guard_retired_ack_peak = std::max(
+            max_guard_retired_ack_peak, hw->m_guardRetiredAckPeak);
+        terminal_guard_retired_ack_records +=
+            hw->m_guardRetiredAckRecords.size();
+        total_guard_retired_ack_overflow += hw->m_guardRetiredAckOverflow;
         total_guard_stale_grants_received += hw->m_guardStaleGrantsReceived;
         total_guard_ack_required_batches += hw->m_guardAckRequiredBatches;
         total_guard_ack_optional_batches += hw->m_guardAckOptionalBatches;
@@ -3130,6 +3407,46 @@ int main(int argc, char *argv[]) {
             hw->m_guardFastpathPostTransitionFastGrants;
         total_barrier_violations += hw->m_guardFastpathBarrierViolations;
         total_early_unlocks += hw->m_guardFastpathEarlyUnlocks;
+        total_vector_freezes += hw->m_guardVectorFreezes;
+        total_vector_mixed_pg_freezes += hw->m_guardVectorMixedPgFreezes;
+        max_vector_entries = std::max(max_vector_entries,
+                                      hw->m_guardVectorMaxEntries);
+        total_vector_prepare_decreases += hw->m_guardVectorPrepareDecreases;
+        total_vector_activation_waiters += hw->m_guardVectorActivationWaiters;
+        total_vector_activation_increases += hw->m_guardVectorActivationIncreases;
+        total_vector_release_required += hw->m_guardVectorReleaseRequired;
+        total_vector_release_optional += hw->m_guardVectorReleaseOptional;
+        vector_last_hash_xor ^= hw->m_guardVectorLastHash;
+        terminal_vector_records += hw->m_guardFrozenTargetVector.size();
+        terminal_vector_holds += hw->m_guardFrozenTargetHolds.size();
+        terminal_vector_ledger += hw->m_guardGenerationLedger.size();
+        total_serialized_progress_requests +=
+            hw->m_guardSerializedProgressRequests;
+        total_serialized_progress_transactions +=
+            hw->m_guardSerializedProgressTransactions;
+        total_serialized_progress_commits +=
+            hw->m_guardSerializedProgressCommits;
+        total_serialized_progress_busy_deferrals +=
+            hw->m_guardSerializedProgressBusyDeferrals;
+        total_draining_requests += hw->m_guardDrainingRequests;
+        total_draining_pending_transitions +=
+            hw->m_guardDrainingPendingTransitions;
+        total_draining_direct_transitions +=
+            hw->m_guardDrainingDirectTransitions;
+        total_draining_boundary_commits +=
+            hw->m_guardDrainingBoundaryCommits;
+        total_draining_completion_releases +=
+            hw->m_guardDrainingCompletionReleases;
+        max_draining_records = std::max(
+            max_draining_records, hw->m_guardDrainingMaxRecords);
+        max_draining_reserved_bps = std::max(
+            max_draining_reserved_bps, hw->m_guardDrainingMaxReservedBps);
+        terminal_draining_records += hw->m_guardDrainingRecords.size();
+        terminal_progress_dirty += hw->m_guardProgressDirtyFlows.size();
+        for (const auto &item : hw->m_guardDrainingRecords) {
+            if (item.second.state == GUARD_DRAINING)
+                terminal_draining_reserved_bps += item.second.reservedBps;
+        }
         max_join_queue = std::max(max_join_queue, hw->m_guardFastpathJoinQueueMax);
         max_high_transition_registered_n = std::max(
             max_high_transition_registered_n,
@@ -3590,6 +3907,50 @@ int main(int argc, char *argv[]) {
             terminal_collection_ready, terminal_high_initial_flushed,
             terminal_high_initial_committed, terminal_membership_revision,
             terminal_consumed_membership_revision);
+    if (guard_mixed_pg_vector_fastpath) {
+        fprintf(guard_stats_output,
+                "guard_mixed_pg_vector enabled 1 freezes %lu mixed_pg_freezes %lu "
+                "max_entries %lu prepare_decreases %lu activation_waiters %lu "
+                "activation_increases %lu release_required %lu release_optional %lu "
+                "last_hash_xor %lu terminal_records %lu terminal_holds %lu "
+                "terminal_ledger %lu\n",
+                total_vector_freezes, total_vector_mixed_pg_freezes,
+                max_vector_entries, total_vector_prepare_decreases,
+                total_vector_activation_waiters,
+                total_vector_activation_increases,
+                total_vector_release_required, total_vector_release_optional,
+                vector_last_hash_xor, terminal_vector_records,
+                terminal_vector_holds, terminal_vector_ledger);
+        fprintf(guard_stats_output,
+                "guard_retired_ack closures %lu received %lu peak %lu "
+                "terminal %lu overflow %lu\n",
+                total_guard_retired_ack_closures,
+                total_guard_retired_acks_received,
+                max_guard_retired_ack_peak,
+                terminal_guard_retired_ack_records,
+                total_guard_retired_ack_overflow);
+    }
+    if (guard_serialized_progress_refresh && guard_serialized_draining) {
+        fprintf(
+            guard_stats_output,
+            "guard_refresh_draining enabled 1 progress_requests %lu "
+            "progress_transactions %lu progress_commits %lu "
+            "progress_busy_deferrals %lu draining_requests %lu "
+            "draining_pending %lu draining_direct %lu boundary_commits %lu "
+            "completion_releases %lu max_draining_records %lu "
+            "max_draining_reserved_bps %lu terminal_draining_records %lu "
+            "terminal_draining_reserved_bps %lu terminal_progress_dirty %lu\n",
+            total_serialized_progress_requests,
+            total_serialized_progress_transactions,
+            total_serialized_progress_commits,
+            total_serialized_progress_busy_deferrals,
+            total_draining_requests, total_draining_pending_transitions,
+            total_draining_direct_transitions,
+            total_draining_boundary_commits,
+            total_draining_completion_releases, max_draining_records,
+            max_draining_reserved_bps, terminal_draining_records,
+            terminal_draining_reserved_bps, terminal_progress_dirty);
+    }
     if (guard_transition_prefix_barrier) {
         fprintf(guard_stats_output,
             "guard_transition_prefix enabled %u starts %lu ready %lu "
@@ -3666,6 +4027,17 @@ int main(int argc, char *argv[]) {
             max_transition_watchdog_start_ns,
             max_transition_watchdog_deadline_ns,
             terminal_transition_watchdog_budgets);
+    }
+    if (guard_transition_audit) {
+        fprintf(guard_stats_output,
+                "guard_transition_audit enabled 1 records %lu attempted %lu "
+                "written %lu truncated %lu max_records %lu\n",
+                guard_transition_audit_sink.records,
+                guard_transition_audit_sink.attempted,
+                guard_transition_audit_sink.written,
+                guard_transition_audit_sink.attempted -
+                    guard_transition_audit_sink.written,
+                guard_transition_audit_sink.max_records);
     }
     fprintf(guard_stats_output, "switch_drops ingress %u egress %u total %u\n",
             Settings::dropped_pkt_sw_ingress, Settings::dropped_pkt_sw_egress,

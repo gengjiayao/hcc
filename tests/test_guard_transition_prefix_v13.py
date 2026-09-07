@@ -82,7 +82,7 @@ class GuardTransitionPrefixV13Test(unittest.TestCase):
         self.assertNotIn("ReceiverNextExpectedSeq", branch)
         self.assertNotIn("remaining_bytes", branch)
         self.assertIn("flow->m_guard_first_grant_gate_bytes", branch)
-        self.assertIn("flow->m_guard_grant_upper_bound_bps", branch)
+        self.assertIn("flow->m_guard_last_acked_upper_bound_bps", branch)
         self.assertIn("CustomHeader::GetStaticWholeHeaderSize()", branch)
         helper = function("bool RdmaHw::ComputeGuardTransitionPrefixWireBudget",
                           "void RdmaHw::StartGuardTransitionPrefixBarrier")
