@@ -94,6 +94,11 @@ GUARD_SELECTIVE_REGISTRATION {guard_selective_registration}
 GUARD_PROACTIVE_RELEASE {guard_proactive_release}
 GUARD_KEEP_LAST_HOP_INT {guard_keep_last_hop_int}
 GUARD_SIZE_PRIORITY {guard_size_priority}
+GUARD_INITIAL_WINDOW_PRIORITY {guard_initial_window_priority}
+GUARD_TRANSPORT_WINDOW_FLOOR_RTT_NS {guard_transport_window_floor_rtt_ns}
+GUARD_TRANSPORT_WINDOW_FLOOR_AFTER_FIRST_GRANT {guard_transport_window_floor_after_first_grant}
+GUARD_TRANSPORT_WINDOW_WHOLE_FLOW_FIRST_GATE {guard_transport_window_whole_flow_first_gate}
+GUARD_TRANSPORT_WINDOW_ACK_SLACK_PACKETS {guard_transport_window_ack_slack_packets}
 GUARD_SENDER_SRPT {guard_sender_srpt}
 GUARD_ONE_RTT_BYPASS {guard_one_rtt_bypass}
 GUARD_TAIL_BYPASS {guard_tail_bypass}
@@ -112,8 +117,11 @@ GUARD_MIN_SHARE_FRACTION {guard_min_share_fraction}
 GUARD_REMAINING_EXPONENT {guard_remaining_exponent}
 GUARD_RECEIVER_CONCURRENCY {guard_receiver_concurrency}
 GUARD_ADAPTIVE_ELEPHANT_CONCURRENCY {guard_adaptive_elephant_concurrency}
+GUARD_SIZE_CLASS_ELEPHANT_CONCURRENCY {guard_size_class_elephant_concurrency}
 GUARD_ELEPHANT_AGING_RTTS {guard_elephant_aging_rtts}
 GUARD_ELEPHANT_CAP_SPILLOVER {guard_elephant_cap_spillover}
+GUARD_CAP_TRIGGERED_REFRESH {guard_cap_triggered_refresh}
+GUARD_CAP_REFRESH_MATERIAL_PERCENT {guard_cap_refresh_material_percent}
 GUARD_ELEPHANT_SPILLOVER_ENTER_REPORTS {guard_elephant_spillover_enter_reports}
 GUARD_ELEPHANT_SPILLOVER_EXIT_REPORTS {guard_elephant_spillover_exit_reports}
 GUARD_ELEPHANT_FABRIC_TARGET {guard_elephant_fabric_target}
@@ -443,6 +451,19 @@ def main():
                         help="retain last-hop INT in GUARD for ablation (default: 0)")
     parser.add_argument('--guard_size_priority', type=int, choices=(0, 1), default=1,
                         help="remap GUARD flows to size-based priority groups (default: 1)")
+    parser.add_argument('--guard_initial_window_priority', type=int, choices=(0, 1), default=0,
+                        help="serve only GUARD's initial BDP at unscheduled priority (default: 0)")
+    parser.add_argument('--guard_transport_window_floor_rtt_ns', type=int, default=0,
+                        help="minimum RTT-equivalent GUARD transport window in ns (default: 0)")
+    parser.add_argument('--guard_transport_window_floor_after_first_grant',
+                        type=int, choices=(0, 1), default=0,
+                        help="apply the GUARD window floor only after its first grant (default: 0)")
+    parser.add_argument('--guard_transport_window_whole_flow_first_gate',
+                        type=int, choices=(0, 1), default=0,
+                        help="use the floor before grant only for whole flows that fit (default: 0)")
+    parser.add_argument('--guard_transport_window_ack_slack_packets',
+                        type=int, default=0,
+                        help="cap the floor at path BDP plus this many MTU packets (default: 0)")
     parser.add_argument('--guard_sender_srpt', type=int, choices=(0, 1), default=1,
                         help="select shortest remaining ready GUARD flow at sender (default: 1)")
     parser.add_argument('--guard_one_rtt_bypass', type=int, choices=(0, 1), default=1,
@@ -480,11 +501,20 @@ def main():
     parser.add_argument('--guard_adaptive_elephant_concurrency', type=int,
                         choices=(0, 1), default=0,
                         help="use floor-sqrt elephant width capped by receiver concurrency")
+    parser.add_argument('--guard_size_class_elephant_concurrency', type=int,
+                        choices=(0, 1), default=0,
+                        help="use K=2 only for the same dyadic remaining-size class")
     parser.add_argument('--guard_elephant_aging_rtts', type=float, default=0.0,
                         help="deferred-elephant wait before one K=1 service quantum; 0 disables")
     parser.add_argument('--guard_elephant_cap_spillover', type=int,
                         choices=(0, 1), default=0,
                         help="spill only a confirmed fabric-limited K=1 elephant share")
+    parser.add_argument('--guard_cap_triggered_refresh', type=int,
+                        choices=(0, 1), default=0,
+                        help="refresh frozen K=1 targets on material fabric-cap changes")
+    parser.add_argument('--guard_cap_refresh_material_percent', type=int,
+                        default=5,
+                        help="relative cap change required for a serialized refresh [1,20]")
     parser.add_argument('--guard_elephant_spillover_enter_reports', type=int,
                         default=3,
                         help="fabric-bound reports required to enter spillover [1,8]")
@@ -669,19 +699,51 @@ def main():
     if args.guard_adaptive_elephant_concurrency and args.guard_receiver_concurrency < 2:
         raise Exception(
             "CONFIG ERROR: adaptive elephant concurrency requires receiver concurrency >= 2.")
+    if args.guard_size_class_elephant_concurrency:
+        if args.guard_receiver_concurrency != 2:
+            raise Exception(
+                "CONFIG ERROR: size-class elephant concurrency requires receiver concurrency 2.")
+        if args.guard_adaptive_elephant_concurrency:
+            raise Exception(
+                "CONFIG ERROR: adaptive and size-class elephant concurrency are exclusive.")
     if not 0.0 <= args.guard_elephant_aging_rtts <= 64.0:
         raise Exception("CONFIG ERROR: --guard_elephant_aging_rtts must be in [0, 64].")
     if args.guard_elephant_aging_rtts > 0.0:
         if args.guard_receiver_concurrency != 1:
             raise Exception("CONFIG ERROR: elephant aging requires receiver concurrency 1.")
-        if args.guard_adaptive_elephant_concurrency:
+        if (args.guard_adaptive_elephant_concurrency or
+                args.guard_size_class_elephant_concurrency):
             raise Exception("CONFIG ERROR: elephant aging and adaptive concurrency are exclusive.")
     if args.guard_elephant_cap_spillover:
         if args.guard_receiver_concurrency != 1:
             raise Exception("CONFIG ERROR: elephant cap spillover requires receiver concurrency 1.")
-        if args.guard_adaptive_elephant_concurrency or args.guard_elephant_aging_rtts > 0.0:
+        if (args.guard_adaptive_elephant_concurrency or
+                args.guard_size_class_elephant_concurrency or
+                args.guard_elephant_aging_rtts > 0.0):
             raise Exception(
                 "CONFIG ERROR: elephant cap spillover is exclusive with adaptive concurrency and aging.")
+    if args.guard_cap_triggered_refresh:
+        if (args.cc != "guard" or args.guard_receiver_concurrency != 1 or
+                args.guard_adaptive_elephant_concurrency or
+                args.guard_size_class_elephant_concurrency or
+                args.guard_elephant_aging_rtts > 0.0 or
+                args.guard_elephant_cap_spillover or
+                not args.guard_remaining_aware or
+                not args.guard_mixed_pg_vector_fastpath or
+                not args.guard_serialized_progress_refresh or
+                not args.guard_serialized_draining or
+                not args.guard_capacity_admission_deferral):
+            raise Exception(
+                "CONFIG ERROR: cap-triggered refresh requires final K=1 GUARD "
+                "and other elephant adaptations disabled.")
+    if not 1 <= args.guard_cap_refresh_material_percent <= 20:
+        raise Exception(
+            "CONFIG ERROR: --guard_cap_refresh_material_percent must be in [1, 20].")
+    if (not args.guard_cap_triggered_refresh and
+            args.guard_cap_refresh_material_percent != 5):
+        raise Exception(
+            "CONFIG ERROR: a non-default cap-refresh threshold requires "
+            "--guard_cap_triggered_refresh 1.")
     if not 1 <= args.guard_elephant_spillover_enter_reports <= 8:
         raise Exception(
             "CONFIG ERROR: --guard_elephant_spillover_enter_reports must be in [1, 8].")
@@ -694,7 +756,9 @@ def main():
     if args.guard_elephant_fabric_target:
         if (args.cc != "guard" or args.guard_adaptive_fabric_target or
                 args.guard_elephant_cap_spillover or
+                args.guard_cap_triggered_refresh or
                 args.guard_adaptive_elephant_concurrency or
+                args.guard_size_class_elephant_concurrency or
                 args.guard_elephant_aging_rtts > 0.0 or
                 args.guard_receiver_concurrency != 1 or
                 not args.guard_remaining_aware or
@@ -709,7 +773,9 @@ def main():
         if (args.cc != "guard" or args.guard_adaptive_fabric_target or
                 args.guard_elephant_fabric_target or
                 args.guard_elephant_cap_spillover or
+                args.guard_cap_triggered_refresh or
                 args.guard_adaptive_elephant_concurrency or
+                args.guard_size_class_elephant_concurrency or
                 args.guard_elephant_aging_rtts > 0.0 or
                 args.guard_receiver_concurrency != 1 or
                 not args.guard_remaining_aware or
@@ -841,6 +907,40 @@ def main():
         raise Exception(
             "CONFIG ERROR: elephant cap spillover requires fixed K=1, the complete V18 "
             "canonical-vector bundle, and legacy reclaim disabled.")
+    if args.guard_initial_window_priority and (
+            args.cc != "guard" or args.guard_size_priority != 1):
+        raise Exception(
+            "CONFIG ERROR: --guard_initial_window_priority requires GUARD size priority.")
+    if args.guard_transport_window_floor_rtt_ns < 0:
+        raise Exception(
+            "CONFIG ERROR: --guard_transport_window_floor_rtt_ns must be nonnegative.")
+    if args.guard_transport_window_floor_rtt_ns and (
+            args.cc != "guard" or not args.guard_fixed_window or
+            not args.guard_transition_prefix_barrier):
+        raise Exception(
+            "CONFIG ERROR: the GUARD transport-window floor requires GUARD, a fixed "
+            "window, and the exact transition-prefix barrier.")
+    if (args.guard_transport_window_floor_after_first_grant and
+            not args.guard_transport_window_floor_rtt_ns):
+        raise Exception(
+            "CONFIG ERROR: --guard_transport_window_floor_after_first_grant "
+            "requires a positive transport-window floor.")
+    if (args.guard_transport_window_whole_flow_first_gate and
+            (not args.guard_transport_window_floor_after_first_grant or
+             not args.guard_transport_window_floor_rtt_ns)):
+        raise Exception(
+            "CONFIG ERROR: --guard_transport_window_whole_flow_first_gate "
+            "requires a positive post-grant transport-window floor.")
+    if args.guard_transport_window_ack_slack_packets < 0:
+        raise Exception(
+            "CONFIG ERROR: --guard_transport_window_ack_slack_packets must be nonnegative.")
+    if (args.guard_transport_window_ack_slack_packets and
+            (not args.guard_transport_window_whole_flow_first_gate or
+             not args.guard_transport_window_floor_after_first_grant or
+             not args.guard_transport_window_floor_rtt_ns)):
+        raise Exception(
+            "CONFIG ERROR: --guard_transport_window_ack_slack_packets requires "
+            "the positive bounded whole-flow post-grant window.")
     if not 0.0 < args.guard_demand_threshold < 1.0:
         raise Exception("CONFIG ERROR: --guard_demand_threshold must be in (0, 1).")
     if not 0.0 < args.guard_receiver_util_threshold < 1.0:
@@ -1246,6 +1346,15 @@ def main():
                                         guard_proactive_release=guard_proactive_release,
                                         guard_keep_last_hop_int=args.guard_keep_last_hop_int,
                                         guard_size_priority=args.guard_size_priority,
+                                        guard_initial_window_priority=args.guard_initial_window_priority,
+                                        guard_transport_window_floor_rtt_ns=
+                                            args.guard_transport_window_floor_rtt_ns,
+                                        guard_transport_window_floor_after_first_grant=
+                                            args.guard_transport_window_floor_after_first_grant,
+                                        guard_transport_window_whole_flow_first_gate=
+                                            args.guard_transport_window_whole_flow_first_gate,
+                                        guard_transport_window_ack_slack_packets=
+                                            args.guard_transport_window_ack_slack_packets,
                                         guard_sender_srpt=args.guard_sender_srpt,
                                         guard_one_rtt_bypass=args.guard_one_rtt_bypass,
                                         guard_tail_bypass=args.guard_tail_bypass,
@@ -1264,8 +1373,14 @@ def main():
                                         guard_remaining_exponent=args.guard_remaining_exponent,
                                         guard_receiver_concurrency=args.guard_receiver_concurrency,
                                         guard_adaptive_elephant_concurrency=args.guard_adaptive_elephant_concurrency,
+                                        guard_size_class_elephant_concurrency=
+                                            args.guard_size_class_elephant_concurrency,
                                         guard_elephant_aging_rtts=args.guard_elephant_aging_rtts,
                                         guard_elephant_cap_spillover=args.guard_elephant_cap_spillover,
+                                        guard_cap_triggered_refresh=
+                                            args.guard_cap_triggered_refresh,
+                                        guard_cap_refresh_material_percent=
+                                            args.guard_cap_refresh_material_percent,
                                         guard_elephant_spillover_enter_reports=args.guard_elephant_spillover_enter_reports,
                                         guard_elephant_spillover_exit_reports=args.guard_elephant_spillover_exit_reports,
                                         guard_elephant_fabric_target=args.guard_elephant_fabric_target,

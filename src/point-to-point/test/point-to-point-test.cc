@@ -10,6 +10,8 @@
 #include "ns3/ppp-header.h"
 #include "ns3/qbb-header.h"
 #include "ns3/rdma-hw.h"
+#include "ns3/seq-ts-header.h"
+#include "ns3/udp-header.h"
 
 #include <algorithm>
 
@@ -69,6 +71,20 @@ class GuardGrantHeaderTest : public TestCase
 {
 public:
   GuardGrantHeaderTest ();
+  virtual void DoRun (void);
+};
+
+class GuardInitialWindowPriorityEncodingTest : public TestCase
+{
+public:
+  GuardInitialWindowPriorityEncodingTest ();
+  virtual void DoRun (void);
+};
+
+class GuardTransportWindowFloorTest : public TestCase
+{
+public:
+  GuardTransportWindowFloorTest ();
   virtual void DoRun (void);
 };
 
@@ -186,6 +202,17 @@ private:
   Ptr<RdmaRxQueuePair> m_second;
   bool m_firstObserved;
   bool m_secondObserved;
+};
+
+class GuardActiveEmptyTransactionTest : public TestCase
+{
+public:
+  GuardActiveEmptyTransactionTest ()
+    : TestCase ("GUARD V14 last ACTIVE flow closes its live transaction") {}
+  virtual void DoRun (void);
+
+private:
+  void RunPhase (uint32_t phase);
 };
 
 class GuardGrantTraceProvenanceTest : public TestCase
@@ -660,6 +687,14 @@ GuardMixedPgVectorTest::DoRun (void)
   NS_TEST_ASSERT_MSG_EQ (
       RdmaHw::ComputeGuardEffectiveElephantConcurrency (3, 9, true), 3,
       "nine elephants may use the configured K=3 ceiling");
+  NS_TEST_ASSERT_MSG_EQ (
+      RdmaHw::ComputeGuardSizeClassElephantConcurrency (2, 3, 1000000,
+                                                         2000000, true), 2,
+      "the inclusive dyadic boundary must admit K=2");
+  NS_TEST_ASSERT_MSG_EQ (
+      RdmaHw::ComputeGuardSizeClassElephantConcurrency (2, 3, 1000000,
+                                                         2000001, true), 1,
+      "different dyadic size classes must retain K=1 SRPT");
 
   allocator->m_guardReceiverConcurrency = 2;
   allocator->m_guardAdaptiveElephantConcurrency = true;
@@ -703,6 +738,44 @@ GuardMixedPgVectorTest::DoRun (void)
                          "E=4 promotion must be counted once");
   NS_TEST_ASSERT_MSG_EQ (allocator->m_guardAdaptiveConcurrencyMaxEffective, 2,
                          "the maximum effective adaptive K must be observable");
+
+  allocator->m_guardAdaptiveElephantConcurrency = false;
+  allocator->m_guardSizeClassElephantConcurrency = true;
+  allocator->m_guardSizeClassConcurrencyPromotions = 0;
+  allocator->m_guardSizeClassConcurrencyMaxEffective = 0;
+  boundedElephants.pop_back ();
+  for (auto &input : boundedElephants) input.requestedBps = 0;
+  NS_TEST_ASSERT_MSG_EQ (
+      allocator->ComputeGuardFrozenRequestedTargets (100000000000ULL,
+                                                       100000000000ULL,
+                                                       &boundedElephants),
+      true, "same-class elephants must preserve a bounded frozen vector");
+  aboveFloor = 0;
+  for (const auto &input : boundedElephants)
+    {
+      if (input.requestedBps > 100000000ULL) aboveFloor++;
+    }
+  NS_TEST_ASSERT_MSG_EQ (aboveFloor, 2,
+                         "same-class policy must admit exactly two elephants");
+  NS_TEST_ASSERT_MSG_EQ (allocator->m_guardSizeClassConcurrencyPromotions, 1,
+                         "same-class promotion must be counted once");
+  NS_TEST_ASSERT_MSG_EQ (allocator->m_guardSizeClassConcurrencyMaxEffective, 2,
+                         "same-class maximum effective K must be observable");
+
+  boundedElephants[0].remainingBytes = 2000001;
+  for (auto &input : boundedElephants) input.requestedBps = 0;
+  NS_TEST_ASSERT_MSG_EQ (
+      allocator->ComputeGuardFrozenRequestedTargets (100000000000ULL,
+                                                       100000000000ULL,
+                                                       &boundedElephants),
+      true, "different-class elephants must preserve a bounded K=1 vector");
+  aboveFloor = 0;
+  for (const auto &input : boundedElephants)
+    {
+      if (input.requestedBps > 100000000ULL) aboveFloor++;
+    }
+  NS_TEST_ASSERT_MSG_EQ (aboveFloor, 1,
+                         "different size classes must retain one residual elephant");
 
   std::vector<GuardVectorTargetInput> afterDrain = {
     {first, GUARD_VECTOR_WAITER, 10000, 0, 100000000000ULL, 0}
@@ -1210,6 +1283,43 @@ GuardTerminalDrainCompletionTest::DoRun (void)
                          "both busy capacity releases must be coalesced");
 }
 
+void
+GuardActiveEmptyTransactionTest::RunPhase (uint32_t phase)
+{
+  Ptr<RdmaHw> hw = CreateObject<RdmaHw> ();
+  hw->m_guardSmallSetFastpathLimit = 4;
+  hw->m_guardSerializedDraining = true;
+  hw->m_guardMixedPgVectorFastpath = true;
+  hw->m_guardFastpathPhase =
+      static_cast<RdmaHw::GuardFastpathPhase> (phase);
+  hw->m_guardFrozenVectorActive = true;
+  hw->m_guardFastpathMembershipRevision = 1;
+  hw->m_guardFastpathConsumedMembershipRevision = 1;
+  Ptr<RdmaRxQueuePair> flow = CreateObject<RdmaRxQueuePair> ();
+  hw->m_rate_flow_ctl_set.emplace (PeekPointer (flow));
+  hw->m_guardFastpathIncumbents.emplace (PeekPointer (flow));
+
+  NS_TEST_ASSERT_MSG_EQ (
+      hw->HandleRccRemove (flow, RdmaHw::GUARD_RELEASE_COMPLETION, 0), true,
+      "the last ACTIVE completion must close its current generation");
+  NS_TEST_ASSERT_MSG_EQ (hw->m_rate_flow_ctl_set.empty (), true,
+                         "terminal completion must empty ACTIVE");
+  NS_TEST_ASSERT_MSG_EQ (hw->m_guardFastpathPhase,
+                         RdmaHw::GUARD_FASTPATH_IDLE,
+                         "terminal completion must close the live phase");
+  NS_TEST_ASSERT_MSG_EQ (hw->m_guardFrozenVectorActive, false,
+                         "terminal completion must retire its frozen vector");
+  NS_TEST_ASSERT_MSG_EQ (hw->CanResetGuardCoordinator (), true,
+                         "terminal transaction must settle exactly once");
+}
+
+void
+GuardActiveEmptyTransactionTest::DoRun (void)
+{
+  RunPhase (RdmaHw::GUARD_FASTPATH_PREPARE);
+  RunPhase (RdmaHw::GUARD_FASTPATH_ACTIVATE);
+}
+
 GuardTransitionAuditSinkTest::GuardTransitionAuditSinkTest ()
   : TestCase ("GUARD V14 bounded per-transition audit sink")
 {
@@ -1530,6 +1640,94 @@ GuardGrantHeaderTest::GuardGrantHeaderTest ()
 {
 }
 
+GuardInitialWindowPriorityEncodingTest::GuardInitialWindowPriorityEncodingTest ()
+  : TestCase ("GUARD initial-window scheduling class keeps immutable PG")
+{
+}
+
+void
+GuardInitialWindowPriorityEncodingTest::DoRun (void)
+{
+  Ptr<Packet> packet = Create<Packet> (1000);
+  SeqTsHeader seq;
+  seq.SetSeq (0);
+  seq.SetPG (7);
+  packet->AddHeader (seq);
+  UdpHeader udp;
+  udp.SetSourcePort (10000);
+  udp.SetDestinationPort (100);
+  packet->AddHeader (udp);
+  Ipv4Header ip;
+  ip.SetSource (Ipv4Address ("11.0.0.1"));
+  ip.SetDestination (Ipv4Address ("11.0.0.2"));
+  ip.SetProtocol (0x11);
+  ip.SetPayloadSize (packet->GetSize ());
+  ip.SetTos (CustomHeader::EncodeGuardScheduleClass (3, CustomHeader::ECN_ECT0));
+  packet->AddHeader (ip);
+  PppHeader ppp;
+  ppp.SetProtocol (0x0021);
+  packet->AddHeader (ppp);
+
+  CustomHeader parsed (CustomHeader::L2_Header | CustomHeader::L3_Header |
+                       CustomHeader::L4_Header);
+  packet->PeekHeader (parsed);
+  NS_TEST_ASSERT_MSG_EQ (parsed.udp.pg, 7,
+                         "the QP and PFC priority group must remain immutable");
+  NS_TEST_ASSERT_MSG_EQ (parsed.HasGuardScheduleClass (), true,
+                         "the DSCP scheduling marker must survive serialization");
+  NS_TEST_ASSERT_MSG_EQ (parsed.GetGuardScheduleClass (), 3,
+                         "the initial window must select the unscheduled queue");
+  NS_TEST_ASSERT_MSG_EQ (parsed.GetIpv4EcnBits (), CustomHeader::ECN_ECT0,
+                         "the scheduling marker must preserve ECN bits");
+
+  uint8_t steady = CustomHeader::EncodeGuardScheduleClass (7, CustomHeader::ECN_CE);
+  uint8_t steadyPriority =
+      (steady & CustomHeader::GUARD_SCHEDULE_CLASS_MASK) >> 2;
+  uint8_t steadyEcn = steady & 0x3;
+  NS_TEST_ASSERT_MSG_EQ (steadyPriority, 7,
+                         "the steady packet must return monotonically to its static class");
+  NS_TEST_ASSERT_MSG_EQ (steadyEcn, CustomHeader::ECN_CE,
+                         "steady-class encoding must preserve CE");
+}
+
+GuardTransportWindowFloorTest::GuardTransportWindowFloorTest ()
+  : TestCase ("GUARD transport window floor preserves exact path BDP")
+{
+}
+
+void
+GuardTransportWindowFloorTest::DoRun (void)
+{
+  Ptr<RdmaQueuePair> qp = CreateObject<RdmaQueuePair> (
+      7, Ipv4Address ("11.0.0.1"), Ipv4Address ("11.0.0.2"), 10000, 100);
+  qp->SetWin (52000);
+  qp->m_guard_transport_win = 104000;
+  qp->m_guard_first_grant_win = 104000;
+  qp->m_guard_wait_first_grant = true;
+  qp->snd_nxt = 52000;
+  NS_TEST_ASSERT_MSG_EQ (qp->m_win, 52000,
+                         "the exact path BDP must remain available to policy");
+  NS_TEST_ASSERT_MSG_EQ (qp->GetGuardTransportWin (), 104000,
+                         "the transport window must use the independent floor");
+  NS_TEST_ASSERT_MSG_EQ (qp->IsWinBound (), false,
+                         "one local-path BDP must not close the raised first gate");
+  qp->snd_nxt = 104000;
+  NS_TEST_ASSERT_MSG_EQ (qp->IsWinBound (), true,
+                         "the raised first gate must stop at the diameter window");
+  qp->m_guard_wait_first_grant = false;
+  qp->snd_una = 1000;
+  NS_TEST_ASSERT_MSG_EQ (qp->GetWin (), 104000,
+                         "steady fixed-window credit must use the same floor");
+  qp->m_guard_wait_first_grant = true;
+  qp->m_guard_first_grant_win = 52000;
+  qp->snd_nxt = 52000;
+  NS_TEST_ASSERT_MSG_EQ (qp->IsWinBound (), true,
+                         "post-grant-only mode must retain the exact first gate");
+  qp->m_guard_wait_first_grant = false;
+  NS_TEST_ASSERT_MSG_EQ (qp->GetWin (), 104000,
+                         "post-grant-only mode must retain the steady floor");
+}
+
 void
 GuardGrantHeaderTest::DoRun (void)
 {
@@ -1660,6 +1858,8 @@ PointToPointTestSuite::PointToPointTestSuite ()
   : TestSuite ("devices-point-to-point", UNIT)
 {
   AddTestCase (new PointToPointTest);
+  AddTestCase (new GuardInitialWindowPriorityEncodingTest);
+  AddTestCase (new GuardTransportWindowFloorTest);
   AddTestCase (new GuardGrantHeaderTest);
   AddTestCase (new GuardFirstGrantGateTagTest);
   AddTestCase (new GuardDeadlineSameTickTest);
@@ -1671,6 +1871,7 @@ PointToPointTestSuite::PointToPointTestSuite ()
   AddTestCase (new GuardElephantFabricTargetTest);
   AddTestCase (new GuardElephantReceiverAuthorityTest);
   AddTestCase (new GuardTerminalDrainCompletionTest);
+  AddTestCase (new GuardActiveEmptyTransactionTest);
   AddTestCase (new GuardGrantTraceProvenanceTest);
   AddTestCase (new GuardFrozenCohortProvenanceTest);
   AddTestCase (new GuardRetiredAckIdentityTest);

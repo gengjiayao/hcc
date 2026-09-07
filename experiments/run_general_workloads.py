@@ -92,6 +92,12 @@ def read_spec(path: Path) -> Mapping[str, object]:
         {"guard_k1", "guard_spillover"},
         {"guard_k1", "guard_elephant_target"},
         {"guard_k1", "guard_elephant_authority"},
+        {"guard_k1", "guard_initial_window", "hpcc", "homa"},
+        {"guard_k1", "guard_window_floor", "hpcc", "homa"},
+        {"guard_k1", "guard_post_grant_window", "hpcc", "homa"},
+        {"guard_k1", "guard_bounded_first_window", "hpcc", "homa"},
+        {"guard_k1", "guard_ack_slack_window", "hpcc", "homa"},
+        {"guard_ack_slack_window", "guard_cap_refresh", "hpcc", "homa"},
     )
     if arm_names not in supported:
         raise CampaignError(
@@ -100,7 +106,13 @@ def read_spec(path: Path) -> Mapping[str, object]:
             "guard_k1/guard_adaptive pair, the V22 guard_k1/guard_aging pair, "
             "the V23/V24 guard_k1/guard_spillover pair, or the V25 "
             "guard_k1/guard_elephant_target pair, or the V26 "
-            "guard_k1/guard_elephant_authority pair"
+            "guard_k1/guard_elephant_authority pair, or the V27 "
+            "guard_k1/guard_initial_window/hpcc/homa matrix, or the V28 "
+            "guard_k1/guard_window_floor/hpcc/homa matrix"
+            ", or the V29 guard_k1/guard_post_grant_window/hpcc/homa matrix"
+            ", or the V30 guard_k1/guard_bounded_first_window/hpcc/homa matrix"
+            ", or the V31 guard_k1/guard_ack_slack_window/hpcc/homa matrix"
+            ", or the V34 guard_ack_slack_window/guard_cap_refresh/hpcc/homa matrix"
         )
     limits = dict(spec["limits"])
     if int(limits["max_flows"]) != 10_000:
@@ -252,6 +264,224 @@ def read_spec(path: Path) -> Mapping[str, object]:
                         f"{name} changes controls other than receiver authority: "
                         f"{sorted(unexpected)}")
             guard = dict(dict(spec["arms"])["guard_k1"])
+        elif arm_names == {"guard_k1", "guard_initial_window", "hpcc", "homa"}:
+            if spec.get("mechanism_profile") != "V27":
+                raise CampaignError(
+                    "guard_k1/guard_initial_window/hpcc/homa is reserved for V27")
+            expected = {"guard_k1": 0, "guard_initial_window": 1}
+            for name, enabled in expected.items():
+                arm = dict(dict(spec["arms"])[name])
+                if arm.get("cc") != "guard":
+                    raise CampaignError(f"{name} must select cc=guard")
+                if (int(arm.get("guard_receiver_concurrency", -1)) != 1 or
+                        int(arm.get("guard_initial_window_priority", -1)) != enabled):
+                    raise CampaignError(
+                        f"{name} must freeze K=1 and initial-window priority={enabled}")
+                unexpected = set(arm) - {
+                    "cc", "guard_receiver_concurrency",
+                    "guard_initial_window_priority",
+                }
+                if unexpected:
+                    raise CampaignError(
+                        f"{name} changes controls other than initial-window priority: "
+                        f"{sorted(unexpected)}")
+            if dict(dict(spec["arms"])["hpcc"]) != {"cc": "hpcc"}:
+                raise CampaignError("V27 hpcc arm must contain only cc=hpcc")
+            if dict(dict(spec["arms"])["homa"]) != {"cc": "homa"}:
+                raise CampaignError("V27 homa arm must contain only cc=homa")
+            guard = dict(dict(spec["arms"])["guard_k1"])
+        elif arm_names == {"guard_k1", "guard_window_floor", "hpcc", "homa"}:
+            if spec.get("mechanism_profile") != "V28":
+                raise CampaignError(
+                    "guard_k1/guard_window_floor/hpcc/homa is reserved for V28")
+            expected = {"guard_k1": 0, "guard_window_floor": 8320}
+            for name, floor_rtt_ns in expected.items():
+                arm = dict(dict(spec["arms"])[name])
+                if arm.get("cc") != "guard":
+                    raise CampaignError(f"{name} must select cc=guard")
+                if (int(arm.get("guard_receiver_concurrency", -1)) != 1 or
+                        int(arm.get("guard_transport_window_floor_rtt_ns", -1)) !=
+                            floor_rtt_ns):
+                    raise CampaignError(
+                        f"{name} must freeze K=1 and transport-window floor RTT="
+                        f"{floor_rtt_ns} ns")
+                unexpected = set(arm) - {
+                    "cc", "guard_receiver_concurrency",
+                    "guard_transport_window_floor_rtt_ns",
+                }
+                if unexpected:
+                    raise CampaignError(
+                        f"{name} changes controls other than the transport-window floor: "
+                        f"{sorted(unexpected)}")
+            if dict(dict(spec["arms"])["hpcc"]) != {"cc": "hpcc"}:
+                raise CampaignError("V28 hpcc arm must contain only cc=hpcc")
+            if dict(dict(spec["arms"])["homa"]) != {"cc": "homa"}:
+                raise CampaignError("V28 homa arm must contain only cc=homa")
+            guard = dict(dict(spec["arms"])["guard_k1"])
+        elif arm_names == {"guard_k1", "guard_post_grant_window", "hpcc", "homa"}:
+            if spec.get("mechanism_profile") != "V29":
+                raise CampaignError(
+                    "guard_k1/guard_post_grant_window/hpcc/homa is reserved for V29")
+            expected = {
+                "guard_k1": (0, 0),
+                "guard_post_grant_window": (8320, 1),
+            }
+            for name, (floor_rtt_ns, after_first) in expected.items():
+                arm = dict(dict(spec["arms"])[name])
+                if arm.get("cc") != "guard":
+                    raise CampaignError(f"{name} must select cc=guard")
+                if (int(arm.get("guard_receiver_concurrency", -1)) != 1 or
+                        int(arm.get("guard_transport_window_floor_rtt_ns", -1)) !=
+                            floor_rtt_ns or
+                        int(arm.get(
+                            "guard_transport_window_floor_after_first_grant", -1)) !=
+                            after_first):
+                    raise CampaignError(
+                        f"{name} must freeze K=1, floor RTT={floor_rtt_ns} ns, "
+                        f"and after-first-grant={after_first}")
+                unexpected = set(arm) - {
+                    "cc", "guard_receiver_concurrency",
+                    "guard_transport_window_floor_rtt_ns",
+                    "guard_transport_window_floor_after_first_grant",
+                }
+                if unexpected:
+                    raise CampaignError(
+                        f"{name} changes controls other than the post-grant window floor: "
+                        f"{sorted(unexpected)}")
+            if dict(dict(spec["arms"])["hpcc"]) != {"cc": "hpcc"}:
+                raise CampaignError("V29 hpcc arm must contain only cc=hpcc")
+            if dict(dict(spec["arms"])["homa"]) != {"cc": "homa"}:
+                raise CampaignError("V29 homa arm must contain only cc=homa")
+            guard = dict(dict(spec["arms"])["guard_k1"])
+        elif arm_names == {"guard_k1", "guard_bounded_first_window", "hpcc", "homa"}:
+            if spec.get("mechanism_profile") != "V30":
+                raise CampaignError(
+                    "guard_k1/guard_bounded_first_window/hpcc/homa is reserved for V30")
+            expected = {
+                "guard_k1": (0, 0, 0),
+                "guard_bounded_first_window": (8320, 1, 1),
+            }
+            for name, (floor_rtt_ns, after_first, whole_flow) in expected.items():
+                arm = dict(dict(spec["arms"])[name])
+                if arm.get("cc") != "guard":
+                    raise CampaignError(f"{name} must select cc=guard")
+                if (int(arm.get("guard_receiver_concurrency", -1)) != 1 or
+                        int(arm.get("guard_transport_window_floor_rtt_ns", -1)) !=
+                            floor_rtt_ns or
+                        int(arm.get(
+                            "guard_transport_window_floor_after_first_grant", -1)) !=
+                            after_first or
+                        int(arm.get(
+                            "guard_transport_window_whole_flow_first_gate", -1)) !=
+                            whole_flow):
+                    raise CampaignError(
+                        f"{name} must freeze K=1, floor={floor_rtt_ns} ns, "
+                        f"after-first={after_first}, and whole-flow={whole_flow}")
+                unexpected = set(arm) - {
+                    "cc", "guard_receiver_concurrency",
+                    "guard_transport_window_floor_rtt_ns",
+                    "guard_transport_window_floor_after_first_grant",
+                    "guard_transport_window_whole_flow_first_gate",
+                }
+                if unexpected:
+                    raise CampaignError(
+                        f"{name} changes controls other than the bounded first window: "
+                        f"{sorted(unexpected)}")
+            if dict(dict(spec["arms"])["hpcc"]) != {"cc": "hpcc"}:
+                raise CampaignError("V30 hpcc arm must contain only cc=hpcc")
+            if dict(dict(spec["arms"])["homa"]) != {"cc": "homa"}:
+                raise CampaignError("V30 homa arm must contain only cc=homa")
+            guard = dict(dict(spec["arms"])["guard_k1"])
+        elif arm_names == {"guard_k1", "guard_ack_slack_window", "hpcc", "homa"}:
+            if spec.get("mechanism_profile") not in ("V31", "V32"):
+                raise CampaignError(
+                    "guard_k1/guard_ack_slack_window/hpcc/homa is reserved for V31/V32")
+            expected = {
+                "guard_k1": (0, 0, 0, 0),
+                "guard_ack_slack_window": (8320, 1, 1, 16),
+            }
+            for name, (floor_rtt_ns, after_first, whole_flow, ack_slack) in expected.items():
+                arm = dict(dict(spec["arms"])[name])
+                if arm.get("cc") != "guard":
+                    raise CampaignError(f"{name} must select cc=guard")
+                if (int(arm.get("guard_receiver_concurrency", -1)) != 1 or
+                        int(arm.get("guard_transport_window_floor_rtt_ns", -1)) !=
+                            floor_rtt_ns or
+                        int(arm.get(
+                            "guard_transport_window_floor_after_first_grant", -1)) !=
+                            after_first or
+                        int(arm.get(
+                            "guard_transport_window_whole_flow_first_gate", -1)) !=
+                            whole_flow or
+                        int(arm.get(
+                            "guard_transport_window_ack_slack_packets", -1)) !=
+                            ack_slack):
+                    raise CampaignError(
+                        f"{name} must freeze K=1, floor={floor_rtt_ns} ns, "
+                        f"after-first={after_first}, whole-flow={whole_flow}, "
+                        f"and ACK slack={ack_slack} packets")
+                unexpected = set(arm) - {
+                    "cc", "guard_receiver_concurrency",
+                    "guard_transport_window_floor_rtt_ns",
+                    "guard_transport_window_floor_after_first_grant",
+                    "guard_transport_window_whole_flow_first_gate",
+                    "guard_transport_window_ack_slack_packets",
+                }
+                if unexpected:
+                    raise CampaignError(
+                        f"{name} changes controls other than the ACK-slack window: "
+                        f"{sorted(unexpected)}")
+            if dict(dict(spec["arms"])["hpcc"]) != {"cc": "hpcc"}:
+                raise CampaignError("V31 hpcc arm must contain only cc=hpcc")
+            if dict(dict(spec["arms"])["homa"]) != {"cc": "homa"}:
+                raise CampaignError("V31 homa arm must contain only cc=homa")
+            guard = dict(dict(spec["arms"])["guard_k1"])
+        elif arm_names == {"guard_ack_slack_window", "guard_cap_refresh", "hpcc", "homa"}:
+            if spec.get("mechanism_profile") != "V34":
+                raise CampaignError(
+                    "guard_ack_slack_window/guard_cap_refresh/hpcc/homa is "
+                    "reserved for V34")
+            if (int(defaults.get("guard_elephant_spillover_enter_reports", -1)) != 1 or
+                    int(defaults.get("guard_elephant_spillover_exit_reports", -1)) != 2):
+                raise CampaignError(
+                    "V34 must freeze cap-report enter/exit thresholds to 1/2")
+            expected_refresh = {
+                "guard_ack_slack_window": 0,
+                "guard_cap_refresh": 1,
+            }
+            for name, cap_refresh in expected_refresh.items():
+                arm = dict(dict(spec["arms"])[name])
+                if arm.get("cc") != "guard":
+                    raise CampaignError(f"{name} must select cc=guard")
+                if (int(arm.get("guard_receiver_concurrency", -1)) != 1 or
+                        int(arm.get("guard_transport_window_floor_rtt_ns", -1)) != 8320 or
+                        int(arm.get(
+                            "guard_transport_window_floor_after_first_grant", -1)) != 1 or
+                        int(arm.get(
+                            "guard_transport_window_whole_flow_first_gate", -1)) != 1 or
+                        int(arm.get(
+                            "guard_transport_window_ack_slack_packets", -1)) != 16 or
+                        int(arm.get("guard_cap_triggered_refresh", -1)) != cap_refresh):
+                    raise CampaignError(
+                        f"{name} must freeze the V32 ACK-slack window and "
+                        f"cap-triggered refresh={cap_refresh}")
+                unexpected = set(arm) - {
+                    "cc", "guard_receiver_concurrency",
+                    "guard_transport_window_floor_rtt_ns",
+                    "guard_transport_window_floor_after_first_grant",
+                    "guard_transport_window_whole_flow_first_gate",
+                    "guard_transport_window_ack_slack_packets",
+                    "guard_cap_triggered_refresh",
+                }
+                if unexpected:
+                    raise CampaignError(
+                        f"{name} changes controls other than cap-triggered refresh: "
+                        f"{sorted(unexpected)}")
+            if dict(dict(spec["arms"])["hpcc"]) != {"cc": "hpcc"}:
+                raise CampaignError("V34 hpcc arm must contain only cc=hpcc")
+            if dict(dict(spec["arms"])["homa"]) != {"cc": "homa"}:
+                raise CampaignError("V34 homa arm must contain only cc=homa")
+            guard = dict(dict(spec["arms"])["guard_ack_slack_window"])
         else:
             guard = dict(dict(spec["arms"])["guard"])
             if (guard.get("cc") != "guard" or
@@ -578,13 +808,21 @@ def run_command(
         "guard_ack_interval_packets", "guard_fixed_window", "guard_remaining_aware",
         "guard_min_share_fraction", "guard_remaining_exponent",
         "guard_receiver_concurrency", "guard_adaptive_elephant_concurrency",
+        "guard_size_class_elephant_concurrency",
         "guard_elephant_aging_rtts",
         "guard_elephant_cap_spillover",
+        "guard_cap_triggered_refresh",
+        "guard_cap_refresh_material_percent",
         "guard_elephant_spillover_enter_reports",
         "guard_elephant_spillover_exit_reports",
         "guard_elephant_fabric_target",
         "guard_elephant_fabric_target_scale",
         "guard_elephant_receiver_authority",
+        "guard_initial_window_priority",
+        "guard_transport_window_floor_rtt_ns",
+        "guard_transport_window_floor_after_first_grant",
+        "guard_transport_window_whole_flow_first_gate",
+        "guard_transport_window_ack_slack_packets",
         "guard_concurrency_min_bdps",
         "guard_grant_refresh_bdps",
         "guard_membership_coalesce_ns", "guard_membership_coalesce_max_windows",

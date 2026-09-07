@@ -109,7 +109,13 @@ def guard_v17_checks(stats_path: Path, stats: Mapping[str, object],
                      expected_spillover_exit: int | None = None,
                      expected_elephant_target: int | None = None,
                      expected_elephant_target_scale: float | None = None,
-                     expected_elephant_authority: int | None = None) -> Dict[str, object]:
+                     expected_elephant_authority: int | None = None,
+                     expected_initial_window_priority: int | None = None,
+                     expected_transport_window_floor_rtt_ns: int | None = None,
+                     expected_transport_window_after_first: int | None = None,
+                     expected_transport_window_whole_flow: int | None = None,
+                     expected_transport_window_ack_slack: int | None = None,
+                     expected_cap_triggered_refresh: int | None = None) -> Dict[str, object]:
     membership = parse_coalescing_stats(stats_path, 13)
     small = parse_small_set_stats(stats_path)
     prefix = parse_transition_prefix_stats(stats_path)
@@ -123,7 +129,7 @@ def guard_v17_checks(stats_path: Path, stats: Mapping[str, object],
         stats_path, "guard_transition_prefix_ack_clock_fallback", ("enabled",))
     capacity_admission = None
     if profile in ("V18", "V19", "V20", "V21", "V22", "V23", "V24", "V25",
-                   "V26"):
+                   "V26", "V27", "V28", "V29", "V30", "V31", "V32", "V34"):
         capacity_admission = _named_stats(
             stats_path, "guard_capacity_admission",
             ("enabled", "deferrals", "resumes", "max_waiters",
@@ -290,12 +296,190 @@ def guard_v17_checks(stats_path: Path, stats: Mapping[str, object],
                 int(stats["guard_elephant_receiver_authority_max_released_bps"]) != 0))):
         raise MechanismError(
             "V26 selected-elephant receiver authority did not match its frozen arm")
+    initial_activity = tuple(int(stats[field]) for field in (
+        "guard_initial_window_priority_flows",
+        "guard_initial_window_priority_packets",
+        "guard_initial_window_priority_bytes",
+        "guard_initial_window_priority_transitions"))
+    if profile == "V27" and (
+            expected_concurrency != 1 or expected_initial_window_priority not in (0, 1) or
+            int(stats["guard_receiver_concurrency"]) != 1 or
+            int(stats["guard_adaptive_elephant_concurrency"]) != 0 or
+            float(stats["guard_elephant_aging_rtts"]) != 0.0 or
+            int(stats["guard_elephant_spillover_enabled"]) != 0 or
+            int(stats["guard_elephant_fabric_target_enabled"]) != 0 or
+            int(stats["guard_elephant_receiver_authority_enabled"]) != 0 or
+            int(stats["guard_initial_window_priority_enabled"]) !=
+                expected_initial_window_priority or
+            int(stats["guard_initial_window_priority_pg"]) != 3 or
+            (expected_initial_window_priority == 1 and (
+                any(value <= 0 for value in initial_activity[:3]) or
+                initial_activity[3] != initial_activity[0])) or
+            (expected_initial_window_priority == 0 and any(initial_activity))):
+        raise MechanismError(
+            "V27 initial-window priority did not match its frozen arm or close")
+    window_floor_activity = tuple(int(stats[field]) for field in (
+        "guard_transport_window_floor_raised_flows",
+        "guard_transport_window_floor_extra_bytes",
+        "guard_transport_window_floor_max_bytes"))
+    if profile == "V28" and (
+            expected_concurrency != 1 or
+            expected_transport_window_floor_rtt_ns not in (0, 8320) or
+            int(stats["guard_receiver_concurrency"]) != 1 or
+            int(stats["guard_adaptive_elephant_concurrency"]) != 0 or
+            int(stats["guard_initial_window_priority_enabled"]) != 0 or
+            int(stats["guard_transport_window_floor_enabled"]) !=
+                (1 if expected_transport_window_floor_rtt_ns else 0) or
+            int(stats["guard_transport_window_floor_rtt_ns"]) !=
+                expected_transport_window_floor_rtt_ns or
+            int(stats["guard_transport_window_floor_after_first_grant"]) != 0 or
+            int(stats["guard_transport_window_whole_flow_first_gate"]) != 0 or
+            int(stats["guard_transport_window_ack_slack_packets"]) != 0 or
+            int(stats["guard_transport_window_ack_slack_limited_flows"]) != 0 or
+            (expected_transport_window_floor_rtt_ns == 8320 and (
+                window_floor_activity[0] <= 0 or window_floor_activity[1] <= 0 or
+                window_floor_activity[2] != 104000)) or
+            (expected_transport_window_floor_rtt_ns == 0 and
+                any(window_floor_activity))):
+        raise MechanismError(
+            "V28 diameter-window floor did not match its frozen arm")
+    if profile == "V29" and (
+            expected_concurrency != 1 or
+            (expected_transport_window_floor_rtt_ns,
+             expected_transport_window_after_first) not in ((0, 0), (8320, 1)) or
+            int(stats["guard_receiver_concurrency"]) != 1 or
+            int(stats["guard_adaptive_elephant_concurrency"]) != 0 or
+            int(stats["guard_initial_window_priority_enabled"]) != 0 or
+            int(stats["guard_transport_window_floor_enabled"]) !=
+                (1 if expected_transport_window_floor_rtt_ns else 0) or
+            int(stats["guard_transport_window_floor_rtt_ns"]) !=
+                expected_transport_window_floor_rtt_ns or
+            int(stats["guard_transport_window_floor_after_first_grant"]) !=
+                expected_transport_window_after_first or
+            int(stats["guard_transport_window_whole_flow_first_gate"]) != 0 or
+            int(stats["guard_transport_window_ack_slack_packets"]) != 0 or
+            int(stats["guard_transport_window_ack_slack_limited_flows"]) != 0 or
+            (expected_transport_window_floor_rtt_ns == 8320 and (
+                window_floor_activity[0] <= 0 or window_floor_activity[1] <= 0 or
+                window_floor_activity[2] != 104000)) or
+            (expected_transport_window_floor_rtt_ns == 0 and
+                any(window_floor_activity))):
+        raise MechanismError(
+            "V29 post-grant window floor did not match its frozen arm")
+    if profile == "V30" and (
+            expected_concurrency != 1 or
+            (expected_transport_window_floor_rtt_ns,
+             expected_transport_window_after_first,
+             expected_transport_window_whole_flow) not in ((0, 0, 0), (8320, 1, 1)) or
+            int(stats["guard_receiver_concurrency"]) != 1 or
+            int(stats["guard_adaptive_elephant_concurrency"]) != 0 or
+            int(stats["guard_initial_window_priority_enabled"]) != 0 or
+            int(stats["guard_transport_window_floor_enabled"]) !=
+                (1 if expected_transport_window_floor_rtt_ns else 0) or
+            int(stats["guard_transport_window_floor_rtt_ns"]) !=
+                expected_transport_window_floor_rtt_ns or
+            int(stats["guard_transport_window_floor_after_first_grant"]) !=
+                expected_transport_window_after_first or
+            int(stats["guard_transport_window_whole_flow_first_gate"]) !=
+                expected_transport_window_whole_flow or
+            int(stats["guard_transport_window_ack_slack_packets"]) != 0 or
+            int(stats["guard_transport_window_ack_slack_limited_flows"]) != 0 or
+            (expected_transport_window_floor_rtt_ns == 8320 and (
+                window_floor_activity[0] <= 0 or window_floor_activity[1] <= 0 or
+                window_floor_activity[2] != 104000 or
+                int(stats["guard_transport_window_whole_flow_raised_flows"]) <= 0)) or
+            (expected_transport_window_floor_rtt_ns == 0 and (
+                any(window_floor_activity) or
+                int(stats["guard_transport_window_whole_flow_raised_flows"]) != 0))):
+        raise MechanismError(
+            "V30 bounded whole-flow first window did not match its frozen arm")
+    if profile in ("V31", "V32", "V34") and (
+            expected_concurrency != 1 or
+            (expected_transport_window_floor_rtt_ns,
+             expected_transport_window_after_first,
+             expected_transport_window_whole_flow,
+             expected_transport_window_ack_slack) not in
+                ((0, 0, 0, 0), (8320, 1, 1, 16)) or
+            int(stats["guard_receiver_concurrency"]) != 1 or
+            int(stats["guard_adaptive_elephant_concurrency"]) != 0 or
+            int(stats["guard_initial_window_priority_enabled"]) != 0 or
+            int(stats["guard_transport_window_floor_enabled"]) !=
+                (1 if expected_transport_window_floor_rtt_ns else 0) or
+            int(stats["guard_transport_window_floor_rtt_ns"]) !=
+                expected_transport_window_floor_rtt_ns or
+            int(stats["guard_transport_window_floor_after_first_grant"]) !=
+                expected_transport_window_after_first or
+            int(stats["guard_transport_window_whole_flow_first_gate"]) !=
+                expected_transport_window_whole_flow or
+            int(stats["guard_transport_window_ack_slack_packets"]) !=
+                expected_transport_window_ack_slack or
+            (expected_transport_window_floor_rtt_ns == 8320 and (
+                window_floor_activity[0] <= 0 or window_floor_activity[1] <= 0 or
+                window_floor_activity[2] != 104000 or
+                int(stats["guard_transport_window_whole_flow_raised_flows"]) <= 0 or
+                int(stats["guard_transport_window_ack_slack_limited_flows"]) <= 0)) or
+            (expected_transport_window_floor_rtt_ns == 0 and (
+                any(window_floor_activity) or
+                int(stats["guard_transport_window_whole_flow_raised_flows"]) != 0 or
+                int(stats["guard_transport_window_ack_slack_limited_flows"]) != 0))):
+        raise MechanismError(
+            f"{profile} path-adaptive ACK-slack window did not match its frozen arm")
+    if profile == "V34" and (
+            expected_cap_triggered_refresh not in (0, 1) or
+            int(stats["guard_size_class_elephant_concurrency"]) != 0 or
+            int(stats["guard_elephant_spillover_enabled"]) != 0 or
+            int(stats["guard_elephant_spillover_refresh_requests"]) != 0 or
+            int(stats["guard_elephant_spillover_vectors"]) != 0 or
+            int(stats["guard_cap_triggered_refresh_enabled"]) !=
+                expected_cap_triggered_refresh or
+            (expected_cap_triggered_refresh == 1 and (
+                int(stats["guard_cap_reports_sent"]) <= 0 or
+                int(stats["guard_cap_reports_received"]) <= 0 or
+                int(stats["guard_cap_reports_received"]) >
+                    int(stats["guard_cap_reports_sent"]) or
+                int(stats["guard_fabric_bound_reports"]) <= 0 or
+                int(stats["guard_cap_triggered_refresh_requests"]) <= 0)) or
+            (expected_cap_triggered_refresh == 0 and (
+                int(stats["guard_cap_reports_sent"]) != 0 or
+                int(stats["guard_cap_reports_received"]) != 0 or
+                int(stats["guard_cap_triggered_refresh_requests"]) != 0))):
+        raise MechanismError(
+            "V34 cap-triggered refresh did not match its frozen arm")
     return {
         "membership": membership, "safe_activation": small,
         "transition_prefix": prefix, "watchdog": watchdog,
         "target_vector": vector, "refresh_draining": refresh,
         "retired_ack": retired, "ack_clock": ack_clock,
         "capacity_admission": capacity_admission,
+        "cap_triggered_refresh": {
+            field: stats[field] for field in (
+                "guard_cap_triggered_refresh_enabled",
+                "guard_cap_triggered_refresh_requests",
+                "guard_cap_reports_sent", "guard_cap_reports_received",
+                "guard_fabric_bound_reports")
+        },
+        "initial_window_priority": {
+            field: stats[field] for field in (
+                "guard_initial_window_priority_enabled",
+                "guard_initial_window_priority_flows",
+                "guard_initial_window_priority_packets",
+                "guard_initial_window_priority_bytes",
+                "guard_initial_window_priority_transitions",
+                "guard_initial_window_priority_pg")
+        },
+        "transport_window_floor": {
+            field: stats[field] for field in (
+                "guard_transport_window_floor_enabled",
+                "guard_transport_window_floor_rtt_ns",
+                "guard_transport_window_floor_raised_flows",
+                "guard_transport_window_floor_extra_bytes",
+                "guard_transport_window_floor_max_bytes",
+                "guard_transport_window_floor_after_first_grant")
+                + ("guard_transport_window_whole_flow_first_gate",
+                   "guard_transport_window_whole_flow_raised_flows",
+                   "guard_transport_window_ack_slack_packets",
+                   "guard_transport_window_ack_slack_limited_flows")
+        },
     }
 
 
@@ -336,7 +520,10 @@ def validate_run(campaign: Path, spec: Mapping[str, object], preflight: Mapping[
     detail: Mapping[str, object] = {}
     if arm in ("guard", "guard_k1", "guard_k2", "guard_adaptive", "guard_aging",
                "guard_spillover", "guard_elephant_target",
-               "guard_elephant_authority"):
+               "guard_elephant_authority", "guard_initial_window",
+               "guard_window_floor", "guard_post_grant_window",
+               "guard_bounded_first_window", "guard_ack_slack_window",
+               "guard_cap_refresh"):
         controls = dict(spec["defaults"])
         controls.update(dict(spec["arms"])[arm])
         detail = guard_v17_checks(
@@ -349,7 +536,16 @@ def validate_run(campaign: Path, spec: Mapping[str, object], preflight: Mapping[
             int(controls.get("guard_elephant_spillover_exit_reports", 1)),
             int(controls.get("guard_elephant_fabric_target", 0)),
             float(controls.get("guard_elephant_fabric_target_scale", 1.0)),
-            int(controls.get("guard_elephant_receiver_authority", 0)))
+            int(controls.get("guard_elephant_receiver_authority", 0)),
+            int(controls.get("guard_initial_window_priority", 0)),
+            int(controls.get("guard_transport_window_floor_rtt_ns", 0)),
+            int(controls.get(
+                "guard_transport_window_floor_after_first_grant", 0)),
+            int(controls.get(
+                "guard_transport_window_whole_flow_first_gate", 0)),
+            int(controls.get(
+                "guard_transport_window_ack_slack_packets", 0)),
+            int(controls.get("guard_cap_triggered_refresh", 0)))
     elif arm == "homa":
         homa_checks = homa_completion_checks(stats, int(trace["flow_count"]))
         if not all(homa_checks.values()):
@@ -375,9 +571,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if (spec.get("development_only") is not True or
             spec.get("mechanism_profile") not in (
                 "V17", "V18", "V19", "V20", "V21", "V22", "V23", "V24", "V25",
-                "V26")):
+                "V26", "V27", "V28", "V29", "V30", "V31", "V32", "V34")):
         raise MechanismError(
-            "this analyzer only admits a frozen V17--V26 development spec")
+            "this analyzer only admits a frozen V17--V34 development spec")
     seeds = [int(spec["seeds"][0])] if args.phase == "admission" else list(map(int, spec["seeds"]))
     workloads = [row for row in preflight["workloads"] if row["decision"] == "included"]
     rows: List[Dict[str, object]] = []

@@ -81,7 +81,7 @@ class GuardTransitionPrefixV12Test(unittest.TestCase):
     def test_sender_exact_window_is_carried_without_wire_bytes(self):
         send = function("Ptr<Packet> RdmaHw::GetNxtPacket(",
                         "void RdmaHw::PktSent")
-        self.assertIn("fst.SetFirstGrantGateBytes(qp->m_win)", send)
+        self.assertIn("fst.SetFirstGrantGateBytes(qp->GetGuardFirstGrantWin())", send)
         receive = function("int RdmaHw::ReceiveUdp", "int RdmaHw::ReceiveCnp")
         self.assertIn("fst.GetFirstGrantGateBytes()", receive)
         barrier = function("void RdmaHw::StartGuardTransitionPrefixBarrier",

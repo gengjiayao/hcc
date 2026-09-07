@@ -211,3 +211,12 @@ legal deferred waiter and rejects an out-of-cohort non-waiter, nonzero grant
 potential, a missing dirty membership revision, a cross-NIC record, and
 missing first-grant metadata.  The original busy-flush late-waiter revision
 test remains part of the source suite.
+
+Terminal settlement also closes a live PREPARE or ACTIVATE generation when
+the final ACTIVE flow completes and no draining reservation exists. Every
+required recipient removal has already closed or retired its ACK obligation,
+so pending ACKs must be zero. The coordinator temporarily defers reset,
+finishes the empty generation and frozen vector, and then performs the normal
+single terminal reset. Other live phases remain fail-closed. This covers the
+sparse completion interleaving first exposed by the V31 seed-226 development
+run; it changes no grant target or scheduling policy.

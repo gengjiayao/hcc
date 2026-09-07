@@ -71,6 +71,10 @@ public:
     GUARD_RATE_GRANT_ACK = 0xF8,
     GUARD_RATE_GRANT = 0xF9
   };
+  enum GuardScheduleClassEncoding {
+    GUARD_SCHEDULE_CLASS_VALID = 0x20,
+    GUARD_SCHEDULE_CLASS_MASK = 0x1c
+  };
 
   // ppp header
   uint16_t pppProto;
@@ -174,6 +178,9 @@ public:
   };
 
   uint8_t GetIpv4EcnBits (void) const;
+  static uint8_t EncodeGuardScheduleClass (uint8_t priority, uint8_t ecnBits = 0);
+  bool HasGuardScheduleClass (void) const;
+  uint8_t GetGuardScheduleClass (void) const;
   static uint32_t GetAckSerializedSize(void);
   static uint32_t GetGuardGrantSerializedSize(void);
   static uint32_t GetGuardGrantAckSerializedSize(void);

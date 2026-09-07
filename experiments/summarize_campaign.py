@@ -150,6 +150,12 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
         "guard_adaptive_elephant_concurrency": 0,
         "guard_adaptive_concurrency_promotions": 0,
         "guard_adaptive_concurrency_max_effective": 0,
+        "guard_size_class_elephant_concurrency": 0,
+        "guard_size_class_concurrency_promotions": 0,
+        "guard_size_class_concurrency_max_effective": 0,
+        "guard_cap_triggered_refresh_enabled": 0,
+        "guard_cap_triggered_refresh_requests": 0,
+        "guard_cap_refresh_material_percent": 5,
         "guard_elephant_aging_enabled": 0,
         "guard_elephant_aging_rtts": 0.0,
         "guard_elephant_aging_rotations": 0,
@@ -197,6 +203,26 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
         "guard_elephant_receiver_authority_bindings": 0,
         "guard_elephant_receiver_authority_rate_changes": 0,
         "guard_elephant_receiver_authority_max_released_bps": 0,
+    }
+    guard_initial_window_priority = {
+        "guard_initial_window_priority_enabled": 0,
+        "guard_initial_window_priority_flows": 0,
+        "guard_initial_window_priority_packets": 0,
+        "guard_initial_window_priority_bytes": 0,
+        "guard_initial_window_priority_transitions": 0,
+        "guard_initial_window_priority_pg": 0,
+    }
+    guard_transport_window_floor = {
+        "guard_transport_window_floor_enabled": 0,
+        "guard_transport_window_floor_rtt_ns": 0,
+        "guard_transport_window_floor_raised_flows": 0,
+        "guard_transport_window_floor_extra_bytes": 0,
+        "guard_transport_window_floor_max_bytes": 0,
+        "guard_transport_window_floor_after_first_grant": 0,
+        "guard_transport_window_whole_flow_first_gate": 0,
+        "guard_transport_window_whole_flow_raised_flows": 0,
+        "guard_transport_window_ack_slack_packets": 0,
+        "guard_transport_window_ack_slack_limited_flows": 0,
     }
     switch_drops = {"ingress": 0, "egress": 0, "total": 0}
     priorities: Dict[int, Dict[str, int]] = {}
@@ -333,6 +359,39 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
                     "guard_grant_refresh_bdps": float(parts[14]),
                     "guard_remaining_refresh_events": int(parts[16]),
                 }
+            elif parts[:2] == ["guard_initial_window_priority", "enabled"] and len(parts) == 13:
+                guard_initial_window_priority = {
+                    "guard_initial_window_priority_enabled": int(parts[2]),
+                    "guard_initial_window_priority_flows": int(parts[4]),
+                    "guard_initial_window_priority_packets": int(parts[6]),
+                    "guard_initial_window_priority_bytes": int(parts[8]),
+                    "guard_initial_window_priority_transitions": int(parts[10]),
+                    "guard_initial_window_priority_pg": int(parts[12]),
+                }
+            elif parts[:2] == ["guard_transport_window_floor", "enabled"] and len(parts) == 11:
+                guard_transport_window_floor.update({
+                    "guard_transport_window_floor_enabled": int(parts[2]),
+                    "guard_transport_window_floor_rtt_ns": int(parts[4]),
+                    "guard_transport_window_floor_raised_flows": int(parts[6]),
+                    "guard_transport_window_floor_extra_bytes": int(parts[8]),
+                    "guard_transport_window_floor_max_bytes": int(parts[10]),
+                })
+            elif parts[:2] == ["guard_transport_window_scope", "after_first_grant"] and \
+                    len(parts) in (3, 7, 11):
+                guard_transport_window_floor[
+                    "guard_transport_window_floor_after_first_grant"] = int(parts[2])
+                if len(parts) in (7, 11) and parts[3] == "whole_flow_first_gate" and \
+                        parts[5] == "whole_flow_raised_flows":
+                    guard_transport_window_floor[
+                        "guard_transport_window_whole_flow_first_gate"] = int(parts[4])
+                    guard_transport_window_floor[
+                        "guard_transport_window_whole_flow_raised_flows"] = int(parts[6])
+                if len(parts) == 11 and parts[7] == "ack_slack_packets" and \
+                        parts[9] == "ack_slack_limited_flows":
+                    guard_transport_window_floor[
+                        "guard_transport_window_ack_slack_packets"] = int(parts[8])
+                    guard_transport_window_floor[
+                        "guard_transport_window_ack_slack_limited_flows"] = int(parts[10])
             elif parts[:2] == ["guard_receiver_scheduler", "remaining_aware"] and len(parts) == 19:
                 guard_receiver = {
                     "guard_remaining_aware": int(parts[2]),
@@ -360,6 +419,24 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
                     "guard_grant_refresh_bdps": float(parts[22]),
                     "guard_remaining_refresh_events": int(parts[24]),
                 }
+            elif parts[:2] == ["guard_receiver_scheduler", "remaining_aware"] and len(parts) == 31:
+                guard_receiver = {
+                    "guard_remaining_aware": int(parts[2]),
+                    "guard_min_share_fraction": float(parts[4]),
+                    "guard_remaining_exponent": float(parts[6]),
+                    "guard_receiver_concurrency": int(parts[8]),
+                    "guard_concurrency_limited_allocations": int(parts[10]),
+                    "guard_concurrency_max_deferred_flows": int(parts[12]),
+                    "guard_adaptive_elephant_concurrency": int(parts[14]),
+                    "guard_adaptive_concurrency_promotions": int(parts[16]),
+                    "guard_adaptive_concurrency_max_effective": int(parts[18]),
+                    "guard_size_class_elephant_concurrency": int(parts[20]),
+                    "guard_size_class_concurrency_promotions": int(parts[22]),
+                    "guard_size_class_concurrency_max_effective": int(parts[24]),
+                    "guard_concurrency_min_bdps": float(parts[26]),
+                    "guard_grant_refresh_bdps": float(parts[28]),
+                    "guard_remaining_refresh_events": int(parts[30]),
+                }
             elif parts[:2] == ["guard_elephant_aging", "enabled"] and len(parts) == 11:
                 guard_receiver.update({
                     "guard_elephant_aging_enabled": int(parts[2]),
@@ -368,6 +445,14 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
                     "guard_elephant_aging_max_wait_ns": int(parts[8]),
                     "guard_elephant_aging_active_deferred": int(parts[10]),
                 })
+            elif (parts[:2] == ["guard_cap_triggered_refresh", "enabled"] and
+                  len(parts) in (5, 7)):
+                guard_receiver.update({
+                    "guard_cap_triggered_refresh_enabled": int(parts[2]),
+                    "guard_cap_triggered_refresh_requests": int(parts[4]),
+                })
+                if len(parts) == 7 and parts[5] == "material_percent":
+                    guard_receiver["guard_cap_refresh_material_percent"] = int(parts[6])
             elif parts[:2] == ["guard_elephant_spillover", "enabled"] and len(parts) == 15:
                 # V23 wrote one fixed confirmation threshold. Preserve its
                 # historical artifacts by projecting that threshold onto the
@@ -435,6 +520,8 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
     result.update(guard_elephant_spillover)
     result.update(guard_elephant_fabric_target)
     result.update(guard_elephant_receiver_authority)
+    result.update(guard_initial_window_priority)
+    result.update(guard_transport_window_floor)
     result.update(guard_cap_aware)
     result.update({f"switch_drops_{key}": value for key, value in switch_drops.items()})
     result["pfc_priority"] = priorities

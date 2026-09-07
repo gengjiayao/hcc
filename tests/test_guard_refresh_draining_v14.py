@@ -360,7 +360,11 @@ class GuardRefreshDrainingV14Test(unittest.TestCase):
                         release.index("SettleGuardActiveEmptyState();"))
         remove = HW_CC[HW_CC.index("bool RdmaHw::HandleRccRemove"):
                        HW_CC.index("Time RdmaHw::GetGuardInitialCollectionQuietWindow")]
-        self.assertIn("!m_guardDrainingRecords.empty()", remove)
+        self.assertIn("m_guardFastpathPhase != GUARD_FASTPATH_IDLE", remove)
+        self.assertNotIn(
+            "!m_guardDrainingRecords.empty() &&\n        m_guardFastpathPhase",
+            remove)
+        self.assertIn("ACTIVE-empty transaction has no closable generation", remove)
         self.assertIn("SettleGuardActiveEmptyState();", remove)
         self.assertLess(remove.index("FinishGuardFastpathGeneration();"),
                         remove.index("SettleGuardActiveEmptyState();"))

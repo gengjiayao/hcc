@@ -565,6 +565,248 @@ class GeneralWorkloadRunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(CampaignError, "other than receiver authority"):
                 read_spec(modified)
 
+    def test_v27_freezes_initial_window_priority_and_four_arms(self):
+        spec = read_spec(
+            self.repo /
+            "experiments/campaigns/guard_v27_initial_window_priority_development.json"
+        )
+        self.assertEqual(spec["mechanism_profile"], "V27")
+        self.assertEqual(spec["seeds"], [205, 206, 207, 208, 209])
+        self.assertEqual(
+            set(spec["arms"]),
+            {"guard_k1", "guard_initial_window", "hpcc", "homa"})
+        workload = {
+            "name": "AliStorage40", "cdf": "AliStorage2019",
+            "selected_profile": "primary",
+            "attempts": {"primary": {"profile": {
+                "topo": "leaf_spine_16_100G_OS4", "hosts": 16,
+                "oversubscription": 4, "simul_time": 0.02,
+                "netload": 40, "bw": 100,
+            }}},
+        }
+        trace = {"seed": 205, "path": "/tmp/v27-flow.txt", "sha256": "same"}
+        for arm, enabled in (("guard_k1", "0"),
+                             ("guard_initial_window", "1")):
+            command = run_command(self.repo, spec, workload, trace, arm, True)
+            self.assertEqual(
+                command[command.index("--guard_initial_window_priority") + 1],
+                enabled)
+            self.assertEqual(
+                command[command.index("--guard_receiver_concurrency") + 1], "1")
+        self.assertNotIn(
+            "--guard_initial_window_priority",
+            run_command(self.repo, spec, workload, trace, "hpcc", True))
+        self.assertNotIn(
+            "--guard_initial_window_priority",
+            run_command(self.repo, spec, workload, trace, "homa", True))
+
+    def test_v27_rejects_any_second_guard_change(self):
+        path = (self.repo /
+                "experiments/campaigns/guard_v27_initial_window_priority_development.json")
+        value = json.loads(path.read_text())
+        value["arms"]["guard_initial_window"]["guard_remaining_exponent"] = 2.0
+        with tempfile.TemporaryDirectory() as directory:
+            modified = Path(directory) / "v27.json"
+            modified.write_text(json.dumps(value))
+            with self.assertRaisesRegex(
+                    CampaignError, "other than initial-window priority"):
+                read_spec(modified)
+
+    def test_v28_freezes_transport_window_floor_and_four_arms(self):
+        spec = read_spec(
+            self.repo /
+            "experiments/campaigns/guard_v28_transport_window_floor_development.json"
+        )
+        self.assertEqual(spec["mechanism_profile"], "V28")
+        self.assertEqual(spec["seeds"], [210, 211, 212, 213, 214])
+        self.assertEqual(
+            set(spec["arms"]),
+            {"guard_k1", "guard_window_floor", "hpcc", "homa"})
+        workload = {
+            "name": "AliStorage40", "cdf": "AliStorage2019",
+            "selected_profile": "primary",
+            "attempts": {"primary": {"profile": {
+                "topo": "leaf_spine_16_100G_OS4", "hosts": 16,
+                "oversubscription": 4, "simul_time": 0.02,
+                "netload": 40, "bw": 100,
+            }}},
+        }
+        trace = {"seed": 210, "path": "/tmp/v28-flow.txt", "sha256": "same"}
+        for arm, floor in (("guard_k1", "0"),
+                           ("guard_window_floor", "8320")):
+            command = run_command(self.repo, spec, workload, trace, arm, True)
+            self.assertEqual(
+                command[command.index(
+                    "--guard_transport_window_floor_rtt_ns") + 1], floor)
+            self.assertEqual(
+                command[command.index("--guard_receiver_concurrency") + 1], "1")
+        self.assertNotIn(
+            "--guard_transport_window_floor_rtt_ns",
+            run_command(self.repo, spec, workload, trace, "hpcc", True))
+        self.assertNotIn(
+            "--guard_transport_window_floor_rtt_ns",
+            run_command(self.repo, spec, workload, trace, "homa", True))
+
+    def test_v28_rejects_any_second_guard_change(self):
+        path = (self.repo /
+                "experiments/campaigns/guard_v28_transport_window_floor_development.json")
+        value = json.loads(path.read_text())
+        value["arms"]["guard_window_floor"]["guard_remaining_exponent"] = 2.0
+        with tempfile.TemporaryDirectory() as directory:
+            modified = Path(directory) / "v28.json"
+            modified.write_text(json.dumps(value))
+            with self.assertRaisesRegex(
+                    CampaignError, "other than the transport-window floor"):
+                read_spec(modified)
+
+    def test_v29_freezes_post_grant_floor_and_four_arms(self):
+        spec = read_spec(
+            self.repo /
+            "experiments/campaigns/guard_v29_post_grant_window_floor_development.json"
+        )
+        self.assertEqual(spec["mechanism_profile"], "V29")
+        self.assertEqual(spec["seeds"], [215, 216, 217, 218, 219])
+        self.assertEqual(
+            set(spec["arms"]),
+            {"guard_k1", "guard_post_grant_window", "hpcc", "homa"})
+        workload = {
+            "name": "AliStorage40", "cdf": "AliStorage2019",
+            "selected_profile": "primary",
+            "attempts": {"primary": {"profile": {
+                "topo": "leaf_spine_16_100G_OS4", "hosts": 16,
+                "oversubscription": 4, "simul_time": 0.02,
+                "netload": 40, "bw": 100,
+            }}},
+        }
+        trace = {"seed": 215, "path": "/tmp/v29-flow.txt", "sha256": "same"}
+        for arm, floor, after in (
+                ("guard_k1", "0", "0"),
+                ("guard_post_grant_window", "8320", "1")):
+            command = run_command(self.repo, spec, workload, trace, arm, True)
+            self.assertEqual(
+                command[command.index(
+                    "--guard_transport_window_floor_rtt_ns") + 1], floor)
+            self.assertEqual(
+                command[command.index(
+                    "--guard_transport_window_floor_after_first_grant") + 1], after)
+        for arm in ("hpcc", "homa"):
+            command = run_command(self.repo, spec, workload, trace, arm, True)
+            self.assertNotIn(
+                "--guard_transport_window_floor_after_first_grant", command)
+
+    def test_v29_rejects_any_second_guard_change(self):
+        path = (self.repo /
+                "experiments/campaigns/guard_v29_post_grant_window_floor_development.json")
+        value = json.loads(path.read_text())
+        value["arms"]["guard_post_grant_window"][
+            "guard_remaining_exponent"] = 2.0
+        with tempfile.TemporaryDirectory() as directory:
+            modified = Path(directory) / "v29.json"
+            modified.write_text(json.dumps(value))
+            with self.assertRaisesRegex(
+                    CampaignError, "other than the post-grant window floor"):
+                read_spec(modified)
+
+    def test_v30_freezes_bounded_first_window_and_four_arms(self):
+        spec = read_spec(
+            self.repo /
+            "experiments/campaigns/guard_v30_bounded_first_window_development.json"
+        )
+        self.assertEqual(spec["mechanism_profile"], "V30")
+        self.assertEqual(spec["seeds"], [220, 221, 222, 223, 224])
+        self.assertEqual(
+            set(spec["arms"]),
+            {"guard_k1", "guard_bounded_first_window", "hpcc", "homa"})
+        workload = {
+            "name": "AliStorage40", "cdf": "AliStorage2019",
+            "selected_profile": "primary",
+            "attempts": {"primary": {"profile": {
+                "topo": "leaf_spine_16_100G_OS4", "hosts": 16,
+                "oversubscription": 4, "simul_time": 0.02,
+                "netload": 40, "bw": 100,
+            }}},
+        }
+        trace = {"seed": 220, "path": "/tmp/v30-flow.txt", "sha256": "same"}
+        command = run_command(
+            self.repo, spec, workload, trace, "guard_bounded_first_window", True)
+        self.assertEqual(command[command.index(
+            "--guard_transport_window_floor_rtt_ns") + 1], "8320")
+        self.assertEqual(command[command.index(
+            "--guard_transport_window_floor_after_first_grant") + 1], "1")
+        self.assertEqual(command[command.index(
+            "--guard_transport_window_whole_flow_first_gate") + 1], "1")
+
+    def test_v30_rejects_any_second_guard_change(self):
+        path = (self.repo /
+                "experiments/campaigns/guard_v30_bounded_first_window_development.json")
+        value = json.loads(path.read_text())
+        value["arms"]["guard_bounded_first_window"][
+            "guard_remaining_exponent"] = 2.0
+        with tempfile.TemporaryDirectory() as directory:
+            modified = Path(directory) / "v30.json"
+            modified.write_text(json.dumps(value))
+            with self.assertRaisesRegex(
+                    CampaignError, "other than the bounded first window"):
+                read_spec(modified)
+
+    def test_v31_freezes_ack_slack_window_and_four_arms(self):
+        spec = read_spec(
+            self.repo /
+            "experiments/campaigns/guard_v31_ack_slack_window_development.json"
+        )
+        self.assertEqual(spec["mechanism_profile"], "V31")
+        self.assertEqual(spec["seeds"], [225, 226, 227, 228, 229])
+        self.assertEqual(
+            set(spec["arms"]),
+            {"guard_k1", "guard_ack_slack_window", "hpcc", "homa"})
+        workload = {
+            "name": "AliStorage40", "cdf": "AliStorage2019",
+            "selected_profile": "primary",
+            "attempts": {"primary": {"profile": {
+                "topo": "leaf_spine_16_100G_OS4", "hosts": 16,
+                "oversubscription": 4, "simul_time": 0.02,
+                "netload": 40, "bw": 100,
+            }}},
+        }
+        trace = {"seed": 225, "path": "/tmp/v31-flow.txt", "sha256": "same"}
+        command = run_command(
+            self.repo, spec, workload, trace, "guard_ack_slack_window", True)
+        for option, expected in (
+                ("--guard_transport_window_floor_rtt_ns", "8320"),
+                ("--guard_transport_window_floor_after_first_grant", "1"),
+                ("--guard_transport_window_whole_flow_first_gate", "1"),
+                ("--guard_transport_window_ack_slack_packets", "16")):
+            self.assertEqual(command[command.index(option) + 1], expected)
+
+    def test_v31_rejects_any_second_guard_change(self):
+        path = (self.repo /
+                "experiments/campaigns/guard_v31_ack_slack_window_development.json")
+        value = json.loads(path.read_text())
+        value["arms"]["guard_ack_slack_window"][
+            "guard_remaining_exponent"] = 2.0
+        with tempfile.TemporaryDirectory() as directory:
+            modified = Path(directory) / "v31.json"
+            modified.write_text(json.dumps(value))
+            with self.assertRaisesRegex(
+                    CampaignError, "other than the ACK-slack window"):
+                read_spec(modified)
+
+    def test_v32_reuses_v31_rule_with_fresh_identities(self):
+        spec = read_spec(
+            self.repo /
+            "experiments/campaigns/guard_v32_ack_slack_window_revalidation.json"
+        )
+        self.assertEqual(spec["mechanism_profile"], "V32")
+        self.assertEqual(spec["seeds"], [230, 231, 232, 233, 234])
+        self.assertEqual(
+            spec["arms"]["guard_ack_slack_window"], {
+                "cc": "guard", "guard_receiver_concurrency": 1,
+                "guard_transport_window_floor_rtt_ns": 8320,
+                "guard_transport_window_floor_after_first_grant": 1,
+                "guard_transport_window_whole_flow_first_gate": 1,
+                "guard_transport_window_ack_slack_packets": 16,
+            })
+
     def test_guard_k_aliases_use_full_guard_mechanism_checks(self):
         stats = {
             "grants_sent": 1, "grants_received": 1,
@@ -584,6 +826,11 @@ class GeneralWorkloadRunnerTests(unittest.TestCase):
         self.assertTrue(all(mechanism_checks("guard_spillover", stats).values()))
         self.assertTrue(all(mechanism_checks("guard_elephant_target", stats).values()))
         self.assertTrue(all(mechanism_checks("guard_elephant_authority", stats).values()))
+        self.assertTrue(all(mechanism_checks("guard_initial_window", stats).values()))
+        self.assertTrue(all(mechanism_checks("guard_window_floor", stats).values()))
+        self.assertTrue(all(mechanism_checks("guard_post_grant_window", stats).values()))
+        self.assertTrue(all(mechanism_checks("guard_bounded_first_window", stats).values()))
+        self.assertTrue(all(mechanism_checks("guard_ack_slack_window", stats).values()))
 
     def test_fct_metrics_include_standard_goodput_jain(self):
         rows = [

@@ -67,6 +67,8 @@ class RdmaQueuePair : public Object {
     uint16_t m_pg;
     uint16_t m_ipid;
     uint32_t m_win;       // bound of on-the-fly packets
+    uint64_t m_guard_transport_win;  // optional GUARD-only window floor
+    uint64_t m_guard_first_grant_win;  // exact sender gate before the first grant
     uint64_t m_baseRtt;   // base RTT of this qp
     DataRate m_max_rate;  // max rate
     bool m_var_win;       // variable window size
@@ -76,6 +78,7 @@ class RdmaQueuePair : public Object {
     uint32_t m_guard_tail_safe_samples;
     bool m_guard_tail_deferred;
     bool m_guard_wait_first_grant;
+    bool m_guard_initial_priority_closed;
     uint32_t m_guard_last_grant_generation;
     uint64_t m_guard_last_generation_rate_bps;
     bool m_guard_last_generation_ack_required;
@@ -199,6 +202,8 @@ class RdmaQueuePair : public Object {
     uint64_t GetOnTheFly();
     bool IsWinBound();
     uint64_t GetWin();  // window size calculated from m_rate
+    uint64_t GetGuardTransportWin() const;
+    uint64_t GetGuardFirstGrantWin() const;
     bool IsFinished();
     inline bool IsFinishedConst() const { return snd_una >= m_size; }
 

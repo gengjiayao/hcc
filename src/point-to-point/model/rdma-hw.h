@@ -436,6 +436,11 @@ class RdmaHw : public Object {
     bool m_guardProactiveRelease;
     bool m_guardKeepLastHopInt;
     bool m_guardSizePriority;
+    bool m_guardInitialWindowPriority;
+    Time m_guardTransportWindowFloorRtt;
+    bool m_guardTransportWindowFloorAfterFirstGrant;
+    bool m_guardTransportWindowWholeFlowFirstGate;
+    uint32_t m_guardTransportWindowAckSlackPackets;
     bool m_guardSenderSrpt;
     bool m_guardOneRttBypass;
     bool m_guardTailBypass;
@@ -454,6 +459,7 @@ class RdmaHw : public Object {
     double m_guardRemainingExponent;
     uint32_t m_guardReceiverConcurrency;
     bool m_guardAdaptiveElephantConcurrency;
+    bool m_guardSizeClassElephantConcurrency;
     double m_guardElephantAgingRtts;
     double m_guardConcurrencyMinBdps;
     double m_guardGrantRefreshBdps;
@@ -466,6 +472,8 @@ class RdmaHw : public Object {
     bool m_guardWorkConserving;
     bool m_guardCapAwareReclaim;
     bool m_guardElephantCapSpillover;
+    bool m_guardCapTriggeredRefresh;
+    uint32_t m_guardCapRefreshMaterialPercent;
     uint32_t m_guardElephantSpilloverEnterReports;
     uint32_t m_guardElephantSpilloverExitReports;
     bool m_guardElephantFabricTarget;
@@ -479,6 +487,15 @@ class RdmaHw : public Object {
     uint64_t m_guardRateGrantsSent;
     uint64_t m_guardRateGrantBytesSent;
     uint64_t m_guardRateGrantsReceived;
+    uint64_t m_guardInitialWindowPriorityFlows;
+    uint64_t m_guardInitialWindowPriorityPackets;
+    uint64_t m_guardInitialWindowPriorityBytes;
+    uint64_t m_guardInitialWindowPriorityTransitions;
+    uint64_t m_guardTransportWindowRaisedFlows;
+    uint64_t m_guardTransportWindowExtraBytes;
+    uint64_t m_guardTransportWindowMaxBytes;
+    uint64_t m_guardTransportWindowWholeFlowFirstGateFlows;
+    uint64_t m_guardTransportWindowAckSlackLimitedFlows;
     // Calls into HPCC feedback processing in either HPCC-only or full-GUARD mode.
     uint64_t m_guardHpccFeedbackUpdates;
     // Feedback records that contain at least one INT hop, and updates that
@@ -514,6 +531,7 @@ class RdmaHw : public Object {
     uint64_t m_guardCapGrantUpdates;
     uint64_t m_guardCapMaxReclaimedBps;
     uint64_t m_guardElephantSpilloverRefreshRequests;
+    uint64_t m_guardCapTriggeredRefreshRequests;
     uint64_t m_guardElephantSpilloverVectors;
     uint64_t m_guardElephantSpilloverMaxBps;
     uint64_t m_guardElephantSpilloverAllocatorChecks;
@@ -666,6 +684,8 @@ class RdmaHw : public Object {
     uint64_t m_guardConcurrencyMaxDeferredFlows;
     uint64_t m_guardAdaptiveConcurrencyPromotions;
     uint64_t m_guardAdaptiveConcurrencyMaxEffective;
+    uint64_t m_guardSizeClassConcurrencyPromotions;
+    uint64_t m_guardSizeClassConcurrencyMaxEffective;
     uint64_t m_guardElephantAgingRotations;
     uint64_t m_guardElephantAgingMaxWaitNs;
     uint64_t m_guardOneRttBypassFlows;
@@ -977,6 +997,10 @@ class RdmaHw : public Object {
     bool UsesGuardElephantReceiverAuthority(Ptr<RdmaQueuePair> qp) const;
     static uint32_t ComputeGuardEffectiveElephantConcurrency(
         uint32_t configured_max, size_t candidate_count, bool adaptive);
+    static uint32_t ComputeGuardSizeClassElephantConcurrency(
+        uint32_t configured_max, size_t candidate_count,
+        uint64_t shortest_remaining, uint64_t second_remaining,
+        bool enabled);
     void StartGuardTransitionPrefixBarrier();
     void CheckGuardTransitionPrefixBarrier();
     void HandleGuardTransitionPrefixDeadline();

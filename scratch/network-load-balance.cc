@@ -196,6 +196,11 @@ bool guard_selective_registration = true;
 bool guard_proactive_release = true;
 bool guard_keep_last_hop_int = false;
 bool guard_size_priority = true;
+bool guard_initial_window_priority = false;
+uint64_t guard_transport_window_floor_rtt_ns = 0;
+bool guard_transport_window_floor_after_first_grant = false;
+bool guard_transport_window_whole_flow_first_gate = false;
+uint32_t guard_transport_window_ack_slack_packets = 0;
 bool guard_sender_srpt = true;
 bool guard_one_rtt_bypass = true;
 bool guard_tail_bypass = true;
@@ -214,8 +219,11 @@ double guard_min_share_fraction = 0.0;
 double guard_remaining_exponent = 1.0;
 uint32_t guard_receiver_concurrency = 0;
 bool guard_adaptive_elephant_concurrency = false;
+bool guard_size_class_elephant_concurrency = false;
 double guard_elephant_aging_rtts = 0.0;
 bool guard_elephant_cap_spillover = false;
+bool guard_cap_triggered_refresh = false;
+uint32_t guard_cap_refresh_material_percent = 5;
 uint32_t guard_elephant_spillover_enter_reports = 3;
 uint32_t guard_elephant_spillover_exit_reports = 1;
 bool guard_elephant_fabric_target = false;
@@ -1331,6 +1339,26 @@ int main(int argc, char *argv[]) {
             } else if (key.compare("GUARD_SIZE_PRIORITY") == 0) {
                 conf >> guard_size_priority;
                 std::cerr << "GUARD_SIZE_PRIORITY\t" << guard_size_priority << '\n';
+            } else if (key.compare("GUARD_INITIAL_WINDOW_PRIORITY") == 0) {
+                conf >> guard_initial_window_priority;
+                std::cerr << "GUARD_INITIAL_WINDOW_PRIORITY\t"
+                          << guard_initial_window_priority << '\n';
+            } else if (key.compare("GUARD_TRANSPORT_WINDOW_FLOOR_RTT_NS") == 0) {
+                conf >> guard_transport_window_floor_rtt_ns;
+                std::cerr << "GUARD_TRANSPORT_WINDOW_FLOOR_RTT_NS\t"
+                          << guard_transport_window_floor_rtt_ns << '\n';
+            } else if (key.compare("GUARD_TRANSPORT_WINDOW_FLOOR_AFTER_FIRST_GRANT") == 0) {
+                conf >> guard_transport_window_floor_after_first_grant;
+                std::cerr << "GUARD_TRANSPORT_WINDOW_FLOOR_AFTER_FIRST_GRANT\t"
+                          << guard_transport_window_floor_after_first_grant << '\n';
+            } else if (key.compare("GUARD_TRANSPORT_WINDOW_WHOLE_FLOW_FIRST_GATE") == 0) {
+                conf >> guard_transport_window_whole_flow_first_gate;
+                std::cerr << "GUARD_TRANSPORT_WINDOW_WHOLE_FLOW_FIRST_GATE\t"
+                          << guard_transport_window_whole_flow_first_gate << '\n';
+            } else if (key.compare("GUARD_TRANSPORT_WINDOW_ACK_SLACK_PACKETS") == 0) {
+                conf >> guard_transport_window_ack_slack_packets;
+                std::cerr << "GUARD_TRANSPORT_WINDOW_ACK_SLACK_PACKETS\t"
+                          << guard_transport_window_ack_slack_packets << '\n';
             } else if (key.compare("GUARD_SENDER_SRPT") == 0) {
                 conf >> guard_sender_srpt;
                 std::cerr << "GUARD_SENDER_SRPT\t" << guard_sender_srpt << '\n';
@@ -1394,6 +1422,10 @@ int main(int argc, char *argv[]) {
                 conf >> guard_adaptive_elephant_concurrency;
                 std::cerr << "GUARD_ADAPTIVE_ELEPHANT_CONCURRENCY\t"
                           << guard_adaptive_elephant_concurrency << '\n';
+            } else if (key.compare("GUARD_SIZE_CLASS_ELEPHANT_CONCURRENCY") == 0) {
+                conf >> guard_size_class_elephant_concurrency;
+                std::cerr << "GUARD_SIZE_CLASS_ELEPHANT_CONCURRENCY\t"
+                          << guard_size_class_elephant_concurrency << '\n';
             } else if (key.compare("GUARD_ELEPHANT_AGING_RTTS") == 0) {
                 conf >> guard_elephant_aging_rtts;
                 std::cerr << "GUARD_ELEPHANT_AGING_RTTS\t"
@@ -1402,6 +1434,14 @@ int main(int argc, char *argv[]) {
                 conf >> guard_elephant_cap_spillover;
                 std::cerr << "GUARD_ELEPHANT_CAP_SPILLOVER\t"
                           << guard_elephant_cap_spillover << '\n';
+            } else if (key.compare("GUARD_CAP_TRIGGERED_REFRESH") == 0) {
+                conf >> guard_cap_triggered_refresh;
+                std::cerr << "GUARD_CAP_TRIGGERED_REFRESH\t"
+                          << guard_cap_triggered_refresh << '\n';
+            } else if (key.compare("GUARD_CAP_REFRESH_MATERIAL_PERCENT") == 0) {
+                conf >> guard_cap_refresh_material_percent;
+                std::cerr << "GUARD_CAP_REFRESH_MATERIAL_PERCENT\t"
+                          << guard_cap_refresh_material_percent << '\n';
             } else if (key.compare("GUARD_ELEPHANT_SPILLOVER_ENTER_REPORTS") == 0) {
                 conf >> guard_elephant_spillover_enter_reports;
                 std::cerr << "GUARD_ELEPHANT_SPILLOVER_ENTER_REPORTS\t"
@@ -1834,12 +1874,22 @@ int main(int argc, char *argv[]) {
                   << "and the complete V18 canonical-vector bundle\n";
         return 1;
     }
+    if (guard_size_class_elephant_concurrency &&
+        (guard_receiver_concurrency != 2 || guard_adaptive_elephant_concurrency ||
+         !guard_remaining_aware || !guard_mixed_pg_vector_fastpath ||
+         !guard_serialized_progress_refresh || !guard_serialized_draining ||
+         !guard_capacity_admission_deferral || cc_mode != 11)) {
+        std::cerr << "GUARD size-class elephant concurrency requires Kmax=2, "
+                  << "the complete V18 canonical-vector bundle, and adaptive width disabled\n";
+        return 1;
+    }
     if (guard_elephant_aging_rtts < 0.0 || guard_elephant_aging_rtts > 64.0) {
         std::cerr << "GUARD_ELEPHANT_AGING_RTTS must be in [0, 64]\n";
         return 1;
     }
     if (guard_elephant_aging_rtts > 0.0 &&
         (guard_receiver_concurrency != 1 || guard_adaptive_elephant_concurrency ||
+         guard_size_class_elephant_concurrency ||
          !guard_remaining_aware || !guard_mixed_pg_vector_fastpath ||
          !guard_serialized_progress_refresh || !guard_serialized_draining ||
          !guard_capacity_admission_deferral || cc_mode != 11)) {
@@ -1849,12 +1899,32 @@ int main(int argc, char *argv[]) {
     }
     if (guard_elephant_cap_spillover &&
         (guard_receiver_concurrency != 1 || guard_adaptive_elephant_concurrency ||
+         guard_size_class_elephant_concurrency ||
          guard_elephant_aging_rtts > 0.0 || !guard_remaining_aware ||
          !guard_mixed_pg_vector_fastpath || !guard_serialized_progress_refresh ||
          !guard_serialized_draining || !guard_capacity_admission_deferral ||
          guard_cap_aware_reclaim || guard_work_conserving || cc_mode != 11)) {
         std::cerr << "GUARD elephant cap spillover requires fixed K=1, the complete "
                   << "V18 canonical-vector bundle, and legacy reclaim disabled\n";
+        return 1;
+    }
+    if (guard_cap_triggered_refresh &&
+        (guard_receiver_concurrency != 1 || guard_adaptive_elephant_concurrency ||
+         guard_size_class_elephant_concurrency ||
+         guard_elephant_aging_rtts > 0.0 || guard_elephant_cap_spillover ||
+         !guard_remaining_aware || !guard_mixed_pg_vector_fastpath ||
+         !guard_serialized_progress_refresh || !guard_serialized_draining ||
+         !guard_capacity_admission_deferral || cc_mode != 11)) {
+        std::cerr << "GUARD cap-triggered refresh requires final K=1 and the "
+                  << "complete V18 canonical-vector bundle\n";
+        return 1;
+    }
+    if (guard_cap_refresh_material_percent < 1 ||
+        guard_cap_refresh_material_percent > 20 ||
+        (!guard_cap_triggered_refresh &&
+         guard_cap_refresh_material_percent != 5)) {
+        std::cerr << "GUARD cap-refresh material percent must be in [1,20] "
+                  << "and non-default only when cap refresh is enabled\n";
         return 1;
     }
     if (guard_elephant_spillover_enter_reports < 1 ||
@@ -1872,6 +1942,8 @@ int main(int argc, char *argv[]) {
     if (guard_elephant_fabric_target &&
         (cc_mode != 11 || guard_adaptive_fabric_target ||
          guard_elephant_cap_spillover || guard_adaptive_elephant_concurrency ||
+         guard_cap_triggered_refresh ||
+         guard_size_class_elephant_concurrency ||
          guard_elephant_aging_rtts > 0.0 || guard_receiver_concurrency != 1 ||
          !guard_remaining_aware || !guard_mixed_pg_vector_fastpath ||
          !guard_serialized_progress_refresh || !guard_serialized_draining ||
@@ -1882,7 +1954,9 @@ int main(int argc, char *argv[]) {
     if (guard_elephant_receiver_authority &&
         (cc_mode != 11 || guard_adaptive_fabric_target ||
          guard_elephant_fabric_target || guard_elephant_cap_spillover ||
-         guard_adaptive_elephant_concurrency || guard_elephant_aging_rtts > 0.0 ||
+         guard_cap_triggered_refresh ||
+         guard_adaptive_elephant_concurrency || guard_size_class_elephant_concurrency ||
+         guard_elephant_aging_rtts > 0.0 ||
          guard_receiver_concurrency != 1 || !guard_remaining_aware ||
          !guard_mixed_pg_vector_fastpath || !guard_serialized_progress_refresh ||
          !guard_serialized_draining || !guard_capacity_admission_deferral)) {
@@ -2572,6 +2646,20 @@ int main(int argc, char *argv[]) {
                                  BooleanValue(guard_proactive_release));
             rdmaHw->SetAttribute("GuardKeepLastHopInt", BooleanValue(guard_keep_last_hop_int));
             rdmaHw->SetAttribute("GuardSizePriority", BooleanValue(guard_size_priority));
+            rdmaHw->SetAttribute("GuardInitialWindowPriority",
+                                 BooleanValue(guard_initial_window_priority));
+            rdmaHw->SetAttribute("GuardTransportWindowFloorRtt",
+                                 TimeValue(NanoSeconds(
+                                     guard_transport_window_floor_rtt_ns)));
+            rdmaHw->SetAttribute("GuardTransportWindowFloorAfterFirstGrant",
+                                 BooleanValue(
+                                     guard_transport_window_floor_after_first_grant));
+            rdmaHw->SetAttribute("GuardTransportWindowWholeFlowFirstGate",
+                                 BooleanValue(
+                                     guard_transport_window_whole_flow_first_gate));
+            rdmaHw->SetAttribute("GuardTransportWindowAckSlackPackets",
+                                 UintegerValue(
+                                     guard_transport_window_ack_slack_packets));
             rdmaHw->SetAttribute("GuardSenderSrpt", BooleanValue(guard_sender_srpt));
             rdmaHw->SetAttribute("GuardOneRttBypass", BooleanValue(guard_one_rtt_bypass));
             rdmaHw->SetAttribute("GuardTailBypass", BooleanValue(guard_tail_bypass));
@@ -2600,10 +2688,17 @@ int main(int argc, char *argv[]) {
                                  UintegerValue(guard_receiver_concurrency));
             rdmaHw->SetAttribute("GuardAdaptiveElephantConcurrency",
                                  BooleanValue(guard_adaptive_elephant_concurrency));
+            rdmaHw->SetAttribute("GuardSizeClassElephantConcurrency",
+                                 BooleanValue(guard_size_class_elephant_concurrency));
             rdmaHw->SetAttribute("GuardElephantAgingRtts",
                                  DoubleValue(guard_elephant_aging_rtts));
             rdmaHw->SetAttribute("GuardElephantCapSpillover",
                                  BooleanValue(guard_elephant_cap_spillover));
+            rdmaHw->SetAttribute("GuardCapTriggeredRefresh",
+                                 BooleanValue(guard_cap_triggered_refresh));
+            rdmaHw->SetAttribute(
+                "GuardCapRefreshMaterialPercent",
+                UintegerValue(guard_cap_refresh_material_percent));
             rdmaHw->SetAttribute(
                 "GuardElephantSpilloverEnterReports",
                 UintegerValue(guard_elephant_spillover_enter_reports));
@@ -3962,9 +4057,21 @@ int main(int argc, char *argv[]) {
     uint64_t max_guard_concurrency_deferred_flows = 0;
     uint64_t total_guard_adaptive_concurrency_promotions = 0;
     uint64_t max_guard_adaptive_concurrency_effective = 0;
+    uint64_t total_guard_size_class_concurrency_promotions = 0;
+    uint64_t max_guard_size_class_concurrency_effective = 0;
+    uint64_t total_guard_cap_triggered_refresh_requests = 0;
     uint64_t total_guard_elephant_aging_rotations = 0;
     uint64_t max_guard_elephant_aging_wait_ns = 0;
     uint64_t total_guard_elephant_aging_active_deferred = 0;
+    uint64_t total_guard_initial_window_priority_flows = 0;
+    uint64_t total_guard_initial_window_priority_packets = 0;
+    uint64_t total_guard_initial_window_priority_bytes = 0;
+    uint64_t total_guard_initial_window_priority_transitions = 0;
+    uint64_t total_guard_transport_window_raised_flows = 0;
+    uint64_t total_guard_transport_window_extra_bytes = 0;
+    uint64_t max_guard_transport_window_bytes = 0;
+    uint64_t total_guard_transport_whole_flow_first_gate_flows = 0;
+    uint64_t total_guard_transport_ack_slack_limited_flows = 0;
     for (uint32_t i = 0; i < node_num; i++) {
         if (n.Get(i)->GetNodeType() != 0) continue;
         Ptr<RdmaDriver> driver = n.Get(i)->GetObject<RdmaDriver>();
@@ -3999,16 +4106,67 @@ int main(int argc, char *argv[]) {
         max_guard_adaptive_concurrency_effective = std::max<uint64_t>(
             max_guard_adaptive_concurrency_effective,
             driver->m_rdma->m_guardAdaptiveConcurrencyMaxEffective);
+        total_guard_size_class_concurrency_promotions +=
+            driver->m_rdma->m_guardSizeClassConcurrencyPromotions;
+        max_guard_size_class_concurrency_effective = std::max<uint64_t>(
+            max_guard_size_class_concurrency_effective,
+            driver->m_rdma->m_guardSizeClassConcurrencyMaxEffective);
+        total_guard_cap_triggered_refresh_requests +=
+            driver->m_rdma->m_guardCapTriggeredRefreshRequests;
         total_guard_elephant_aging_rotations +=
             driver->m_rdma->m_guardElephantAgingRotations;
         max_guard_elephant_aging_wait_ns = std::max<uint64_t>(
             max_guard_elephant_aging_wait_ns,
             driver->m_rdma->m_guardElephantAgingMaxWaitNs);
+        total_guard_initial_window_priority_flows +=
+            driver->m_rdma->m_guardInitialWindowPriorityFlows;
+        total_guard_initial_window_priority_packets +=
+            driver->m_rdma->m_guardInitialWindowPriorityPackets;
+        total_guard_initial_window_priority_bytes +=
+            driver->m_rdma->m_guardInitialWindowPriorityBytes;
+        total_guard_initial_window_priority_transitions +=
+            driver->m_rdma->m_guardInitialWindowPriorityTransitions;
+        total_guard_transport_window_raised_flows +=
+            driver->m_rdma->m_guardTransportWindowRaisedFlows;
+        total_guard_transport_window_extra_bytes +=
+            driver->m_rdma->m_guardTransportWindowExtraBytes;
+        max_guard_transport_window_bytes = std::max<uint64_t>(
+            max_guard_transport_window_bytes,
+            driver->m_rdma->m_guardTransportWindowMaxBytes);
+        total_guard_transport_whole_flow_first_gate_flows +=
+            driver->m_rdma->m_guardTransportWindowWholeFlowFirstGateFlows;
+        total_guard_transport_ack_slack_limited_flows +=
+            driver->m_rdma->m_guardTransportWindowAckSlackLimitedFlows;
         for (auto *flow : driver->m_rdma->m_rate_flow_ctl_set) {
             if (flow->m_guard_elephant_deferred_since_ns >= 0)
                 total_guard_elephant_aging_active_deferred++;
         }
     }
+    fprintf(guard_stats_output,
+            "guard_initial_window_priority enabled %u flows %lu packets %lu bytes %lu "
+            "transitions %lu unscheduled_pg 3\n",
+            guard_initial_window_priority ? 1 : 0,
+            total_guard_initial_window_priority_flows,
+            total_guard_initial_window_priority_packets,
+            total_guard_initial_window_priority_bytes,
+            total_guard_initial_window_priority_transitions);
+    fprintf(guard_stats_output,
+            "guard_transport_window_floor enabled %u floor_rtt_ns %lu raised_flows %lu "
+            "extra_window_bytes %lu max_transport_window_bytes %lu\n",
+            guard_transport_window_floor_rtt_ns > 0 ? 1 : 0,
+            guard_transport_window_floor_rtt_ns,
+            total_guard_transport_window_raised_flows,
+            total_guard_transport_window_extra_bytes,
+            max_guard_transport_window_bytes);
+    fprintf(guard_stats_output,
+            "guard_transport_window_scope after_first_grant %u "
+            "whole_flow_first_gate %u whole_flow_raised_flows %lu "
+            "ack_slack_packets %u ack_slack_limited_flows %lu\n",
+            guard_transport_window_floor_after_first_grant ? 1 : 0,
+            guard_transport_window_whole_flow_first_gate ? 1 : 0,
+            total_guard_transport_whole_flow_first_gate_flows,
+            guard_transport_window_ack_slack_packets,
+            total_guard_transport_ack_slack_limited_flows);
     fprintf(guard_stats_output,
             "guard_one_rtt_bypass enabled %u flows %lu feedbacks_skipped %lu "
             "acks_suppressed %lu long_acks_suppressed %lu ack_interval_packets %u "
@@ -4038,7 +4196,9 @@ int main(int argc, char *argv[]) {
             "guard_receiver_scheduler remaining_aware %u min_share_fraction %.6f "
             "remaining_exponent %.6f concurrency %u limited_allocations %lu "
             "max_deferred %lu adaptive_concurrency %u adaptive_promotions %lu "
-            "adaptive_max_effective %lu concurrency_min_bdps %.6f refresh_bdps %.6f "
+            "adaptive_max_effective %lu size_class_concurrency %u "
+            "size_class_promotions %lu size_class_max_effective %lu "
+            "concurrency_min_bdps %.6f refresh_bdps %.6f "
             "refresh_events %lu\n",
             guard_remaining_aware ? 1 : 0, guard_min_share_fraction,
             guard_remaining_exponent, guard_receiver_concurrency,
@@ -4046,9 +4206,19 @@ int main(int argc, char *argv[]) {
             max_guard_concurrency_deferred_flows,
             guard_adaptive_elephant_concurrency ? 1 : 0,
             total_guard_adaptive_concurrency_promotions,
-            max_guard_adaptive_concurrency_effective, guard_concurrency_min_bdps,
+            max_guard_adaptive_concurrency_effective,
+            guard_size_class_elephant_concurrency ? 1 : 0,
+            total_guard_size_class_concurrency_promotions,
+            max_guard_size_class_concurrency_effective,
+            guard_concurrency_min_bdps,
             guard_grant_refresh_bdps,
             total_guard_remaining_refresh_events);
+    fprintf(guard_stats_output,
+            "guard_cap_triggered_refresh enabled %u requests %lu "
+            "material_percent %u\n",
+            guard_cap_triggered_refresh ? 1 : 0,
+            total_guard_cap_triggered_refresh_requests,
+            guard_cap_refresh_material_percent);
     fprintf(guard_stats_output,
             "guard_elephant_aging enabled %u wait_rtts %.6f rotations %lu "
             "max_wait_ns %lu active_deferred %lu\n",

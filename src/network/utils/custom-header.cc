@@ -488,6 +488,22 @@ uint8_t CustomHeader::GetIpv4EcnBits (void) const{
 	return m_tos & 0x3;
 }
 
+uint8_t CustomHeader::EncodeGuardScheduleClass (uint8_t priority, uint8_t ecnBits){
+	NS_ASSERT_MSG(priority > 0 && priority < 8,
+		"GUARD scheduling class must be a data priority in [1,7]");
+	return GUARD_SCHEDULE_CLASS_VALID | ((priority & 0x7) << 2) | (ecnBits & 0x3);
+}
+
+bool CustomHeader::HasGuardScheduleClass (void) const{
+	return (m_tos & GUARD_SCHEDULE_CLASS_VALID) != 0;
+}
+
+uint8_t CustomHeader::GetGuardScheduleClass (void) const{
+	NS_ASSERT_MSG(HasGuardScheduleClass(),
+		"GUARD scheduling class requested without its DSCP validity marker");
+	return (m_tos & GUARD_SCHEDULE_CLASS_MASK) >> 2;
+}
+
 uint32_t CustomHeader::GetAckSerializedSize(void){
 	return sizeof(ack.sport) + sizeof(ack.dport) + sizeof(ack.flags) + sizeof(ack.pg) + sizeof(ack.seq) + IntHeader::GetStaticSize();
 }

@@ -54,7 +54,11 @@ CC_MODES = {
     "full": 11, "guard": 11, "guard_k1": 11, "guard_k2": 11,
     "guard_adaptive": 11, "guard_aging": 11,
     "guard_spillover": 11, "guard_elephant_target": 11,
-    "guard_elephant_authority": 11,
+    "guard_elephant_authority": 11, "guard_initial_window": 11,
+    "guard_window_floor": 11, "guard_post_grant_window": 11,
+    "guard_bounded_first_window": 11,
+    "guard_ack_slack_window": 11,
+    "guard_cap_refresh": 11,
     "hpcc": 3, "receiver": 13, "homa": 12,
 }
 T95_DF4 = 2.7764451051977987
@@ -85,6 +89,12 @@ GUARD_OPTIMIZATION_FIELDS = (
     "guard_adaptive_elephant_concurrency",
     "guard_adaptive_concurrency_promotions",
     "guard_adaptive_concurrency_max_effective",
+    "guard_size_class_elephant_concurrency",
+    "guard_size_class_concurrency_promotions",
+    "guard_size_class_concurrency_max_effective",
+    "guard_cap_triggered_refresh_enabled",
+    "guard_cap_triggered_refresh_requests",
+    "guard_cap_refresh_material_percent",
     "guard_elephant_aging_enabled", "guard_elephant_aging_rtts",
     "guard_elephant_aging_rotations", "guard_elephant_aging_max_wait_ns",
     "guard_elephant_aging_active_deferred",
@@ -104,6 +114,22 @@ GUARD_OPTIMIZATION_FIELDS = (
     "guard_elephant_receiver_authority_bindings",
     "guard_elephant_receiver_authority_rate_changes",
     "guard_elephant_receiver_authority_max_released_bps",
+    "guard_initial_window_priority_enabled",
+    "guard_initial_window_priority_flows",
+    "guard_initial_window_priority_packets",
+    "guard_initial_window_priority_bytes",
+    "guard_initial_window_priority_transitions",
+    "guard_initial_window_priority_pg",
+    "guard_transport_window_floor_enabled",
+    "guard_transport_window_floor_rtt_ns",
+    "guard_transport_window_floor_raised_flows",
+    "guard_transport_window_floor_extra_bytes",
+    "guard_transport_window_floor_max_bytes",
+    "guard_transport_window_floor_after_first_grant",
+    "guard_transport_window_whole_flow_first_gate",
+    "guard_transport_window_whole_flow_raised_flows",
+    "guard_transport_window_ack_slack_packets",
+    "guard_transport_window_ack_slack_limited_flows",
     "guard_concurrency_min_bdps", "guard_concurrency_limited_allocations",
     "guard_concurrency_max_deferred_flows", "guard_grant_refresh_bdps",
     "guard_remaining_refresh_events",
@@ -286,6 +312,15 @@ def validate_config(
             "guard_proactive_release": "GUARD_PROACTIVE_RELEASE",
             "guard_keep_last_hop_int": "GUARD_KEEP_LAST_HOP_INT",
             "guard_size_priority": "GUARD_SIZE_PRIORITY",
+            "guard_initial_window_priority": "GUARD_INITIAL_WINDOW_PRIORITY",
+            "guard_transport_window_floor_rtt_ns":
+                "GUARD_TRANSPORT_WINDOW_FLOOR_RTT_NS",
+            "guard_transport_window_floor_after_first_grant":
+                "GUARD_TRANSPORT_WINDOW_FLOOR_AFTER_FIRST_GRANT",
+            "guard_transport_window_whole_flow_first_gate":
+                "GUARD_TRANSPORT_WINDOW_WHOLE_FLOW_FIRST_GATE",
+            "guard_transport_window_ack_slack_packets":
+                "GUARD_TRANSPORT_WINDOW_ACK_SLACK_PACKETS",
             "guard_sender_srpt": "GUARD_SENDER_SRPT",
             "guard_one_rtt_bypass": "GUARD_ONE_RTT_BYPASS",
             "guard_tail_bypass": "GUARD_TAIL_BYPASS",
@@ -305,6 +340,11 @@ def validate_config(
             "guard_receiver_concurrency": "GUARD_RECEIVER_CONCURRENCY",
             "guard_adaptive_elephant_concurrency":
                 "GUARD_ADAPTIVE_ELEPHANT_CONCURRENCY",
+            "guard_size_class_elephant_concurrency":
+                "GUARD_SIZE_CLASS_ELEPHANT_CONCURRENCY",
+            "guard_cap_triggered_refresh": "GUARD_CAP_TRIGGERED_REFRESH",
+            "guard_cap_refresh_material_percent":
+                "GUARD_CAP_REFRESH_MATERIAL_PERCENT",
             "guard_elephant_aging_rtts": "GUARD_ELEPHANT_AGING_RTTS",
             "guard_elephant_cap_spillover": "GUARD_ELEPHANT_CAP_SPILLOVER",
             "guard_elephant_spillover_enter_reports":
@@ -368,7 +408,10 @@ def mechanism_checks(arm: str, stats: Mapping[str, object]) -> Dict[str, bool]:
     grants_received = int(stats["grants_received"])
     if arm in ("full", "guard", "guard_k1", "guard_k2", "guard_adaptive",
                "guard_aging", "guard_spillover", "guard_elephant_target",
-               "guard_elephant_authority"):
+               "guard_elephant_authority", "guard_initial_window",
+               "guard_window_floor", "guard_post_grant_window",
+               "guard_bounded_first_window", "guard_ack_slack_window",
+               "guard_cap_refresh"):
         checks = {
             "full_grants": grants_sent > 0,
             "full_valid_hpcc": int(stats["hpcc_valid_feedback"]) > 0,
@@ -385,7 +428,10 @@ def mechanism_checks(arm: str, stats: Mapping[str, object]) -> Dict[str, bool]:
                 int(stats["guard_elephant_receiver_authority_bindings"]) > 0)
         if arm in ("guard", "guard_k1", "guard_k2", "guard_adaptive",
                    "guard_aging", "guard_spillover", "guard_elephant_target",
-                   "guard_elephant_authority"):
+                   "guard_elephant_authority", "guard_initial_window",
+                   "guard_window_floor", "guard_post_grant_window",
+                   "guard_bounded_first_window", "guard_ack_slack_window",
+                   "guard_cap_refresh"):
             checks.update({
                 "guard_sender_srpt_enabled": int(stats["guard_sender_srpt_enabled"]) == 1,
                 "guard_sender_srpt_selected": int(stats["guard_sender_srpt_selections"]) > 0,
@@ -507,7 +553,10 @@ def analyze_run(
         controls.update(dict(spec["arms"])[arm])
         if (arm in ("guard", "guard_k1", "guard_k2", "guard_adaptive",
                     "guard_aging", "guard_spillover", "guard_elephant_target",
-                    "guard_elephant_authority") and
+                    "guard_elephant_authority", "guard_initial_window",
+                    "guard_window_floor", "guard_post_grant_window",
+                    "guard_bounded_first_window", "guard_ack_slack_window",
+                    "guard_cap_refresh") and
                 int(controls.get("guard_receiver_concurrency", 0)) > 0):
             checks["guard_concurrency_limited"] = (
                 int(stats["guard_concurrency_limited_allocations"]) > 0

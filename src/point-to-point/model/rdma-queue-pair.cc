@@ -36,6 +36,8 @@ RdmaQueuePair::RdmaQueuePair(uint16_t pg, Ipv4Address _sip, Ipv4Address _dip, ui
     m_pg = pg;
     m_ipid = 0;
     m_win = 0;
+    m_guard_transport_win = 0;
+    m_guard_first_grant_win = 0;
     m_baseRtt = 0;
     m_max_rate = 0;
     m_var_win = false;
@@ -45,6 +47,7 @@ RdmaQueuePair::RdmaQueuePair(uint16_t pg, Ipv4Address _sip, Ipv4Address _dip, ui
     m_guard_tail_safe_samples = 0;
     m_guard_tail_deferred = false;
     m_guard_wait_first_grant = false;
+    m_guard_initial_priority_closed = false;
     m_guard_last_grant_generation = 0;
     m_guard_last_generation_rate_bps = 0;
     m_guard_last_generation_ack_required = false;
@@ -146,19 +149,30 @@ uint64_t RdmaQueuePair::GetOnTheFly() {
 }
 
 bool RdmaQueuePair::IsWinBound() {
-    if (m_guard_wait_first_grant && m_win != 0 && snd_nxt >= m_win) return true;
+    uint64_t first_grant_win = GetGuardFirstGrantWin();
+    if (m_guard_wait_first_grant && first_grant_win != 0 &&
+        snd_nxt >= first_grant_win) return true;
     uint64_t w = GetWin();
     return w != 0 && GetOnTheFly() >= w;
 }
 
+uint64_t RdmaQueuePair::GetGuardTransportWin() const {
+    return m_guard_transport_win != 0 ? m_guard_transport_win : m_win;
+}
+
+uint64_t RdmaQueuePair::GetGuardFirstGrantWin() const {
+    return m_guard_first_grant_win != 0 ? m_guard_first_grant_win : m_win;
+}
+
 uint64_t RdmaQueuePair::GetWin() {
-    if (m_win == 0) return 0;
+    uint64_t base_win = GetGuardTransportWin();
+    if (base_win == 0) return 0;
     uint64_t w;
     if (m_var_win) {
-        w = m_win * m_rate.GetBitRate() / m_max_rate.GetBitRate();
+        w = base_win * m_rate.GetBitRate() / m_max_rate.GetBitRate();
         if (w == 0) w = 1;  // must > 0
     } else {
-        w = m_win;
+        w = base_win;
     }
     return w;
 }

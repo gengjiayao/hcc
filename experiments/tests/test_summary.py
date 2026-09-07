@@ -271,6 +271,51 @@ class SummaryTests(unittest.TestCase):
             self.assertEqual(stats["guard_elephant_aging_max_wait_ns"], 16640)
             self.assertEqual(stats["guard_elephant_aging_active_deferred"], 0)
 
+    def test_guard_size_class_concurrency_stats_preserve_promotions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            path.write_text(
+                "total " + " ".join("0" for _ in range(33)) + "\n"
+                "guard_receiver_scheduler remaining_aware 1 min_share_fraction 0 "
+                "remaining_exponent 1 concurrency 2 limited_allocations 9 "
+                "max_deferred 2 adaptive_concurrency 0 adaptive_promotions 0 "
+                "adaptive_max_effective 0 size_class_concurrency 1 "
+                "size_class_promotions 17 size_class_max_effective 2 "
+                "concurrency_min_bdps 12 refresh_bdps 1 refresh_events 31\n",
+                encoding="utf-8",
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["guard_size_class_elephant_concurrency"], 1)
+            self.assertEqual(stats["guard_size_class_concurrency_promotions"], 17)
+            self.assertEqual(stats["guard_size_class_concurrency_max_effective"], 2)
+
+    def test_guard_cap_triggered_refresh_stats_preserve_requests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            path.write_text(
+                "total " + " ".join("0" for _ in range(33)) + "\n"
+                "guard_cap_triggered_refresh enabled 1 requests 141\n",
+                encoding="utf-8",
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["guard_cap_triggered_refresh_enabled"], 1)
+            self.assertEqual(stats["guard_cap_triggered_refresh_requests"], 141)
+            self.assertEqual(stats["guard_cap_refresh_material_percent"], 5)
+
+    def test_guard_cap_triggered_refresh_stats_preserve_material_percent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            path.write_text(
+                "total " + " ".join("0" for _ in range(33)) + "\n"
+                "guard_cap_triggered_refresh enabled 1 requests 165 "
+                "material_percent 2\n",
+                encoding="utf-8",
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["guard_cap_triggered_refresh_enabled"], 1)
+            self.assertEqual(stats["guard_cap_triggered_refresh_requests"], 165)
+            self.assertEqual(stats["guard_cap_refresh_material_percent"], 2)
+
     def test_guard_elephant_spillover_survives_later_receiver_row(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "guard.txt"

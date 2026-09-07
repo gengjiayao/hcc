@@ -247,6 +247,12 @@ void SwitchNode::SendToDevContinue(Ptr<Packet> p, CustomHeader &ch) {
             } else {
                 qIndex = (ch.l3Prot == 0x06 ? 1 : ch.udp.pg);  // if TCP, put to queue 1. Otherwise, it
                                                                // would be 3 (refer to trafficgen)
+                if (m_ccMode == 11 && ch.l3Prot == 0x11 &&
+                    ch.HasGuardScheduleClass()) {
+                    qIndex = ch.GetGuardScheduleClass();
+                    NS_ABORT_MSG_IF(qIndex == 0 || qIndex >= qCnt,
+                                    "GUARD packet carries an invalid scheduling class");
+                }
             }
         }
 
@@ -313,13 +319,26 @@ void SwitchNode::DoSwitchSend(Ptr<Packet> p, CustomHeader &ch, uint32_t outDev, 
         assert(qIndex == 0 && m_ackHighPrio == 1 && "ConWeave's reply packet follows ACK, so its qIndex should be 0");
     }
 
-    if (qIndex != 0) {  // not highest priority
-        if (m_mmu->CheckEgressAdmission(outDev, qIndex,
+    // A GUARD packet can select a strict-priority service queue through DSCP
+    // while retaining its immutable UDP PG for QP identity, MMU accounting,
+    // ECN, and PFC.  This separation is what makes a one-way high-to-low
+    // initial-window transition safe: all packets remain in one lossless PG.
+    uint32_t admissionQIndex = qIndex;
+    if (m_ccMode == 11 && ch.l3Prot == 0x11 && ch.HasGuardScheduleClass()) {
+        admissionQIndex = ch.udp.pg;
+        NS_ABORT_MSG_IF(admissionQIndex == 0 || admissionQIndex >= qCnt,
+                        "GUARD packet carries an invalid immutable priority group");
+        NS_ABORT_MSG_IF(qIndex != ch.GetGuardScheduleClass(),
+                        "GUARD scheduling class changed between parsing and enqueue");
+    }
+
+    if (admissionQIndex != 0) {  // not highest priority
+        if (m_mmu->CheckEgressAdmission(outDev, admissionQIndex,
                                         p->GetSize())) {  // Egress Admission control
-            if (m_mmu->CheckIngressAdmission(inDev, qIndex,
+            if (m_mmu->CheckIngressAdmission(inDev, admissionQIndex,
                                              p->GetSize())) {  // Ingress Admission control
-                m_mmu->UpdateIngressAdmission(inDev, qIndex, p->GetSize());
-                m_mmu->UpdateEgressAdmission(outDev, qIndex, p->GetSize());
+                m_mmu->UpdateIngressAdmission(inDev, admissionQIndex, p->GetSize());
+                m_mmu->UpdateEgressAdmission(outDev, admissionQIndex, p->GetSize());
             } else { /** DROP: At Ingress */
 #if (0)
                 // /** NOTE: logging dropped pkts */
@@ -342,7 +361,7 @@ void SwitchNode::DoSwitchSend(Ptr<Packet> p, CustomHeader &ch, uint32_t outDev, 
             return;  // drop
         }
 
-        CheckAndSendPfc(inDev, qIndex);
+        CheckAndSendPfc(inDev, admissionQIndex);
     }
 
     m_devices[outDev]->SwitchSend(qIndex, p, ch);
@@ -351,16 +370,29 @@ void SwitchNode::DoSwitchSend(Ptr<Packet> p, CustomHeader &ch, uint32_t outDev, 
 void SwitchNode::SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Packet> p) {
     FlowIdTag t;
     p->PeekPacketTag(t);
-    if (qIndex != 0) {
+    uint32_t admissionQIndex = qIndex;
+    if (m_ccMode == 11 && qIndex != 0) {
+        CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header |
+                        CustomHeader::L4_Header);
+        p->PeekHeader(ch);
+        if (ch.l3Prot == 0x11 && ch.HasGuardScheduleClass()) {
+            admissionQIndex = ch.udp.pg;
+            NS_ABORT_MSG_IF(admissionQIndex == 0 || admissionQIndex >= qCnt,
+                            "dequeued GUARD packet lost its immutable priority group");
+            NS_ABORT_MSG_IF(qIndex != ch.GetGuardScheduleClass(),
+                            "dequeued GUARD packet changed scheduling class");
+        }
+    }
+    if (admissionQIndex != 0) {
         uint32_t inDev = t.GetFlowId();
         if (inDev != Settings::CONWEAVE_CTRL_DUMMY_INDEV) {
             // NOTE: ConWeave's probe/reply does not need to pass inDev interface,
             // so skip for conweave's queued packets
-            m_mmu->RemoveFromIngressAdmission(inDev, qIndex, p->GetSize());
+            m_mmu->RemoveFromIngressAdmission(inDev, admissionQIndex, p->GetSize());
         }
-        m_mmu->RemoveFromEgressAdmission(ifIndex, qIndex, p->GetSize());
+        m_mmu->RemoveFromEgressAdmission(ifIndex, admissionQIndex, p->GetSize());
         if (m_ecnEnabled) {
-            bool egressCongested = m_mmu->ShouldSendCN(ifIndex, qIndex);
+            bool egressCongested = m_mmu->ShouldSendCN(ifIndex, admissionQIndex);
             if (egressCongested) {
                 PppHeader ppp;
                 Ipv4Header h;
@@ -373,7 +405,7 @@ void SwitchNode::SwitchNotifyDequeue(uint32_t ifIndex, uint32_t qIndex, Ptr<Pack
         }
         // NOTE: ConWeave's probe/reply does not need to pass inDev interface
         if (inDev != Settings::CONWEAVE_CTRL_DUMMY_INDEV) {
-            CheckAndSendResume(inDev, qIndex);
+            CheckAndSendResume(inDev, admissionQIndex);
         }
     }
 

@@ -172,6 +172,39 @@ TypeId RdmaHw::GetTypeId(void) {
                           "Remap GUARD flows to size-based priority groups",
                           BooleanValue(true), MakeBooleanAccessor(&RdmaHw::m_guardSizePriority),
                           MakeBooleanChecker())
+            .AddAttribute("GuardInitialWindowPriority",
+                          "Serve only a GUARD flow's initial BDP at the Homa unscheduled "
+                          "priority while retaining its immutable QP/PFC priority group",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(&RdmaHw::m_guardInitialWindowPriority),
+                          MakeBooleanChecker())
+            .AddAttribute("GuardTransportWindowFloorRtt",
+                          "Minimum RTT-equivalent GUARD transport window; path BDP "
+                          "classification remains unchanged and zero disables the floor",
+                          TimeValue(NanoSeconds(0)),
+                          MakeTimeAccessor(&RdmaHw::m_guardTransportWindowFloorRtt),
+                          MakeTimeChecker())
+            .AddAttribute("GuardTransportWindowFloorAfterFirstGrant",
+                          "Keep the exact path-BDP first-grant gate while applying the "
+                          "GUARD transport-window floor after the first grant",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(
+                              &RdmaHw::m_guardTransportWindowFloorAfterFirstGrant),
+                          MakeBooleanChecker())
+            .AddAttribute("GuardTransportWindowWholeFlowFirstGate",
+                          "Permit the topology window before the first grant only when "
+                          "the complete flow fits in that bounded window",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(
+                              &RdmaHw::m_guardTransportWindowWholeFlowFirstGate),
+                          MakeBooleanChecker())
+            .AddAttribute("GuardTransportWindowAckSlackPackets",
+                          "Cap the topology transport window at path BDP plus this "
+                          "many MTU packets; zero disables the cap",
+                          UintegerValue(0),
+                          MakeUintegerAccessor(
+                              &RdmaHw::m_guardTransportWindowAckSlackPackets),
+                          MakeUintegerChecker<uint32_t>())
             .AddAttribute("GuardSenderSrpt",
                           "Select the shortest remaining ready GUARD flow at each sender NIC",
                           BooleanValue(true), MakeBooleanAccessor(&RdmaHw::m_guardSenderSrpt),
@@ -259,6 +292,12 @@ TypeId RdmaHw::GetTypeId(void) {
                           "GuardReceiverConcurrency",
                           BooleanValue(false),
                           MakeBooleanAccessor(&RdmaHw::m_guardAdaptiveElephantConcurrency),
+                          MakeBooleanChecker())
+            .AddAttribute("GuardSizeClassElephantConcurrency",
+                          "Serve the two shortest elephants together only when their "
+                          "remaining sizes are in the same dyadic size class",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(&RdmaHw::m_guardSizeClassElephantConcurrency),
                           MakeBooleanChecker())
             .AddAttribute("GuardElephantAgingRtts",
                           "Deferred-elephant wait in base RTTs before one K=1 service "
@@ -387,6 +426,19 @@ TypeId RdmaHw::GetTypeId(void) {
                           BooleanValue(false),
                           MakeBooleanAccessor(&RdmaHw::m_guardElephantCapSpillover),
                           MakeBooleanChecker())
+            .AddAttribute("GuardCapTriggeredRefresh",
+                          "Refresh the frozen K=1 receiver vector when a fresh fabric-cap "
+                          "report changes eligibility or materially changes its cap",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(&RdmaHw::m_guardCapTriggeredRefresh),
+                          MakeBooleanChecker())
+            .AddAttribute("GuardCapRefreshMaterialPercent",
+                          "Minimum relative fabric-cap change that requests a "
+                          "serialized vector refresh",
+                          UintegerValue(5),
+                          MakeUintegerAccessor(
+                              &RdmaHw::m_guardCapRefreshMaterialPercent),
+                          MakeUintegerChecker<uint32_t>(1, 20))
             .AddAttribute("GuardElephantSpilloverEnterReports",
                           "Consecutive fabric-bound reports required to enter spillover",
                           UintegerValue(3),
@@ -493,6 +545,15 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardRateGrantsSent = 0;
     m_guardRateGrantBytesSent = 0;
     m_guardRateGrantsReceived = 0;
+    m_guardInitialWindowPriorityFlows = 0;
+    m_guardInitialWindowPriorityPackets = 0;
+    m_guardInitialWindowPriorityBytes = 0;
+    m_guardInitialWindowPriorityTransitions = 0;
+    m_guardTransportWindowRaisedFlows = 0;
+    m_guardTransportWindowExtraBytes = 0;
+    m_guardTransportWindowMaxBytes = 0;
+    m_guardTransportWindowWholeFlowFirstGateFlows = 0;
+    m_guardTransportWindowAckSlackLimitedFlows = 0;
     m_guardHpccFeedbackUpdates = 0;
     m_guardHpccValidFeedback = 0;
     m_guardHpccRateUpdatesApplied = 0;
@@ -524,6 +585,7 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardCapGrantUpdates = 0;
     m_guardCapMaxReclaimedBps = 0;
     m_guardElephantSpilloverRefreshRequests = 0;
+    m_guardCapTriggeredRefreshRequests = 0;
     m_guardElephantSpilloverVectors = 0;
     m_guardElephantSpilloverMaxBps = 0;
     m_guardElephantSpilloverAllocatorChecks = 0;
@@ -676,6 +738,8 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardConcurrencyMaxDeferredFlows = 0;
     m_guardAdaptiveConcurrencyPromotions = 0;
     m_guardAdaptiveConcurrencyMaxEffective = 0;
+    m_guardSizeClassConcurrencyPromotions = 0;
+    m_guardSizeClassConcurrencyMaxEffective = 0;
     m_guardElephantAgingRotations = 0;
     m_guardElephantAgingMaxWaitNs = 0;
     m_guardOneRttBypassFlows = 0;
@@ -970,6 +1034,52 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
     // add qp
     uint32_t nic_idx = GetNicIdxOfQp(qp);
 
+    if (m_cc_mode == CC_MODE_GUARD && !m_guardTransportWindowFloorRtt.IsZero()) {
+        NS_ABORT_MSG_IF(!m_guardFixedWindow ||
+                            m_guardTransportWindowFloorRtt.IsNegative(),
+                        "GUARD transport-window floor requires a fixed, nonnegative RTT");
+        uint64_t floor_ns = m_guardTransportWindowFloorRtt.GetNanoSeconds();
+        uint64_t line_bps = m_nic[nic_idx].dev->GetDataRate().GetBitRate();
+        __uint128_t product = static_cast<__uint128_t>(floor_ns) * line_bps;
+        __uint128_t floor_bytes =
+            (product + 8000000000ULL - 1) / 8000000000ULL;
+        NS_ABORT_MSG_IF(floor_bytes == 0 ||
+                            floor_bytes > std::numeric_limits<uint32_t>::max(),
+                        "GUARD transport-window floor overflows byte accounting");
+        uint64_t requested_window = static_cast<uint64_t>(floor_bytes);
+        if (m_guardTransportWindowAckSlackPackets > 0) {
+            __uint128_t slack_limit = static_cast<__uint128_t>(qp->m_win) +
+                static_cast<__uint128_t>(m_guardTransportWindowAckSlackPackets) * m_mtu;
+            NS_ABORT_MSG_IF(slack_limit > std::numeric_limits<uint32_t>::max(),
+                            "GUARD ACK-slack transport window overflows byte accounting");
+            uint64_t limited_window = std::min<uint64_t>(
+                requested_window, static_cast<uint64_t>(slack_limit));
+            if (limited_window < requested_window && limited_window > qp->m_win) {
+                m_guardTransportWindowAckSlackLimitedFlows++;
+            }
+            requested_window = limited_window;
+        }
+        qp->m_guard_transport_win = std::max<uint64_t>(qp->m_win, requested_window);
+        m_guardTransportWindowMaxBytes = std::max<uint64_t>(
+            m_guardTransportWindowMaxBytes, qp->m_guard_transport_win);
+        if (qp->m_guard_transport_win > qp->m_win) {
+            m_guardTransportWindowRaisedFlows++;
+            m_guardTransportWindowExtraBytes +=
+                qp->m_guard_transport_win - qp->m_win;
+        }
+    }
+    if (m_cc_mode == CC_MODE_GUARD) {
+        bool bounded_whole_flow =
+            m_guardTransportWindowWholeFlowFirstGate &&
+            size <= qp->GetGuardTransportWin();
+        qp->m_guard_first_grant_win =
+            (!m_guardTransportWindowFloorAfterFirstGrant || bounded_whole_flow) ?
+                qp->GetGuardTransportWin() : qp->m_win;
+        if (bounded_whole_flow && qp->GetGuardTransportWin() > qp->m_win) {
+            m_guardTransportWindowWholeFlowFirstGateFlows++;
+        }
+    }
+
     if (m_cc_mode == CC_MODE_GUARD && m_guardOneRttBypass) {
         DataRate line_rate = m_nic[nic_idx].dev->GetDataRate();
         uint64_t bdp_bytes = baseRtt * line_rate.GetBitRate() / 8000000000lu;
@@ -994,6 +1104,14 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
         else if (size < 8 * bdp_bytes)      qp_pg = 6;
         else                                qp_pg = 7;
         qp->m_pg = qp_pg;
+    }
+
+    if (m_cc_mode == CC_MODE_GUARD && m_guardInitialWindowPriority) {
+        NS_ABORT_MSG_IF(!m_guardSizePriority,
+                        "GUARD initial-window priority requires size priority");
+        if (size > qp->GetGuardFirstGrantWin() && qp->m_pg > 3) {
+            m_guardInitialWindowPriorityFlows++;
+        }
     }
 
     if ((m_cc_mode == 11 || m_cc_mode == 13) &&
@@ -1758,7 +1876,7 @@ int RdmaHw::ReceiveGuardCapReport(Ptr<Packet> /*p*/, CustomHeader &ch) {
     bool fabric_bound =
         ((ch.ack.flags >> qbbHeader::FLAG_GUARD_FABRIC_BOUND) & 1) != 0;
     Time now = Simulator::Now();
-    if (m_guardElephantCapSpillover) {
+    if (m_guardElephantCapSpillover || m_guardCapTriggeredRefresh) {
         Time spillover_freshness = NanoSeconds(1);
         if (rx_qp->m_base_rtt_sec > 0) {
             spillover_freshness = Seconds(4.0 * rx_qp->m_base_rtt_sec);
@@ -1829,8 +1947,13 @@ int RdmaHw::ReceiveGuardCapReport(Ptr<Packet> /*p*/, CustomHeader &ch) {
         uint64_t new_cap_bps = rx_qp->m_guard_spillover_reported_cap_bps;
         uint64_t cap_delta = old_cap_bps > new_cap_bps
             ? old_cap_bps - new_cap_bps : new_cap_bps - old_cap_bps;
+        __uint128_t scaled_delta =
+            static_cast<__uint128_t>(old_cap_bps) *
+            m_guardCapRefreshMaterialPercent;
+        uint64_t relative_delta = static_cast<uint64_t>(
+            (scaled_delta + 99U) / 100U);
         uint64_t material_delta = std::max<uint64_t>(
-            100000000ULL, old_cap_bps / 20ULL);
+            100000000ULL, relative_delta);
         if (was_eligible != is_eligible ||
             (is_eligible && cap_delta >= material_delta)) {
             RequestGuardCapacityRefresh();
@@ -2311,7 +2434,23 @@ Ptr<Packet> RdmaHw::GetNxtPacket(Ptr<RdmaQueuePair> qp) {
     ipHeader.SetProtocol(0x11);
     ipHeader.SetPayloadSize(p->GetSize());
     ipHeader.SetTtl(64);
-    ipHeader.SetTos(0);
+    uint8_t ip_tos = 0;
+    if (m_cc_mode == CC_MODE_GUARD && m_guardInitialWindowPriority) {
+        uint8_t scheduling_pg = qp->m_pg;
+        if (!qp->m_guard_initial_priority_closed &&
+            seq < qp->GetGuardFirstGrantWin()) {
+            scheduling_pg = std::min<uint8_t>(scheduling_pg, 3);
+            if (scheduling_pg < qp->m_pg) {
+                m_guardInitialWindowPriorityPackets++;
+                m_guardInitialWindowPriorityBytes += payload_size;
+            }
+        } else if (!qp->m_guard_initial_priority_closed) {
+            qp->m_guard_initial_priority_closed = true;
+            if (qp->m_pg > 3) m_guardInitialWindowPriorityTransitions++;
+        }
+        ip_tos = CustomHeader::EncodeGuardScheduleClass(scheduling_pg);
+    }
+    ipHeader.SetTos(ip_tos);
     ipHeader.SetIdentification(qp->m_ipid);
     p->AddHeader(ipHeader);
     // add ppp header
@@ -2346,7 +2485,7 @@ Ptr<Packet> RdmaHw::GetNxtPacket(Ptr<RdmaQueuePair> qp) {
                 fst.SetBaseRttSeconds(double(qp->m_baseRtt) / 1e9);
             }
             if (m_guardTransitionPrefixBarrierEnabled) {
-                fst.SetFirstGrantGateBytes(qp->m_win);
+                fst.SetFirstGrantGateBytes(qp->GetGuardFirstGrantWin());
             }
             p->AddPacketTag(fst);
         }
@@ -2625,7 +2764,8 @@ void RdmaHw::SyncHwRate(Ptr<RdmaQueuePair> qp, DataRate target_cc_rate) {
 }
 
 void RdmaHw::MaybeSendGuardCapReport(Ptr<RdmaQueuePair> qp) {
-    if ((!m_guardCapAwareReclaim && !m_guardElephantCapSpillover) ||
+    if ((!m_guardCapAwareReclaim && !m_guardElephantCapSpillover &&
+         !m_guardCapTriggeredRefresh) ||
         m_cc_mode != CC_MODE_GUARD || qp == NULL ||
         qp->IsFinishedConst()) {
         return;
@@ -2992,11 +3132,14 @@ bool RdmaHw::HandleRccRemove(Ptr<RdmaRxQueuePair> rx_qp,
     if (m_guardApplyingPendingDrains) return true;
 
     if (m_rate_flow_ctl_set.empty() && m_guardSerializedDraining &&
-        !m_guardDrainingRecords.empty() &&
         m_guardFastpathPhase != GUARD_FASTPATH_IDLE) {
         NS_ABORT_MSG_IF(
             m_guardPendingGrantAcks != 0,
-            "GUARD V14 ACTIVE-empty drain cannot close pending ACKs");
+            "GUARD V14 ACTIVE-empty transaction cannot close pending ACKs");
+        NS_ABORT_MSG_IF(
+            m_guardFastpathPhase != GUARD_FASTPATH_PREPARE &&
+                m_guardFastpathPhase != GUARD_FASTPATH_ACTIVATE,
+            "GUARD V14 ACTIVE-empty transaction has no closable generation");
         bool previous_defer = m_guardTerminalResetDeferred;
         m_guardTerminalResetDeferred = true;
         FinishGuardFastpathGeneration();
@@ -3004,7 +3147,7 @@ bool RdmaHw::HandleRccRemove(Ptr<RdmaRxQueuePair> rx_qp,
         NS_ABORT_MSG_IF(
             m_guardFastpathPhase != GUARD_FASTPATH_IDLE ||
                 m_guardFrozenVectorActive,
-            "GUARD V14 ACTIVE-empty drain failed to close its transaction");
+            "GUARD V14 ACTIVE-empty flow set failed to close its transaction");
     }
 
     // No grant needs to be sent after the last controlled flow leaves.  In
@@ -3344,7 +3487,8 @@ void RdmaHw::RequestGuardProgressRefresh(RdmaRxQueuePair *flow,
 }
 
 void RdmaHw::RequestGuardCapacityRefresh() {
-    NS_ABORT_MSG_IF(!m_guardElephantCapSpillover ||
+    NS_ABORT_MSG_IF((!m_guardElephantCapSpillover &&
+                     !m_guardCapTriggeredRefresh) ||
                         !m_guardSerializedProgressRefresh ||
                         !m_guardMixedPgVectorFastpath,
                     "GUARD elephant spillover escaped its vector coordinator");
@@ -3354,7 +3498,11 @@ void RdmaHw::RequestGuardCapacityRefresh() {
         "GUARD elephant spillover progress revision exhausted");
     m_guardProgressRevision++;
     m_guardCapacityDirty = true;
-    m_guardElephantSpilloverRefreshRequests++;
+    if (m_guardCapTriggeredRefresh) {
+        m_guardCapTriggeredRefreshRequests++;
+    } else {
+        m_guardElephantSpilloverRefreshRequests++;
+    }
     bool busy = m_guardProgressTransactionActive ||
                 m_guardFastpathPhase != GUARD_FASTPATH_IDLE ||
                 m_guardPendingGrantAcks != 0 || m_guardFrozenVectorActive ||
@@ -4069,6 +4217,19 @@ uint32_t RdmaHw::ComputeGuardEffectiveElephantConcurrency(
     return effective;
 }
 
+uint32_t RdmaHw::ComputeGuardSizeClassElephantConcurrency(
+    uint32_t configured_max, size_t candidate_count,
+    uint64_t shortest_remaining, uint64_t second_remaining, bool enabled) {
+    if (!enabled) return configured_max;
+    if (configured_max < 2 || candidate_count < 2 || shortest_remaining == 0 ||
+        second_remaining < shortest_remaining) {
+        return 1;
+    }
+    // Dyadic size classes preserve K=1 SRPT when the next elephant is much
+    // larger.  Subtraction avoids overflowing 2 * shortest_remaining.
+    return second_remaining - shortest_remaining <= shortest_remaining ? 2 : 1;
+}
+
 bool RdmaHw::ComputeGuardFrozenRequestedTargets(
     uint64_t receiver_capacity_bps, uint64_t allocatable_bps,
     std::vector<GuardVectorTargetInput> *inputs) {
@@ -4130,9 +4291,29 @@ bool RdmaHw::ComputeGuardFrozenRequestedTargets(
             }
         }
     }
+    std::sort(elephants.begin(), elephants.end(),
+              [inputs](size_t left_index, size_t right_index) {
+                  const GuardVectorTargetInput &left = (*inputs)[left_index];
+                  const GuardVectorTargetInput &right = (*inputs)[right_index];
+                  if (left.remainingBytes != right.remainingBytes) {
+                      return left.remainingBytes < right.remainingBytes;
+                  }
+                  const GuardQpIdentity &a = left.identity;
+                  const GuardQpIdentity &b = right.identity;
+                  return std::tie(a.sip, a.dip, a.sport, a.dport, a.pg) <
+                         std::tie(b.sip, b.dip, b.sport, b.dport, b.pg);
+              });
     uint32_t effective_concurrency = ComputeGuardEffectiveElephantConcurrency(
         m_guardReceiverConcurrency, elephants.size(),
         m_guardAdaptiveElephantConcurrency);
+    if (m_guardSizeClassElephantConcurrency) {
+        uint64_t first = elephants.size() > 0
+            ? (*inputs)[elephants[0]].remainingBytes : 0;
+        uint64_t second = elephants.size() > 1
+            ? (*inputs)[elephants[1]].remainingBytes : 0;
+        effective_concurrency = ComputeGuardSizeClassElephantConcurrency(
+            m_guardReceiverConcurrency, elephants.size(), first, second, true);
+    }
     std::vector<bool> is_elephant(inputs->size(), false);
     for (size_t index : elephants) is_elephant[index] = true;
     for (size_t index = 0; index < inputs->size(); ++index) {
@@ -4146,19 +4327,12 @@ bool RdmaHw::ComputeGuardFrozenRequestedTargets(
         m_guardAdaptiveConcurrencyMaxEffective = std::max<uint64_t>(
             m_guardAdaptiveConcurrencyMaxEffective, effective_concurrency);
     }
+    if (m_guardSizeClassElephantConcurrency && effective_concurrency > 1) {
+        m_guardSizeClassConcurrencyPromotions++;
+        m_guardSizeClassConcurrencyMaxEffective = std::max<uint64_t>(
+            m_guardSizeClassConcurrencyMaxEffective, effective_concurrency);
+    }
     if (elephants.size() > effective_concurrency && effective_concurrency > 0) {
-        std::sort(elephants.begin(), elephants.end(),
-                  [inputs](size_t left_index, size_t right_index) {
-                      const GuardVectorTargetInput &left = (*inputs)[left_index];
-                      const GuardVectorTargetInput &right = (*inputs)[right_index];
-                      if (left.remainingBytes != right.remainingBytes) {
-                          return left.remainingBytes < right.remainingBytes;
-                      }
-                      const GuardQpIdentity &a = left.identity;
-                      const GuardQpIdentity &b = right.identity;
-                      return std::tie(a.sip, a.dip, a.sport, a.dport, a.pg) <
-                             std::tie(b.sip, b.dip, b.sport, b.dport, b.pg);
-                  });
         if (m_guardElephantAgingRtts > 0.0 && effective_concurrency == 1) {
             int64_t now_ns = Simulator::Now().GetNanoSeconds();
             if (now_ns < 0) return false;
@@ -6207,23 +6381,39 @@ void RdmaHw::RedistributeGuardRates(const char *set_change, uint32_t generation)
         m_guardCapAwareReclaim
             ? ComputeGuardCapAwareTargets(line_rate_bps)
             : ComputeGuardBaseTargets(line_rate_bps);
-    size_t concurrency_candidates = 0;
+    std::vector<uint64_t> concurrency_remaining;
     if (m_guardReceiverConcurrency > 0) {
         for (auto *flow : m_rate_flow_ctl_set) {
             uint64_t bdp_bytes = flow->m_base_rtt_sec > 0
                                      ? (uint64_t)(flow->m_base_rtt_sec * line_rate_bps / 8.0)
                                      : 104000;
-            if (flow->m_guard_flow_size > m_guardConcurrencyMinBdps * bdp_bytes)
-                concurrency_candidates++;
+            if (flow->m_guard_flow_size > m_guardConcurrencyMinBdps * bdp_bytes) {
+                concurrency_remaining.push_back(
+                    flow->m_guard_flow_size > flow->ReceiverNextExpectedSeq
+                        ? flow->m_guard_flow_size - flow->ReceiverNextExpectedSeq : 1);
+            }
         }
     }
+    std::sort(concurrency_remaining.begin(), concurrency_remaining.end());
+    size_t concurrency_candidates = concurrency_remaining.size();
     uint32_t effective_concurrency = ComputeGuardEffectiveElephantConcurrency(
         m_guardReceiverConcurrency, concurrency_candidates,
         m_guardAdaptiveElephantConcurrency);
+    if (m_guardSizeClassElephantConcurrency) {
+        effective_concurrency = ComputeGuardSizeClassElephantConcurrency(
+            m_guardReceiverConcurrency, concurrency_candidates,
+            concurrency_candidates > 0 ? concurrency_remaining[0] : 0,
+            concurrency_candidates > 1 ? concurrency_remaining[1] : 0, true);
+    }
     if (m_guardAdaptiveElephantConcurrency && effective_concurrency > 1) {
         m_guardAdaptiveConcurrencyPromotions++;
         m_guardAdaptiveConcurrencyMaxEffective = std::max<uint64_t>(
             m_guardAdaptiveConcurrencyMaxEffective, effective_concurrency);
+    }
+    if (m_guardSizeClassElephantConcurrency && effective_concurrency > 1) {
+        m_guardSizeClassConcurrencyPromotions++;
+        m_guardSizeClassConcurrencyMaxEffective = std::max<uint64_t>(
+            m_guardSizeClassConcurrencyMaxEffective, effective_concurrency);
     }
     if (concurrency_candidates > effective_concurrency) {
         m_guardConcurrencyLimitedAllocations++;
@@ -6301,27 +6491,44 @@ std::unordered_map<RdmaRxQueuePair*, uint64_t> RdmaHw::ComputeGuardBaseTargets(
                 concurrency_candidates.push_back(flow);
         }
     }
-    size_t service_count = std::min<size_t>(
-        concurrency_candidates.size(), ComputeGuardEffectiveElephantConcurrency(
-            m_guardReceiverConcurrency, concurrency_candidates.size(),
-            m_guardAdaptiveElephantConcurrency));
+    std::sort(concurrency_candidates.begin(), concurrency_candidates.end(),
+              [](RdmaRxQueuePair *left, RdmaRxQueuePair *right) {
+                  uint64_t left_remaining =
+                      left->m_guard_flow_size > left->ReceiverNextExpectedSeq
+                          ? left->m_guard_flow_size - left->ReceiverNextExpectedSeq : 0;
+                  uint64_t right_remaining =
+                      right->m_guard_flow_size > right->ReceiverNextExpectedSeq
+                          ? right->m_guard_flow_size - right->ReceiverNextExpectedSeq : 0;
+                  if (left_remaining != right_remaining)
+                      return left_remaining < right_remaining;
+                  return left->m_flow_id < right->m_flow_id;
+              });
+    uint32_t effective_concurrency = ComputeGuardEffectiveElephantConcurrency(
+        m_guardReceiverConcurrency, concurrency_candidates.size(),
+        m_guardAdaptiveElephantConcurrency);
+    if (m_guardSizeClassElephantConcurrency) {
+        uint64_t first = concurrency_candidates.size() > 0
+            ? std::max<uint64_t>(1,
+                  concurrency_candidates[0]->m_guard_flow_size >
+                          concurrency_candidates[0]->ReceiverNextExpectedSeq
+                      ? concurrency_candidates[0]->m_guard_flow_size -
+                            concurrency_candidates[0]->ReceiverNextExpectedSeq
+                      : 1) : 0;
+        uint64_t second = concurrency_candidates.size() > 1
+            ? std::max<uint64_t>(1,
+                  concurrency_candidates[1]->m_guard_flow_size >
+                          concurrency_candidates[1]->ReceiverNextExpectedSeq
+                      ? concurrency_candidates[1]->m_guard_flow_size -
+                            concurrency_candidates[1]->ReceiverNextExpectedSeq
+                      : 1) : 0;
+        effective_concurrency = ComputeGuardSizeClassElephantConcurrency(
+            m_guardReceiverConcurrency, concurrency_candidates.size(), first, second, true);
+    }
+    size_t service_count = std::min<size_t>(concurrency_candidates.size(),
+                                             effective_concurrency);
     std::unordered_set<RdmaRxQueuePair*> service_set;
     if (m_guardReceiverConcurrency > 0 &&
         service_count < concurrency_candidates.size()) {
-        std::sort(concurrency_candidates.begin(), concurrency_candidates.end(),
-                  [](RdmaRxQueuePair *left, RdmaRxQueuePair *right) {
-                      uint64_t left_remaining =
-                          left->m_guard_flow_size > left->ReceiverNextExpectedSeq
-                              ? left->m_guard_flow_size - left->ReceiverNextExpectedSeq
-                              : 0;
-                      uint64_t right_remaining =
-                          right->m_guard_flow_size > right->ReceiverNextExpectedSeq
-                              ? right->m_guard_flow_size - right->ReceiverNextExpectedSeq
-                              : 0;
-                      if (left_remaining != right_remaining)
-                          return left_remaining < right_remaining;
-                      return left->m_flow_id < right->m_flow_id;
-                  });
         for (auto *flow : m_rate_flow_ctl_set) {
             if (std::find(concurrency_candidates.begin(), concurrency_candidates.end(), flow) ==
                 concurrency_candidates.end()) {
