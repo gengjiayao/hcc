@@ -98,6 +98,8 @@ uint32_t CustomHeader::GetSerializedSize (void) const{
 			len += GetAckSerializedSize();
 		else if (l3Prot == GUARD_RATE_GRANT)
 			len += GetGuardGrantSerializedSize();
+		else if (l3Prot == GUARD_RATE_GRANT_ACK)
+			len += GetGuardGrantAckSerializedSize();
 		else if (l3Prot == 0xFA)
 			len += GetAckSerializedSize() + sizeof(udp.homa_type)
 			     + sizeof(udp.homa_message_id) + sizeof(udp.homa_msg_total_length)
@@ -208,6 +210,13 @@ void CustomHeader::Serialize (Buffer::Iterator start) const{
 		  i.WriteU16(grant.dport);
 		  i.WriteU16(grant.pg);
 		  i.WriteU32(grant.rateMbps);
+		  i.WriteU32(grant.generation);
+		  i.WriteU8(grant.ackRequired);
+	  }else if (l3Prot == GUARD_RATE_GRANT_ACK){
+		  i.WriteU16(grant.sport);
+		  i.WriteU16(grant.dport);
+		  i.WriteU16(grant.pg);
+		  i.WriteU32(grant.generation);
 	  }else if (l3Prot == 0xFC || l3Prot == 0xFD || l3Prot == 0xFB){ // ACK or NACK
 		  i.WriteU16(ack.sport);
 		  i.WriteU16(ack.dport);
@@ -412,7 +421,15 @@ CustomHeader::Deserialize (Buffer::Iterator start)
 		  grant.dport = i.ReadU16();
 		  grant.pg = i.ReadU16();
 		  grant.rateMbps = i.ReadU32();
+		  grant.generation = i.ReadU32();
+		  grant.ackRequired = i.ReadU8();
 		  l4Size = GetGuardGrantSerializedSize();
+	  }else if (l3Prot == GUARD_RATE_GRANT_ACK){
+		  grant.sport = i.ReadU16();
+		  grant.dport = i.ReadU16();
+		  grant.pg = i.ReadU16();
+		  grant.generation = i.ReadU32();
+		  l4Size = GetGuardGrantAckSerializedSize();
 	  }else if (l3Prot == 0xFC || l3Prot == 0xFD || l3Prot == 0xFB){ // ACK or NACK
 		  ack.sport = i.ReadU16();
 		  ack.dport = i.ReadU16();
@@ -474,7 +491,13 @@ uint32_t CustomHeader::GetAckSerializedSize(void){
 }
 
 uint32_t CustomHeader::GetGuardGrantSerializedSize(void){
-	return sizeof(grant.sport) + sizeof(grant.dport) + sizeof(grant.pg) + sizeof(grant.rateMbps);
+	return sizeof(grant.sport) + sizeof(grant.dport) + sizeof(grant.pg) + sizeof(grant.rateMbps)
+	     + sizeof(grant.generation) + sizeof(grant.ackRequired);
+}
+
+uint32_t CustomHeader::GetGuardGrantAckSerializedSize(void){
+	return sizeof(grant.sport) + sizeof(grant.dport) + sizeof(grant.pg)
+	     + sizeof(grant.generation);
 }
 
 uint32_t CustomHeader::GetUdpHeaderSize(void){

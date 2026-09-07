@@ -113,6 +113,13 @@ GUARD_REMAINING_EXPONENT {guard_remaining_exponent}
 GUARD_RECEIVER_CONCURRENCY {guard_receiver_concurrency}
 GUARD_CONCURRENCY_MIN_BDPS {guard_concurrency_min_bdps}
 GUARD_GRANT_REFRESH_BDPS {guard_grant_refresh_bdps}
+GUARD_MEMBERSHIP_COALESCE_NS {guard_membership_coalesce_ns}
+GUARD_MEMBERSHIP_COALESCE_MAX_WINDOWS {guard_membership_coalesce_max_windows}
+GUARD_INITIAL_COLLECTION_QUIET_NS {guard_initial_collection_quiet_ns}
+GUARD_INITIAL_COLLECTION_FULL_DEADLINE {guard_initial_collection_full_deadline}
+GUARD_SMALL_SET_FASTPATH_LIMIT {guard_small_set_fastpath_limit}
+GUARD_TRANSITION_PREFIX_BARRIER {guard_transition_prefix_barrier}
+{guard_transition_prefix_wire_watchdog_config}GUARD_GRANT_RELIABILITY_RTTS {guard_grant_reliability_rtts}
 GUARD_SRPT_QUANTUM_PACKETS {guard_srpt_quantum_packets}
 GUARD_WORK_CONSERVING {guard_work_conserving}
 GUARD_CAP_AWARE_RECLAIM {guard_cap_aware_reclaim}
@@ -435,6 +442,25 @@ def main():
                         help="apply receiver concurrency bound only above this many BDPs (default: 8)")
     parser.add_argument('--guard_grant_refresh_bdps', type=float, default=1.0,
                         help="receiver progress between grant refreshes in BDPs; 0 disables (default: 1)")
+    parser.add_argument('--guard_membership_coalesce_ns', type=int, default=0,
+                        help="bounded registered-set quiet period in ns [0,65536] (default: 0)")
+    parser.add_argument('--guard_initial_collection_quiet_ns', type=int, default=0,
+                        help="initial collection quiet period; 0 inherits membership quiet [0, 65536]")
+    parser.add_argument('--guard_membership_coalesce_max_windows', type=int, default=5,
+                        help="hard batch deadline in coalescing-window multiples [1,16] (default: 5)")
+    parser.add_argument('--guard_initial_collection_full_deadline', type=int,
+                        choices=(0, 1), default=1,
+                        help="wait to the full initial deadline; 0 uses bounded sliding quiet (default: 1)")
+    parser.add_argument('--guard_small_set_fastpath_limit', type=int, default=0,
+                        help="V11 serialized small-set limit; 0 disables, 4 enables (default: 0)")
+    parser.add_argument('--guard_transition_prefix_barrier', type=int,
+                        choices=(0, 1), default=0,
+                        help="V12 exact-prefix transition barrier (default: 0)")
+    parser.add_argument('--guard_transition_prefix_wire_watchdog', type=int,
+                        choices=(0, 1), default=0,
+                        help="V13 wire/residual-capacity prefix watchdog (default: 0)")
+    parser.add_argument('--guard_grant_reliability_rtts', type=float, default=0.0,
+                        help="cached grant refresh in equal-share service rounds [0,64] (default: 0)")
     parser.add_argument('--guard_srpt_quantum_packets', type=int, default=64,
                         help="consecutive SRPT packet bound before RR service (default: 64)")
     parser.add_argument('--guard_work_conserving', type=int, choices=(0, 1), default=0,
@@ -557,6 +583,43 @@ def main():
         raise Exception("CONFIG ERROR: --guard_concurrency_min_bdps must be in [0, 64].")
     if not 0.0 <= args.guard_grant_refresh_bdps <= 16.0:
         raise Exception("CONFIG ERROR: --guard_grant_refresh_bdps must be in [0, 16].")
+    if not 0 <= args.guard_membership_coalesce_ns <= 65536:
+        raise Exception("CONFIG ERROR: --guard_membership_coalesce_ns must be in [0, 65536].")
+    if not 0 <= args.guard_initial_collection_quiet_ns <= 65536:
+        raise Exception("CONFIG ERROR: --guard_initial_collection_quiet_ns must be in [0, 65536].")
+    if not 1 <= args.guard_membership_coalesce_max_windows <= 16:
+        raise Exception("CONFIG ERROR: --guard_membership_coalesce_max_windows must be in [1, 16].")
+    if args.guard_small_set_fastpath_limit not in (0, 4):
+        raise Exception("CONFIG ERROR: --guard_small_set_fastpath_limit must be 0 or 4.")
+    if not 0.0 <= args.guard_grant_reliability_rtts <= 64.0:
+        raise Exception("CONFIG ERROR: --guard_grant_reliability_rtts must be in [0, 64].")
+    if args.guard_membership_coalesce_ns > 0:
+        if args.guard_fixed_window != 1:
+            raise Exception("CONFIG ERROR: membership coalescing requires --guard_fixed_window 1.")
+        if args.guard_grant_reliability_rtts < 1.0:
+            raise Exception("CONFIG ERROR: membership coalescing requires grant refresh >= 1 RTT.")
+    if args.guard_small_set_fastpath_limit:
+        if (args.guard_membership_coalesce_ns != 12480 or
+                args.guard_initial_collection_quiet_ns != 16640 or
+                args.guard_membership_coalesce_max_windows != 5 or
+                args.guard_initial_collection_full_deadline != 0):
+            raise Exception(
+                "CONFIG ERROR: V11 small-set fast path requires membership quiet 12480 ns, "
+                "initial quiet 16640 ns, five windows, and sliding initial mode.")
+        if args.guard_remaining_aware != 0 or args.guard_receiver_concurrency != 0:
+            raise Exception(
+                "CONFIG ERROR: V11 small-set fast path requires equal-share receiver grants.")
+    if args.guard_transition_prefix_barrier and (
+            args.guard_small_set_fastpath_limit != 4 or
+            args.guard_fixed_window != 1):
+        raise Exception(
+            "CONFIG ERROR: V12 transition prefix barrier requires the V11 safe "
+            "activation with limit 4 and --guard_fixed_window 1.")
+    if (args.guard_transition_prefix_wire_watchdog and
+            not args.guard_transition_prefix_barrier):
+        raise Exception(
+            "CONFIG ERROR: V13 prefix wire watchdog requires "
+            "--guard_transition_prefix_barrier 1.")
     if not 0.0 < args.guard_demand_threshold < 1.0:
         raise Exception("CONFIG ERROR: --guard_demand_threshold must be in (0, 1).")
     if not 0.0 < args.guard_receiver_util_threshold < 1.0:
@@ -831,7 +894,7 @@ def main():
 
     # 1 BDP calculation
     if topo2bdp.get(topo) == None:
-        print("ERROR - topology is not registered in run.py!!", flush=True)
+        print("ERROR - topology is not registered in run.py!!")
         return
     bdp = int(topo2bdp[topo])
     print("1BDP = {}".format(bdp))
@@ -937,6 +1000,16 @@ def main():
                                         guard_receiver_concurrency=args.guard_receiver_concurrency,
                                         guard_concurrency_min_bdps=args.guard_concurrency_min_bdps,
                                         guard_grant_refresh_bdps=args.guard_grant_refresh_bdps,
+                                        guard_membership_coalesce_ns=args.guard_membership_coalesce_ns,
+                                        guard_membership_coalesce_max_windows=args.guard_membership_coalesce_max_windows,
+                                        guard_initial_collection_quiet_ns=args.guard_initial_collection_quiet_ns,
+                                        guard_initial_collection_full_deadline=args.guard_initial_collection_full_deadline,
+                                        guard_small_set_fastpath_limit=args.guard_small_set_fastpath_limit,
+                                        guard_transition_prefix_barrier=args.guard_transition_prefix_barrier,
+                                        guard_transition_prefix_wire_watchdog_config=(
+                                            "GUARD_TRANSITION_PREFIX_WIRE_WATCHDOG 1\n"
+                                            if args.guard_transition_prefix_wire_watchdog else ""),
+                                        guard_grant_reliability_rtts=args.guard_grant_reliability_rtts,
                                         guard_srpt_quantum_packets=args.guard_srpt_quantum_packets,
                                         guard_work_conserving=args.guard_work_conserving,
                                         guard_cap_aware_reclaim=args.guard_cap_aware_reclaim,

@@ -68,6 +68,7 @@ public:
 	L4_Header = 4
   };
   enum CustomProtocol {
+    GUARD_RATE_GRANT_ACK = 0xF8,
     GUARD_RATE_GRANT = 0xF9
   };
 
@@ -153,6 +154,8 @@ public:
 		  uint16_t sport, dport;
 		  uint16_t pg;
 		  uint32_t rateMbps;
+		  uint32_t generation;
+		  uint8_t ackRequired;
 	  } grant;
 	  // PauseHeader
 	  struct {
@@ -165,6 +168,7 @@ public:
   uint8_t GetIpv4EcnBits (void) const;
   static uint32_t GetAckSerializedSize(void);
   static uint32_t GetGuardGrantSerializedSize(void);
+  static uint32_t GetGuardGrantAckSerializedSize(void);
   static uint32_t GetUdpHeaderSize(void); // include udp, seqTs, INT
   static uint32_t GetStaticWholeHeaderSize(void); // ppp + ip + udp + int
 };

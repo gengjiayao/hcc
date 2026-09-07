@@ -11,6 +11,7 @@ namespace ns3 {
 
 	NS_OBJECT_ENSURE_REGISTERED(qbbHeader);
 	NS_OBJECT_ENSURE_REGISTERED(GuardGrantHeader);
+	NS_OBJECT_ENSURE_REGISTERED(GuardGrantAckHeader);
 
 	qbbHeader::qbbHeader(uint16_t pg)
 		: m_pg(pg), sport(0), dport(0), flags(0), m_seq(0)
@@ -163,7 +164,8 @@ namespace ns3 {
 	}
 
 	GuardGrantHeader::GuardGrantHeader()
-		: m_sport(0), m_dport(0), m_pg(0), m_rateMbps(0)
+		: m_sport(0), m_dport(0), m_pg(0), m_rateMbps(0), m_generation(0),
+		  m_ackRequired(0)
 	{}
 
 	GuardGrantHeader::~GuardGrantHeader()
@@ -173,11 +175,24 @@ namespace ns3 {
 	void GuardGrantHeader::SetDport(uint16_t dport) { m_dport = dport; }
 	void GuardGrantHeader::SetPG(uint16_t pg) { m_pg = pg; }
 	void GuardGrantHeader::SetRateMbps(uint32_t rateMbps) { m_rateMbps = rateMbps; }
+	void GuardGrantHeader::SetGeneration(uint32_t generation) { m_generation = generation; }
+	void GuardGrantHeader::SetAckRequired(bool ackRequired)
+	{
+		m_ackRequired = (m_ackRequired & 0xfe) | (ackRequired ? 1 : 0);
+	}
+	void GuardGrantHeader::SetPhaseTag(uint8_t phaseTag)
+	{
+		NS_ASSERT_MSG(phaseTag <= 7, "GUARD grant phase tag exceeds three bits");
+		m_ackRequired = (m_ackRequired & 0x01) | (phaseTag << 1);
+	}
 
 	uint16_t GuardGrantHeader::GetSport() const { return m_sport; }
 	uint16_t GuardGrantHeader::GetDport() const { return m_dport; }
 	uint16_t GuardGrantHeader::GetPG() const { return m_pg; }
 	uint32_t GuardGrantHeader::GetRateMbps() const { return m_rateMbps; }
+	uint32_t GuardGrantHeader::GetGeneration() const { return m_generation; }
+	bool GuardGrantHeader::GetAckRequired() const { return (m_ackRequired & 0x01) != 0; }
+	uint8_t GuardGrantHeader::GetPhaseTag() const { return (m_ackRequired >> 1) & 0x07; }
 
 	TypeId GuardGrantHeader::GetTypeId(void)
 	{
@@ -194,12 +209,16 @@ namespace ns3 {
 
 	void GuardGrantHeader::Print(std::ostream &os) const
 	{
-		os << "guard-grant:pg=" << m_pg << ",rate=" << m_rateMbps << "Mbps";
+		os << "guard-grant:pg=" << m_pg << ",rate=" << m_rateMbps
+		   << "Mbps,generation=" << m_generation
+		   << ",ack_required=" << (GetAckRequired() ? 1 : 0)
+		   << ",phase_tag=" << static_cast<uint32_t>(GetPhaseTag());
 	}
 
 	uint32_t GuardGrantHeader::GetSerializedSize(void) const
 	{
-		return sizeof(m_sport) + sizeof(m_dport) + sizeof(m_pg) + sizeof(m_rateMbps);
+		return sizeof(m_sport) + sizeof(m_dport) + sizeof(m_pg) + sizeof(m_rateMbps)
+		       + sizeof(m_generation) + sizeof(m_ackRequired);
 	}
 
 	void GuardGrantHeader::Serialize(Buffer::Iterator start) const
@@ -209,6 +228,8 @@ namespace ns3 {
 		i.WriteU16(m_dport);
 		i.WriteU16(m_pg);
 		i.WriteU32(m_rateMbps);
+		i.WriteU32(m_generation);
+		i.WriteU8(m_ackRequired);
 	}
 
 	uint32_t GuardGrantHeader::Deserialize(Buffer::Iterator start)
@@ -218,6 +239,67 @@ namespace ns3 {
 		m_dport = i.ReadU16();
 		m_pg = i.ReadU16();
 		m_rateMbps = i.ReadU32();
+		m_generation = i.ReadU32();
+		m_ackRequired = i.ReadU8();
+		return GetSerializedSize();
+	}
+
+	GuardGrantAckHeader::GuardGrantAckHeader()
+		: m_sport(0), m_dport(0), m_pg(0), m_generation(0)
+	{}
+
+	GuardGrantAckHeader::~GuardGrantAckHeader()
+	{}
+
+	void GuardGrantAckHeader::SetSport(uint16_t sport) { m_sport = sport; }
+	void GuardGrantAckHeader::SetDport(uint16_t dport) { m_dport = dport; }
+	void GuardGrantAckHeader::SetPG(uint16_t pg) { m_pg = pg; }
+	void GuardGrantAckHeader::SetGeneration(uint32_t generation) { m_generation = generation; }
+
+	uint16_t GuardGrantAckHeader::GetSport() const { return m_sport; }
+	uint16_t GuardGrantAckHeader::GetDport() const { return m_dport; }
+	uint16_t GuardGrantAckHeader::GetPG() const { return m_pg; }
+	uint32_t GuardGrantAckHeader::GetGeneration() const { return m_generation; }
+
+	TypeId GuardGrantAckHeader::GetTypeId(void)
+	{
+		static TypeId tid = TypeId("ns3::GuardGrantAckHeader")
+			.SetParent<Header>()
+			.AddConstructor<GuardGrantAckHeader>();
+		return tid;
+	}
+
+	TypeId GuardGrantAckHeader::GetInstanceTypeId(void) const
+	{
+		return GetTypeId();
+	}
+
+	void GuardGrantAckHeader::Print(std::ostream &os) const
+	{
+		os << "guard-grant-ack:pg=" << m_pg << ",generation=" << m_generation;
+	}
+
+	uint32_t GuardGrantAckHeader::GetSerializedSize(void) const
+	{
+		return sizeof(m_sport) + sizeof(m_dport) + sizeof(m_pg) + sizeof(m_generation);
+	}
+
+	void GuardGrantAckHeader::Serialize(Buffer::Iterator start) const
+	{
+		Buffer::Iterator i = start;
+		i.WriteU16(m_sport);
+		i.WriteU16(m_dport);
+		i.WriteU16(m_pg);
+		i.WriteU32(m_generation);
+	}
+
+	uint32_t GuardGrantAckHeader::Deserialize(Buffer::Iterator start)
+	{
+		Buffer::Iterator i = start;
+		m_sport = i.ReadU16();
+		m_dport = i.ReadU16();
+		m_pg = i.ReadU16();
+		m_generation = i.ReadU32();
 		return GetSerializedSize();
 	}
 }; // namespace ns3

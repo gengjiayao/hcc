@@ -439,3 +439,21 @@ Run the unit tests with:
 ```bash
 python3 -m unittest discover -s experiments/tests -v
 ```
+
+The fail-closed V9 fixed-initial-collection replay, pilot, and formal workflow
+is documented in `membership_coalescing_v9.md`.
+
+The V10 topology-derived sliding-initial replay and fresh holdout are
+documented in `membership_coalescing_v10.md`.
+
+The V11 serialized prepare/activate replay, dual-N pilot, corrected low-N
+frame caps, and first-use absolute small-queue gate are documented in
+`membership_coalescing_v11.md`. The workflow is frozen but has not been run.
+
+The rejected V12 exact-prefix replay and its still-sealed performance stage
+are documented in `membership_coalescing_v12.md`.
+
+The V13 full-wire residual-service watchdog, independent raw-budget
+reconstruction, seed-137 pilot, and seed-138--142 formal workflow are frozen
+in `membership_coalescing_v13.md`. Run its 48 identities serially; do not open
+FCT or queue artifacts until replay, pilot, and all 40 formal mechanisms pass.

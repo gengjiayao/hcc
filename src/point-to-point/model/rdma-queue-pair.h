@@ -75,6 +75,11 @@ class RdmaQueuePair : public Object {
     bool m_guard_tail_bypass;  // Final BDP is paced only by the receiver cap
     uint32_t m_guard_tail_safe_samples;
     bool m_guard_tail_deferred;
+    bool m_guard_wait_first_grant;
+    uint32_t m_guard_last_grant_generation;
+    uint64_t m_guard_last_generation_rate_bps;
+    bool m_guard_last_generation_ack_required;
+    uint8_t m_guard_last_generation_phase_tag;
     uint32_t m_guard_srpt_quantum_packets;
     Time m_guard_last_cap_report_time;
     uint64_t m_guard_last_cap_report_rate_bps;
@@ -254,14 +259,20 @@ class RdmaRxQueuePair : public Object {  // Rx side queue pair
     bool m_proactive_released;
     uint64_t m_guard_interval_bytes;
     uint64_t m_guard_grant_rate_bps;
+    uint64_t m_guard_grant_upper_bound_bps;
     uint64_t m_guard_measured_rate_bps;
     uint32_t m_guard_demand_samples;
     uint32_t m_guard_below_threshold_samples;
     uint32_t m_guard_last_ack_seq;
     uint64_t m_guard_last_schedule_seq;
     uint64_t m_guard_flow_size;
+    int64_t m_guard_register_ns;
+    uint64_t m_guard_first_grant_gate_bytes;
+    bool m_guard_has_first_grant_gate_bytes;
     uint16_t m_guard_pg;
     bool m_guard_demand_limited;
+    uint32_t m_guard_grant_generation;
+    bool m_guard_grant_generation_acked;
     uint64_t m_guard_reported_rate_bps;
     uint32_t m_guard_cap_report_samples;
     uint32_t m_guard_fabric_bound_reports;

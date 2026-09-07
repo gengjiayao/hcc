@@ -44,6 +44,11 @@ RdmaQueuePair::RdmaQueuePair(uint16_t pg, Ipv4Address _sip, Ipv4Address _dip, ui
     m_guard_tail_bypass = false;
     m_guard_tail_safe_samples = 0;
     m_guard_tail_deferred = false;
+    m_guard_wait_first_grant = false;
+    m_guard_last_grant_generation = 0;
+    m_guard_last_generation_rate_bps = 0;
+    m_guard_last_generation_ack_required = false;
+    m_guard_last_generation_phase_tag = 0;
     m_guard_srpt_quantum_packets = 64;
     m_guard_last_cap_report_time = Time(0);
     m_guard_last_cap_report_rate_bps = 0;
@@ -141,6 +146,7 @@ uint64_t RdmaQueuePair::GetOnTheFly() {
 }
 
 bool RdmaQueuePair::IsWinBound() {
+    if (m_guard_wait_first_grant && m_win != 0 && snd_nxt >= m_win) return true;
     uint64_t w = GetWin();
     return w != 0 && GetOnTheFly() >= w;
 }
@@ -206,14 +212,20 @@ RdmaRxQueuePair::RdmaRxQueuePair() {
     m_proactive_released = false;
     m_guard_interval_bytes = 0;
     m_guard_grant_rate_bps = 0;
+    m_guard_grant_upper_bound_bps = 0;
     m_guard_measured_rate_bps = 0;
     m_guard_demand_samples = 0;
     m_guard_below_threshold_samples = 0;
     m_guard_last_ack_seq = 0;
     m_guard_last_schedule_seq = 0;
     m_guard_flow_size = 0;
+    m_guard_register_ns = -1;
+    m_guard_first_grant_gate_bytes = 0;
+    m_guard_has_first_grant_gate_bytes = false;
     m_guard_pg = 0;
     m_guard_demand_limited = false;
+    m_guard_grant_generation = 0;
+    m_guard_grant_generation_acked = false;
     m_guard_reported_rate_bps = 0;
     m_guard_cap_report_samples = 0;
     m_guard_fabric_bound_reports = 0;

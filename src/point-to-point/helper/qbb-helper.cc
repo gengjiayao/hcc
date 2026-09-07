@@ -314,6 +314,14 @@ void QbbHelper::GetTraceFromPacket(TraceFormat &tr, Ptr<QbbNetDevice> dev, Ptr<c
             tr.ack.seq = hdr.grant.rateMbps;
             tr.ack.ts = 0;
             break;
+        case CustomHeader::GUARD_RATE_GRANT_ACK:
+            tr.ack.sport = hdr.grant.sport;
+            tr.ack.dport = hdr.grant.dport;
+            tr.ack.flags = 0;
+            tr.ack.pg = hdr.grant.pg;
+            tr.ack.seq = hdr.grant.generation;
+            tr.ack.ts = 0;
+            break;
         case 0xFB:
         case 0xFC:
         case 0xFD:

@@ -59,6 +59,31 @@ struct GuardGrantTraceSink {
     GuardGrantTraceSink() : file(NULL), max_lines(0), attempted(0), written(0) {}
 };
 
+struct GuardTransitionPrefixWaiterBudgetInput {
+    uint64_t flowSizeBytes;
+    uint64_t exactGateBytes;
+    uint64_t baseRttNs;
+};
+
+struct GuardTransitionPrefixIncumbentBudgetInput {
+    uint64_t acknowledgedUpperBoundBps;
+    uint64_t baseRttNs;
+};
+
+struct GuardTransitionPrefixWireBudget {
+    uint64_t roundedPayloadBudgetBytes;
+    uint64_t packetCount;
+    uint64_t headerBytesPerPacket;
+    uint64_t wireBytes;
+    uint64_t incumbentCount;
+    uint64_t occupancyBps;
+    uint64_t receiverCapacityBps;
+    uint64_t residualBps;
+    uint64_t serializationNs;
+    uint64_t maxRttNs;
+    uint64_t delayNs;
+};
+
 class RdmaHw : public Object {
    public:
     static TypeId GetTypeId(void);
@@ -118,6 +143,7 @@ class RdmaHw : public Object {
     int ReceiveCnp(Ptr<Packet> p, CustomHeader &ch);
     int ReceiveAck(Ptr<Packet> p, CustomHeader &ch);  // handle both ACK and NACK
     int ReceiveRate(Ptr<Packet> p, CustomHeader &ch); // guard rate-grant packet
+    int ReceiveGuardGrantAck(Ptr<Packet> p, CustomHeader &ch);
     int ReceiveGuardCapReport(Ptr<Packet> p, CustomHeader &ch);
     int ReceiveHomaSimpleCredit(Ptr<Packet> p, CustomHeader &ch); // homa-simple credit packet
     int Receive(Ptr<Packet> p,
@@ -231,6 +257,11 @@ class RdmaHw : public Object {
     uint32_t m_guardReceiverConcurrency;
     double m_guardConcurrencyMinBdps;
     double m_guardGrantRefreshBdps;
+    Time m_guardMembershipCoalesceWindow;
+    Time m_guardInitialCollectionQuietWindow;
+    uint32_t m_guardMembershipCoalesceMaxWindows;
+    bool m_guardInitialCollectionFullDeadline;
+    double m_guardGrantReliabilityRtts;
     uint32_t m_guardSrptQuantumPackets;
     bool m_guardWorkConserving;
     bool m_guardCapAwareReclaim;
@@ -277,6 +308,113 @@ class RdmaHw : public Object {
     uint64_t m_guardCapGrantUpdates;
     uint64_t m_guardCapMaxReclaimedBps;
     uint64_t m_guardRemainingRefreshEvents;
+    uint64_t m_guardMembershipChangesDeferred;
+    uint64_t m_guardMembershipBatches;
+    uint64_t m_guardMembershipMaxBatch;
+    uint64_t m_guardMembershipEmptyCancellations;
+    uint64_t m_guardMembershipTimerReschedules;
+    uint64_t m_guardReleaseThresholdDeferrals;
+    uint64_t m_guardInitialCollectionStarts;
+    uint64_t m_guardInitialCollectionFlushes;
+    uint64_t m_guardInitialCollectionDeferredChanges;
+    uint64_t m_guardInitialCollectionReschedules;
+    uint64_t m_guardInitialCollectionCancellations;
+    uint64_t m_guardInitialCollectionQuietFlushes;
+    uint64_t m_guardInitialCollectionHardFlushes;
+    uint64_t m_guardInitialCollectionWaitNs;
+    uint64_t m_guardInitialCollectionMaxWaitNs;
+    uint64_t m_guardReliabilityRefreshEvents;
+    uint64_t m_guardReliabilityGrantUpdates;
+    uint64_t m_guardGrantAcksSent;
+    uint64_t m_guardGrantAckBytesSent;
+    uint64_t m_guardGrantAcksReceived;
+    uint64_t m_guardGrantAckBytesReceived;
+    uint64_t m_guardGrantAcksStale;
+    uint64_t m_guardStaleGrantsReceived;
+    uint64_t m_guardAckRequiredBatches;
+    uint64_t m_guardAckOptionalBatches;
+    uint64_t m_guardAckRequiredGrantsSent;
+    uint64_t m_guardAckOptionalGrantsSent;
+    uint64_t m_guardGenerationZeroRejected;
+    uint64_t m_guardGenerationMismatchRejected;
+    uint64_t m_guardFullyAckedBatches;
+    uint64_t m_guardFirstGrantGatedFlows;
+    uint64_t m_guardFirstGrantGateReleases;
+    uint64_t m_guardProgressEventsCoalesced;
+    uint64_t m_guardFastpathTransactions;
+    uint64_t m_guardFastpathPrepareBatches;
+    uint64_t m_guardFastpathPrepareGrants;
+    uint64_t m_guardFastpathPrepareAcks;
+    uint64_t m_guardFastpathActivateBatches;
+    uint64_t m_guardFastpathActivateGrants;
+    uint64_t m_guardFastpathActivateAcks;
+    uint64_t m_guardTransitionPrepareBatches;
+    uint64_t m_guardTransitionPrepareGrants;
+    uint64_t m_guardTransitionPrepareAcks;
+    uint64_t m_guardTransitionActivateBatches;
+    uint64_t m_guardTransitionActivateGrants;
+    uint64_t m_guardTransitionActivateAcks;
+    uint64_t m_guardFastpathOptionalReleaseGenerations;
+    uint64_t m_guardFastpathOptionalReleaseGrants;
+    uint64_t m_guardFastpathQueuedMembershipChanges;
+    uint64_t m_guardFastpathHighFanInTransitions;
+    uint64_t m_guardFastpathHighCollectionFlushes;
+    uint64_t m_guardFastpathWaitersActivated;
+    uint64_t m_guardFastpathPostTransitionFastGrants;
+    uint64_t m_guardFastpathBarrierViolations;
+    uint64_t m_guardFastpathEarlyUnlocks;
+    uint64_t m_guardFastpathJoinQueueMax;
+    uint64_t m_guardFastpathHighTransitionRegisteredN;
+    uint64_t m_guardFastpathHighTransitionWaiters;
+    uint64_t m_guardFastpathPrefixCloseNs;
+    uint64_t m_guardFastpathTransitionPrepareStartNs;
+    uint64_t m_guardFastpathCollectionFlushNs;
+    uint64_t m_guardFastpathLastTransactionCloseNs;
+    uint64_t m_guardFastPrepareWireGrantFrames;
+    uint64_t m_guardFastActivateWireGrantFrames;
+    uint64_t m_guardTransitionPrepareWireGrantFrames;
+    uint64_t m_guardTransitionActivateWireGrantFrames;
+    uint64_t m_guardReleaseWireGrantFrames;
+    uint64_t m_guardFastPrepareWireAckFrames;
+    uint64_t m_guardFastActivateWireAckFrames;
+    uint64_t m_guardTransitionPrepareWireAckFrames;
+    uint64_t m_guardTransitionActivateWireAckFrames;
+    uint64_t m_guardFastpathUnattributedGrantFrames;
+    uint64_t m_guardFastpathUnattributedAckFrames;
+    uint64_t m_guardTransitionPrefixBarrierStarts;
+    uint64_t m_guardTransitionPrefixBarrierReady;
+    uint64_t m_guardTransitionPrefixBarrierTimeouts;
+    uint64_t m_guardTransitionPrefixDegradedTransitions;
+    uint64_t m_guardTransitionPrefixWaitersRequired;
+    uint64_t m_guardTransitionPrefixWaitersReady;
+    uint64_t m_guardTransitionPrefixTargetBytes;
+    uint64_t m_guardTransitionPrefixReceivedBytes;
+    uint64_t m_guardTransitionPrefixRemainingBytes;
+    uint64_t m_guardTransitionPrefixWaitNs;
+    uint64_t m_guardTransitionPrefixMaxWaitNs;
+    uint64_t m_guardTransitionPrefixDeadlineNs;
+    uint64_t m_guardTransitionPrefixStartNs;
+    uint64_t m_guardTransitionPrefixReadyNs;
+    uint64_t m_guardTransitionFallbackBatches;
+    uint64_t m_guardTransitionFallbackMaxBatch;
+    uint64_t m_guardTransitionFallbackClosedBatches;
+    uint64_t m_guardTransitionFallbackOrderViolations;
+    uint64_t m_guardTransitionPrefixBarrierViolations;
+    uint64_t m_guardTransitionPrefixWatchdogRoundedPayloadBudgetBytes;
+    uint64_t m_guardTransitionPrefixWatchdogPacketCount;
+    uint64_t m_guardTransitionPrefixWatchdogHeaderBytesPerPacket;
+    uint64_t m_guardTransitionPrefixWatchdogWireBytes;
+    uint64_t m_guardTransitionPrefixWatchdogIncumbentCount;
+    uint64_t m_guardTransitionPrefixWatchdogOccupancyBps;
+    uint64_t m_guardTransitionPrefixWatchdogReceiverCapacityBps;
+    uint64_t m_guardTransitionPrefixWatchdogResidualBps;
+    uint64_t m_guardTransitionPrefixWatchdogSerializationNs;
+    uint64_t m_guardTransitionPrefixWatchdogMaxRttNs;
+    uint64_t m_guardTransitionPrefixWatchdogDelayNs;
+    uint64_t m_guardTransitionPrefixWatchdogStartNs;
+    uint64_t m_guardTransitionPrefixWatchdogDeadlineNs;
+    uint64_t m_guardTransitionPrefixWatchdogBudgetRecords;
+    bool m_guardTransitionPrefixWatchdogNonReconstructable;
     uint64_t m_guardConcurrencyLimitedAllocations;
     uint64_t m_guardConcurrencyMaxDeferredFlows;
     uint64_t m_guardOneRttBypassFlows;
@@ -350,7 +488,72 @@ class RdmaHw : public Object {
     std::unordered_map<RdmaRxQueuePair*, GuardLifecycleState> m_guardLifecycleStates;
     std::unordered_set<RdmaRxQueuePair*> m_rate_flow_ctl_set;
     EventId m_guardRebalanceEvent;
+    EventId m_guardMembershipEvent;
+    EventId m_guardReliabilityRefreshEvent;
     Time m_guardLastRebalanceTime;
+    Time m_guardMembershipBatchStart;
+    Time m_guardInitialCollectionStart;
+    Time m_guardInitialCollectionDeadline;
+    Time m_guardInitialCollectionTarget;
+    uint64_t m_guardPendingMembershipChanges;
+    uint64_t m_guardLastVectorActiveFlows;
+    bool m_guardHasEmittedVectorThisEpoch;
+    bool m_guardInitialCollectionPending;
+    uint32_t m_guardGrantGeneration;
+    uint64_t m_guardPendingGrantAcks;
+    enum GuardFastpathPhase {
+        GUARD_FASTPATH_IDLE = 0,
+        GUARD_FASTPATH_PREPARE = 1,
+        GUARD_FASTPATH_ACTIVATE = 2,
+        GUARD_FASTPATH_PREFIX_BARRIER = 3,
+    };
+    enum GuardGrantPhaseTag {
+        GUARD_GRANT_PHASE_NONE = 0,
+        GUARD_GRANT_PHASE_FAST_PREPARE = 1,
+        GUARD_GRANT_PHASE_FAST_ACTIVATE = 2,
+        GUARD_GRANT_PHASE_TRANSITION_PREPARE = 3,
+        GUARD_GRANT_PHASE_TRANSITION_ACTIVATE = 4,
+        GUARD_GRANT_PHASE_RELEASE = 5,
+    };
+    uint32_t m_guardSmallSetFastpathLimit;
+    bool m_guardTransitionPrefixBarrierEnabled;
+    bool m_guardTransitionPrefixWireWatchdogEnabled;
+    GuardFastpathPhase m_guardFastpathPhase;
+    bool m_guardFastpathHighFanIn;
+    bool m_guardFastpathHighInitialCollectionFlushed;
+    bool m_guardFastpathHighInitialCommitted;
+    bool m_guardFastpathCollectionReady;
+    bool m_guardFastpathTransactionIsTransition;
+    uint64_t m_guardFastpathTransaction;
+    uint64_t m_guardFastpathMembershipRevision;
+    uint64_t m_guardFastpathConsumedMembershipRevision;
+    uint64_t m_guardFastpathReadyMembershipRevision;
+    uint64_t m_guardFastpathEpochPrefixCloseNs;
+    uint64_t m_guardFastpathEpochCollectionFlushNs;
+    uint64_t m_guardFastpathEpochTransitionPrepareStartNs;
+    uint64_t m_guardFastpathTransactionTargetN;
+    uint32_t m_guardFastpathTransactionTargetMbps;
+    std::unordered_set<RdmaRxQueuePair*> m_guardFastpathIncumbents;
+    std::unordered_set<RdmaRxQueuePair*> m_guardFastpathWaiters;
+    std::unordered_set<RdmaRxQueuePair*> m_guardFastpathTransactionWaiters;
+    std::unordered_set<RdmaRxQueuePair*> m_guardFastpathReadyWaiters;
+    EventId m_guardTransitionPrefixDeadlineEvent;
+    bool m_guardTransitionPrefixBarrierWaiting;
+    bool m_guardTransitionPrefixBarrierResolved;
+    bool m_guardTransitionPrefixTimedOut;
+    bool m_guardTransitionFallbackActive;
+    bool m_guardTransitionPrefixWatchdogBudgetActive;
+    Time m_guardTransitionPrefixBarrierStart;
+    Time m_guardTransitionPrefixDeadline;
+    std::vector<RdmaRxQueuePair*> m_guardTransitionActivationOrder;
+    std::vector<Ptr<RdmaRxQueuePair> > m_guardTransitionActivationHolds;
+    std::unordered_map<RdmaRxQueuePair*, uint64_t> m_guardTransitionPrefixTargets;
+    std::unordered_set<RdmaRxQueuePair*> m_guardTransitionCurrentBatch;
+    uint64_t m_guardTransitionActivationCursor;
+    uint64_t m_guardTransitionActivationBatchIndex;
+    uint64_t m_guardTransitionActivationBatchSize;
+    int64_t m_guardTransitionLastRegisterNs;
+    int32_t m_guardTransitionLastFlowId;
     void ConfigureGuardLifecycleTrace(GuardLifecycleTraceSink *sink);
     void ConfigureGuardControllerTrace(GuardControllerTraceSink *sink);
     void ConfigureGuardGrantTrace(GuardGrantTraceSink *sink);
@@ -368,10 +571,62 @@ class RdmaHw : public Object {
     void TraceGuardGrant(Ptr<RdmaRxQueuePair> qp, const char *event,
                          const char *set_change, uint64_t active_flows,
                          uint64_t line_rate_bps, uint64_t grant_rate_bps,
-                         uint64_t next_seq, uint64_t serialized_bytes);
+                         uint64_t next_seq, uint64_t serialized_bytes,
+                         uint32_t generation, uint64_t pending_acks,
+                         bool ack_required);
     void TraceGuardGrantReceive(Ptr<RdmaQueuePair> qp, Ptr<Packet> packet,
-                                uint64_t grant_rate_bps);
-    void RedistributeGuardRates(const char *set_change);
+                                uint64_t grant_rate_bps, uint32_t generation,
+                                const char *event, bool ack_required,
+                                uint8_t phase_tag);
+    void TraceGuardGrantAckReceive(Ptr<RdmaRxQueuePair> qp, CustomHeader &ch,
+                                   Ptr<Packet> packet, const char *event);
+    void TraceGuardGrantAckSend(Ptr<RdmaQueuePair> qp, Ptr<Packet> packet,
+                                uint32_t generation, uint8_t phase_tag);
+    Time GetGuardInitialCollectionQuietWindow() const;
+    bool IsGuardMembershipDirty() const;
+    void RedistributeGuardRates(const char *set_change, uint32_t generation = 0);
+    void RequestGuardMembershipUpdate(const char *set_change);
+    void FlushGuardMembershipUpdate();
+    void ResetGuardReliabilityRefresh();
+    void RefreshGuardGrantsForReliability();
+    bool GuardSmallSetFastpathEnabled() const;
+    const char *GetGuardFastpathPhaseName() const;
+    const char *GetGuardGrantPhaseTagName(uint8_t phase_tag) const;
+    uint8_t GetGuardFastpathWirePhaseTag(const char *set_change) const;
+    void CountGuardFastpathGrantFrame(uint8_t phase_tag);
+    void CountGuardFastpathAckFrame(uint8_t phase_tag);
+    uint32_t NextGuardGrantGeneration();
+    void RequestGuardFastpathMembershipUpdate(const char *set_change);
+    void ScheduleGuardFastpathHighCollection(const char *set_change);
+    void FlushGuardFastpathHighCollection();
+    void StartGuardFastpathTransaction();
+    void StartGuardFastpathPrepare();
+    void StartGuardFastpathActivate();
+    bool ValidateGuardTransitionQueueCohort();
+    static bool ComputeGuardTransitionPrefixWireBudget(
+        const std::vector<GuardTransitionPrefixWaiterBudgetInput> &waiters,
+        const std::vector<GuardTransitionPrefixIncumbentBudgetInput> &incumbents,
+        uint32_t mtu, uint32_t header_bytes_per_packet,
+        uint64_t receiver_capacity_bps,
+        GuardTransitionPrefixWireBudget *budget);
+    static bool IsGuardTransitionPrefixWatchdogAggregateInconsistent(
+        uint64_t budget_records, uint64_t contributing_hardware,
+        bool non_reconstructable);
+    void StartGuardTransitionPrefixBarrier();
+    void CheckGuardTransitionPrefixBarrier();
+    void HandleGuardTransitionPrefixDeadline();
+    void SendNextGuardTransitionFallbackBatch();
+    void FinishGuardFastpathGeneration();
+    void FinishGuardFastpathTransaction();
+    void SendGuardFastpathRequiredGeneration(
+        const std::unordered_set<RdmaRxQueuePair*> &recipients,
+        const char *set_change);
+    void SendGuardFastpathRequiredGenerationOrdered(
+        const std::vector<RdmaRxQueuePair*> &recipients,
+        const char *set_change);
+    void SendGuardFastpathOptionalRelease();
+    void ConsumeGuardFastpathMembershipThrough(uint64_t revision);
+    void ResetGuardFastpathEpoch();
     std::unordered_map<RdmaRxQueuePair*, uint64_t> ComputeGuardBaseTargets(
         uint64_t line_rate_bps) const;
     std::unordered_map<RdmaRxQueuePair*, uint64_t> ComputeGuardCapAwareTargets(
@@ -380,7 +635,10 @@ class RdmaHw : public Object {
     void ScheduleGuardRebalance();
     void RebalanceGuardRates();
     void SendRateControlPacket(Ptr<RdmaRxQueuePair> qp, uint32_t rate,
-                               const char *set_change);
+                               const char *set_change, uint32_t generation = 0,
+                               bool ack_required = false);
+    void SendGuardGrantAck(Ptr<RdmaQueuePair> qp, uint32_t generation,
+                           uint8_t phase_tag);
 
    private:
     void TraceGuardRegistration(Ptr<RdmaRxQueuePair> qp, uint64_t flow_size,
@@ -390,6 +648,11 @@ class RdmaHw : public Object {
                            uint64_t active_after);
     void TraceGuardCompletion(Ptr<RdmaRxQueuePair> qp);
     void WriteGuardLifecycle(GuardLifecycleState const &state);
+    void AppendGuardFastpathTraceFields(FILE *file, const char *event,
+                                        const char *set_change,
+                                        RdmaRxQueuePair *qp,
+                                        uint8_t phase_tag,
+                                        bool receiver_authoritative);
 
    public:
 

@@ -34,12 +34,17 @@ class FlowStatTag : public Tag {
     void SetBaseRttSeconds(double t);
     double GetBaseRttSeconds() const;
     bool HasBaseRtt() const;
+    void SetFirstGrantGateBytes(uint64_t bytes);
+    uint64_t GetFirstGrantGateBytes() const;
+    bool HasFirstGrantGateBytes() const;
 
    private:
     uint8_t flow_stat;
     double initiatedTime;
     double m_baseRttSeconds;
     bool m_hasBaseRtt;
+    uint64_t m_firstGrantGateBytes;
+    bool m_hasFirstGrantGateBytes;
 };
 
 }  // namespace ns3

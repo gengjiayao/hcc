@@ -99,11 +99,17 @@ public:
   void SetDport (uint16_t dport);
   void SetPG (uint16_t pg);
   void SetRateMbps (uint32_t rateMbps);
+  void SetGeneration (uint32_t generation);
+  void SetAckRequired (bool ackRequired);
+  void SetPhaseTag (uint8_t phaseTag);
 
   uint16_t GetSport () const;
   uint16_t GetDport () const;
   uint16_t GetPG () const;
   uint32_t GetRateMbps () const;
+  uint32_t GetGeneration () const;
+  bool GetAckRequired () const;
+  uint8_t GetPhaseTag () const;
 
   static TypeId GetTypeId (void);
   virtual TypeId GetInstanceTypeId (void) const;
@@ -117,6 +123,41 @@ private:
   uint16_t m_dport;
   uint16_t m_pg;
   uint32_t m_rateMbps;
+  uint32_t m_generation;
+  // Bit 0 is ack-required; bits 1--3 are the optional V11 phase tag.  The
+  // compact header remains byte-for-byte the same size for older modes.
+  uint8_t m_ackRequired;
+};
+
+/** Compact acknowledgement for a generation-tagged GUARD rate grant. */
+class GuardGrantAckHeader : public Header
+{
+public:
+  GuardGrantAckHeader ();
+  virtual ~GuardGrantAckHeader ();
+
+  void SetSport (uint16_t sport);
+  void SetDport (uint16_t dport);
+  void SetPG (uint16_t pg);
+  void SetGeneration (uint32_t generation);
+
+  uint16_t GetSport () const;
+  uint16_t GetDport () const;
+  uint16_t GetPG () const;
+  uint32_t GetGeneration () const;
+
+  static TypeId GetTypeId (void);
+  virtual TypeId GetInstanceTypeId (void) const;
+  virtual void Print (std::ostream &os) const;
+  virtual uint32_t GetSerializedSize (void) const;
+  virtual void Serialize (Buffer::Iterator start) const;
+  virtual uint32_t Deserialize (Buffer::Iterator start);
+
+private:
+  uint16_t m_sport;
+  uint16_t m_dport;
+  uint16_t m_pg;
+  uint32_t m_generation;
 };
 
 }; // namespace ns3

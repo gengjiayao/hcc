@@ -232,6 +232,12 @@ python3 run.py --cc guard-active-only --seed 3 ...
 | `--guard_min_share_fraction` | remaining-aware grant 的最小等分份额，范围 [0,1]，默认 0 |
 | `--guard_remaining_exponent` | remaining-aware 权重指数，范围 [0,2]，默认 1 |
 | `--guard_grant_refresh_bdps` | 每推进该 BDP 数后刷新 receiver 侧剩余量与 grants；0=关闭，默认 1 |
+| `--guard_membership_coalesce_ns` | 首个 vector 后的 membership quiet window（ns），范围 [0,65536]，默认 0=关闭 |
+| `--guard_initial_collection_quiet_ns` | 首个 vector 前的独立 quiet window（ns）；0=沿用 membership window，默认 0 |
+| `--guard_initial_collection_full_deadline` | 1=V9 固定等到 hard deadline；0=使用受同一 deadline 限制的 initial sliding quiet，默认 1 |
+| `--guard_small_set_fastpath_limit` | V11 两阶段 small-set 上限；0=关闭（默认），4=启用唯一冻结配置 |
+| `--guard_transition_prefix_barrier` | V12 high-fan-in transition 的 exact-prefix barrier；0=关闭（默认），1=启用 |
+| `--guard_transition_prefix_wire_watchdog` | V13 按 waiter 完整 wire bytes 和 incumbent 已确认占用计算 V12 nominal watchdog；0=关闭（默认），1=启用且要求 V12 barrier |
 | `--guard_work_conserving` | 1=启用实验性闲置份额回收，0=关闭；正式优化配置默认 0 |
 | `--guard_rebalance_interval_us` | 接收端有界 demand 采样周期，默认 200 us |
 | `--guard_demand_threshold` | flow 实测速率低于 grant 的该比例时积累 demand-limited 证据，默认 0.75 |
@@ -239,6 +245,29 @@ python3 run.py --cc guard-active-only --seed 3 ...
 | `--guard_lifecycle_trace` | 有界 OFLM 逐流生命周期 CSV；默认 0，仅支持 GUARD 模式 |
 | `--guard_lifecycle_output` | 可选 CSV 路径；未给出时写入本次 run 目录 |
 | `--guard_lifecycle_max_lines` | 最多接纳及输出的生命周期记录，默认 1024，硬上限 10000 |
+
+V10 initial sliding quiet 的模式边界、独立窗口和有界统计见
+[`docs/guard-initial-collection-v10.md`](docs/guard-initial-collection-v10.md)。该机制尚无性能
+准入结论，不应从固定 N 的测试外推任意规模的 initial batch 收集能力。
+
+V11 默认关闭的两阶段 small-set transaction、安全 barrier、逐 phase wire
+计数和固定场景 frame ceilings 见
+[`docs/guard-small-set-fastpath-v11.md`](docs/guard-small-set-fastpath-v11.md)。它尚未运行
+pilot 或 holdout，不能据此声称性能收益，也不能把 N=2/4/8/15 的固定事件序列外推到任意 N。
+
+V12 只改变 V11 的 high-fan-in transition activation：prepare ACK 闭合后等待
+receiver 可验证的 exact first-window prefix；若 nominal liveness deadline 到期仍未
+ready，才退化为按注册顺序、每批最多 4 流的 ACK-clocked activation。机制、安全边界和
+有界 raw evidence 见
+[`docs/guard-transition-prefix-v12.md`](docs/guard-transition-prefix-v12.md)。该开关默认关闭，
+尚无性能准入结论。
+
+V13 只替换 V12 nominal liveness deadline 的预算：它计入完整 DATA header，并从接收端
+链路速率扣除 prepare ACK 闭合后的 incumbent 已确认 grant 上界；ready predicate、timer
+取消、same-tick 次序和 fallback 均不改变。公式、溢出边界及 raw stats 见
+[`docs/guard-transition-prefix-wire-watchdog-v13.md`](docs/guard-transition-prefix-wire-watchdog-v13.md)。
+其 stats 用 `records/non_reconstructable/inconsistent` 阻止把多 transition 或多 receiver 的
+sum/max 混合字段当成一个可重算预算。该开关默认关闭，尚无性能准入结论。
 
 每次仿真创建 `mix/output/<10位ID>/`，里面包含：
 

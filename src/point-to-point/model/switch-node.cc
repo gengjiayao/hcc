@@ -71,7 +71,8 @@ uint32_t SwitchNode::DoLbFlowECMP(Ptr<const Packet> p, const CustomHeader &ch,
         buf.u32[2] = ch.tcp.sport | ((uint32_t)ch.tcp.dport << 16);
     else if (ch.l3Prot == 0x11)  // XXX RDMA traffic on UDP
         buf.u32[2] = ch.udp.sport | ((uint32_t)ch.udp.dport << 16);
-    else if (ch.l3Prot == CustomHeader::GUARD_RATE_GRANT)
+    else if (ch.l3Prot == CustomHeader::GUARD_RATE_GRANT ||
+             ch.l3Prot == CustomHeader::GUARD_RATE_GRANT_ACK)
         buf.u32[2] = ch.grant.sport | ((uint32_t)ch.grant.dport << 16);
     else if (ch.l3Prot == 0xFB || ch.l3Prot == 0xFC || ch.l3Prot == 0xFD ||
              ch.l3Prot == 0xFA)  // ACK / NACK / homa ctrl
@@ -233,11 +234,13 @@ void SwitchNode::SendToDevContinue(Ptr<Packet> p, CustomHeader &ch) {
              (ch.l3Prot == 0xFD ||
               ch.l3Prot == 0xFC ||
               ch.l3Prot == CustomHeader::GUARD_RATE_GRANT ||
+              ch.l3Prot == CustomHeader::GUARD_RATE_GRANT_ACK ||
               ch.l3Prot == 0xFB ||
               ch.l3Prot == 0xFA))) {  // QCN/PFC/ACK/NACK/0xFB/homa ctrl: high priority
             qIndex = 0;               // high priority
         } else {
-            if (ch.l3Prot == CustomHeader::GUARD_RATE_GRANT) {
+            if (ch.l3Prot == CustomHeader::GUARD_RATE_GRANT ||
+                ch.l3Prot == CustomHeader::GUARD_RATE_GRANT_ACK) {
                 qIndex = ch.grant.pg;
             } else {
                 qIndex = (ch.l3Prot == 0x06 ? 1 : ch.udp.pg);  // if TCP, put to queue 1. Otherwise, it
@@ -269,6 +272,7 @@ int SwitchNode::GetOutDev(Ptr<Packet> p, CustomHeader &ch) {
     bool control_pkt =
         (ch.l3Prot == 0xFF || ch.l3Prot == 0xFE || ch.l3Prot == 0xFD ||
          ch.l3Prot == 0xFC || ch.l3Prot == CustomHeader::GUARD_RATE_GRANT ||
+         ch.l3Prot == CustomHeader::GUARD_RATE_GRANT_ACK ||
          ch.l3Prot == 0xFB);
 
     if (Settings::lb_mode == 0 || control_pkt) {  // control packet (ACK, NACK, PFC, QCN)

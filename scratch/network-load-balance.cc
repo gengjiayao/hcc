@@ -29,6 +29,7 @@
 
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <tuple>
 #include <unordered_map>
@@ -191,6 +192,14 @@ double guard_remaining_exponent = 1.0;
 uint32_t guard_receiver_concurrency = 0;
 double guard_concurrency_min_bdps = 8.0;
 double guard_grant_refresh_bdps = 1.0;
+uint64_t guard_membership_coalesce_ns = 0;
+uint32_t guard_membership_coalesce_max_windows = 5;
+uint64_t guard_initial_collection_quiet_ns = 0;
+uint32_t guard_initial_collection_full_deadline = 1;
+uint32_t guard_small_set_fastpath_limit = 0;
+bool guard_transition_prefix_barrier = false;
+bool guard_transition_prefix_wire_watchdog = false;
+double guard_grant_reliability_rtts = 0.0;
 uint32_t guard_srpt_quantum_packets = 64;
 bool guard_work_conserving = false;
 bool guard_cap_aware_reclaim = false;
@@ -1349,6 +1358,50 @@ int main(int argc, char *argv[]) {
                 conf >> guard_grant_refresh_bdps;
                 std::cerr << "GUARD_GRANT_REFRESH_BDPS\t"
                           << guard_grant_refresh_bdps << '\n';
+            } else if (key.compare("GUARD_MEMBERSHIP_COALESCE_NS") == 0) {
+                conf >> guard_membership_coalesce_ns;
+                std::cerr << "GUARD_MEMBERSHIP_COALESCE_NS\t"
+                          << guard_membership_coalesce_ns << '\n';
+            } else if (key.compare("GUARD_GRANT_RELIABILITY_RTTS") == 0) {
+                conf >> guard_grant_reliability_rtts;
+                std::cerr << "GUARD_GRANT_RELIABILITY_RTTS\t"
+                          << guard_grant_reliability_rtts << '\n';
+            } else if (key.compare("GUARD_MEMBERSHIP_COALESCE_MAX_WINDOWS") == 0) {
+                conf >> guard_membership_coalesce_max_windows;
+                std::cerr << "GUARD_MEMBERSHIP_COALESCE_MAX_WINDOWS\t"
+                          << guard_membership_coalesce_max_windows << '\n';
+            } else if (key.compare("GUARD_INITIAL_COLLECTION_QUIET_NS") == 0) {
+                conf >> guard_initial_collection_quiet_ns;
+                std::cerr << "GUARD_INITIAL_COLLECTION_QUIET_NS\t"
+                          << guard_initial_collection_quiet_ns << '\n';
+            } else if (key.compare("GUARD_INITIAL_COLLECTION_FULL_DEADLINE") == 0) {
+                conf >> guard_initial_collection_full_deadline;
+                std::cerr << "GUARD_INITIAL_COLLECTION_FULL_DEADLINE\t"
+                          << guard_initial_collection_full_deadline << '\n';
+            } else if (key.compare("GUARD_SMALL_SET_FASTPATH_LIMIT") == 0) {
+                conf >> guard_small_set_fastpath_limit;
+                std::cerr << "GUARD_SMALL_SET_FASTPATH_LIMIT\t"
+                          << guard_small_set_fastpath_limit << '\n';
+            } else if (key.compare("GUARD_TRANSITION_PREFIX_BARRIER") == 0) {
+                uint32_t enabled;
+                conf >> enabled;
+                if (enabled > 1) {
+                    std::cerr << "GUARD_TRANSITION_PREFIX_BARRIER must be 0 or 1\n";
+                    return 1;
+                }
+                guard_transition_prefix_barrier = enabled != 0;
+                std::cerr << "GUARD_TRANSITION_PREFIX_BARRIER\t"
+                          << enabled << '\n';
+            } else if (key.compare("GUARD_TRANSITION_PREFIX_WIRE_WATCHDOG") == 0) {
+                uint32_t enabled;
+                conf >> enabled;
+                if (enabled > 1) {
+                    std::cerr << "GUARD_TRANSITION_PREFIX_WIRE_WATCHDOG must be 0 or 1\n";
+                    return 1;
+                }
+                guard_transition_prefix_wire_watchdog = enabled != 0;
+                std::cerr << "GUARD_TRANSITION_PREFIX_WIRE_WATCHDOG\t"
+                          << enabled << '\n';
             } else if (key.compare("GUARD_SRPT_QUANTUM_PACKETS") == 0) {
                 conf >> guard_srpt_quantum_packets;
                 std::cerr << "GUARD_SRPT_QUANTUM_PACKETS\t"
@@ -1678,6 +1731,78 @@ int main(int argc, char *argv[]) {
                   << guard_grant_trace_hard_max_lines << "]\n";
         return 1;
     }
+    if (guard_initial_collection_full_deadline > 1) {
+        std::cerr << "GUARD_INITIAL_COLLECTION_FULL_DEADLINE must be 0 or 1\n";
+        return 1;
+    }
+    if (guard_initial_collection_quiet_ns > 65536) {
+        std::cerr << "GUARD_INITIAL_COLLECTION_QUIET_NS must be in [0, 65536]\n";
+        return 1;
+    }
+    if (guard_small_set_fastpath_limit != 0) {
+        if (guard_small_set_fastpath_limit != 4 ||
+            guard_membership_coalesce_ns != 12480 ||
+            guard_initial_collection_quiet_ns != 16640 ||
+            guard_membership_coalesce_max_windows != 5 ||
+            guard_initial_collection_full_deadline != 0) {
+            std::cerr << "GUARD V11 small-set fast path requires limit 4, "
+                      << "membership quiet 12480 ns, initial quiet 16640 ns, "
+                      << "five windows, and sliding initial mode\n";
+            return 1;
+        }
+        if (guard_remaining_aware || guard_receiver_concurrency != 0) {
+            std::cerr << "GUARD V11 small-set fast path currently requires "
+                      << "GUARD_REMAINING_AWARE 0 and "
+                      << "GUARD_RECEIVER_CONCURRENCY 0 for one equal-share "
+                      << "transaction target\n";
+            return 1;
+        }
+    }
+    if (guard_transition_prefix_barrier &&
+        (guard_small_set_fastpath_limit != 4 || !guard_fixed_window)) {
+        std::cerr << "GUARD V12 transition prefix barrier requires the V11 "
+                  << "safe activation with limit 4 and GUARD_FIXED_WINDOW 1\n";
+        return 1;
+    }
+    if (guard_transition_prefix_wire_watchdog &&
+        !guard_transition_prefix_barrier) {
+        std::cerr << "GUARD V13 transition prefix wire watchdog requires "
+                  << "GUARD_TRANSITION_PREFIX_BARRIER 1\n";
+        return 1;
+    }
+    if (guard_membership_coalesce_ns > 0) {
+        if (cc_mode != 11 && cc_mode != 13) {
+            std::cerr << "GUARD membership coalescing requires CC_MODE 11 or 13\n";
+            return 1;
+        }
+        if (!has_win) {
+            std::cerr << "GUARD membership coalescing requires HAS_WIN 1\n";
+            return 1;
+        }
+        if (!guard_fixed_window) {
+            std::cerr << "GUARD membership coalescing requires GUARD_FIXED_WINDOW 1\n";
+            return 1;
+        }
+        if (guard_proactive_release) {
+            std::cerr << "GUARD membership coalescing currently requires "
+                      << "GUARD_PROACTIVE_RELEASE 0 because geometric release "
+                      << "batching is safe only after completed flows stop sending\n";
+            return 1;
+        }
+        if (guard_grant_reliability_rtts < 1.0) {
+            std::cerr << "GUARD membership coalescing requires "
+                      << "GUARD_GRANT_RELIABILITY_RTTS >= 1\n";
+            return 1;
+        }
+        if (guard_grant_refresh_bdps > 0 || guard_work_conserving ||
+            guard_cap_aware_reclaim) {
+            std::cerr << "GUARD membership coalescing currently requires "
+                      << "GUARD_GRANT_REFRESH_BDPS 0, GUARD_WORK_CONSERVING 0, "
+                      << "and GUARD_CAP_AWARE_RECLAIM 0 so every rate update "
+                      << "uses an ordered membership generation\n";
+            return 1;
+        }
+    }
 
     GuardLifecycleTraceSink guard_lifecycle_trace_sink;
     if (guard_lifecycle_trace) {
@@ -1721,7 +1846,19 @@ int main(int argc, char *argv[]) {
         guard_grant_trace_sink.max_lines = guard_grant_trace_max_lines;
         fprintf(guard_grant_trace_sink.file,
                 "time_ns,event,set_change,host_node,flow_id,data_source_ip,data_destination_ip,"
-                "active_flows,line_rate_bps,grant_rate_bps,next_seq,serialized_bytes\n");
+                "active_flows,line_rate_bps,grant_rate_bps,next_seq,serialized_bytes,"
+                "generation,pending_acks,ack_required");
+        if (guard_small_set_fastpath_limit > 0) {
+            fprintf(guard_grant_trace_sink.file,
+                    ",transaction_id,grant_phase,membership_target_n,subject_role");
+        }
+        if (guard_transition_prefix_barrier) {
+            fprintf(guard_grant_trace_sink.file,
+                    ",prefix_target_bytes,prefix_observed_bytes,drain_outcome,"
+                    "activation_batch_index,activation_batch_size,"
+                    "activation_register_ns");
+        }
+        fprintf(guard_grant_trace_sink.file, "\n");
     }
     // HPCC's congestion metric is normalized load plus a normalized queue
     // term, not physical link utilization alone.  Therefore lambda * 0.95
@@ -2112,6 +2249,26 @@ int main(int argc, char *argv[]) {
                                  DoubleValue(guard_concurrency_min_bdps));
             rdmaHw->SetAttribute("GuardGrantRefreshBdps",
                                  DoubleValue(guard_grant_refresh_bdps));
+            rdmaHw->SetAttribute("GuardMembershipCoalesceWindow",
+                                 TimeValue(NanoSeconds(guard_membership_coalesce_ns)));
+            rdmaHw->SetAttribute(
+                "GuardInitialCollectionQuietWindow",
+                TimeValue(NanoSeconds(guard_initial_collection_quiet_ns)));
+            rdmaHw->SetAttribute("GuardGrantReliabilityRtts",
+                                 DoubleValue(guard_grant_reliability_rtts));
+            rdmaHw->SetAttribute("GuardMembershipCoalesceMaxWindows",
+                                 UintegerValue(guard_membership_coalesce_max_windows));
+            rdmaHw->SetAttribute(
+                "GuardInitialCollectionFullDeadline",
+                BooleanValue(guard_initial_collection_full_deadline != 0));
+            rdmaHw->SetAttribute("GuardSmallSetFastpathLimit",
+                                 UintegerValue(guard_small_set_fastpath_limit));
+            rdmaHw->SetAttribute(
+                "GuardTransitionPrefixBarrier",
+                BooleanValue(guard_transition_prefix_barrier));
+            rdmaHw->SetAttribute(
+                "GuardTransitionPrefixWireWatchdog",
+                BooleanValue(guard_transition_prefix_wire_watchdog));
             rdmaHw->SetAttribute("GuardSrptQuantumPackets",
                                  UintegerValue(guard_srpt_quantum_packets));
             rdmaHw->SetAttribute("GuardWorkConserving", BooleanValue(guard_work_conserving));
@@ -2685,6 +2842,145 @@ int main(int argc, char *argv[]) {
     uint64_t total_guard_cap_rebalance_events = 0;
     uint64_t total_guard_cap_grant_updates = 0;
     uint64_t max_guard_cap_reclaimed_bps = 0;
+    uint64_t total_guard_membership_changes_deferred = 0;
+    uint64_t total_guard_membership_batches = 0;
+    uint64_t max_guard_membership_batch = 0;
+    uint64_t total_guard_membership_empty_cancellations = 0;
+    uint64_t total_guard_membership_timer_reschedules = 0;
+    uint64_t total_guard_release_threshold_deferrals = 0;
+    uint64_t total_guard_initial_collection_starts = 0;
+    uint64_t total_guard_initial_collection_flushes = 0;
+    uint64_t total_guard_initial_collection_deferred_changes = 0;
+    uint64_t total_guard_initial_collection_reschedules = 0;
+    uint64_t total_guard_initial_collection_cancellations = 0;
+    uint64_t total_guard_initial_collection_quiet_flushes = 0;
+    uint64_t total_guard_initial_collection_hard_flushes = 0;
+    uint64_t total_guard_initial_collection_wait_ns = 0;
+    uint64_t max_guard_initial_collection_wait_ns = 0;
+    uint64_t total_guard_reliability_refresh_events = 0;
+    uint64_t total_guard_reliability_grant_updates = 0;
+    uint64_t total_guard_grant_acks_sent = 0;
+    uint64_t total_guard_grant_ack_bytes_sent = 0;
+    uint64_t total_guard_grant_acks_received = 0;
+    uint64_t total_guard_grant_ack_bytes_received = 0;
+    uint64_t total_guard_grant_acks_stale = 0;
+    uint64_t total_guard_stale_grants_received = 0;
+    uint64_t total_guard_ack_required_batches = 0;
+    uint64_t total_guard_ack_optional_batches = 0;
+    uint64_t total_guard_ack_required_grants = 0;
+    uint64_t total_guard_ack_optional_grants = 0;
+    uint64_t total_guard_generation_zero_rejected = 0;
+    uint64_t total_guard_generation_mismatch_rejected = 0;
+    uint64_t total_guard_fully_acked_batches = 0;
+    uint64_t total_guard_pending_grant_acks = 0;
+    uint32_t max_guard_grant_generation = 0;
+    uint64_t total_guard_first_grant_gated_flows = 0;
+    uint64_t total_guard_first_grant_gate_releases = 0;
+    uint64_t total_guard_progress_events_coalesced = 0;
+    uint64_t total_fastpath_transactions = 0;
+    uint64_t total_fast_prepare_batches = 0;
+    uint64_t total_fast_prepare_grants = 0;
+    uint64_t total_fast_prepare_acks = 0;
+    uint64_t total_fast_activate_batches = 0;
+    uint64_t total_fast_activate_grants = 0;
+    uint64_t total_fast_activate_acks = 0;
+    uint64_t total_transition_prepare_batches = 0;
+    uint64_t total_transition_prepare_grants = 0;
+    uint64_t total_transition_prepare_acks = 0;
+    uint64_t total_transition_activate_batches = 0;
+    uint64_t total_transition_activate_grants = 0;
+    uint64_t total_transition_activate_acks = 0;
+    uint64_t total_release_batches = 0;
+    uint64_t total_release_grants = 0;
+    uint64_t total_queued_membership_changes = 0;
+    uint64_t total_high_transitions = 0;
+    uint64_t total_high_collection_flushes = 0;
+    uint64_t total_waiters_activated = 0;
+    uint64_t total_post_transition_fast_grants = 0;
+    uint64_t total_barrier_violations = 0;
+    uint64_t total_early_unlocks = 0;
+    uint64_t max_join_queue = 0;
+    uint64_t max_high_transition_registered_n = 0;
+    uint64_t max_high_transition_waiters = 0;
+    uint64_t max_prefix_close_ns = 0;
+    uint64_t max_transition_prepare_start_ns = 0;
+    uint64_t max_collection_flush_ns = 0;
+    uint64_t max_last_transaction_close_ns = 0;
+    uint64_t total_fast_prepare_wire_grants = 0;
+    uint64_t total_fast_activate_wire_grants = 0;
+    uint64_t total_transition_prepare_wire_grants = 0;
+    uint64_t total_transition_activate_wire_grants = 0;
+    uint64_t total_release_wire_grants = 0;
+    uint64_t total_fast_prepare_wire_acks = 0;
+    uint64_t total_fast_activate_wire_acks = 0;
+    uint64_t total_transition_prepare_wire_acks = 0;
+    uint64_t total_transition_activate_wire_acks = 0;
+    uint64_t total_unattributed_grant_frames = 0;
+    uint64_t total_unattributed_ack_frames = 0;
+    uint64_t terminal_pending_membership = 0;
+    uint64_t terminal_waiters = 0;
+    uint64_t terminal_transaction_waiters = 0;
+    uint64_t terminal_ready_waiters = 0;
+    uint64_t terminal_collection_ready = 0;
+    uint64_t terminal_high_initial_flushed = 0;
+    uint64_t terminal_high_initial_committed = 0;
+    uint64_t terminal_membership_revision = 0;
+    uint64_t terminal_consumed_membership_revision = 0;
+    uint32_t terminal_phase = 0;
+    uint64_t total_transition_prefix_starts = 0;
+    uint64_t total_transition_prefix_ready = 0;
+    uint64_t total_transition_prefix_timeouts = 0;
+    uint64_t total_transition_prefix_degraded = 0;
+    uint64_t total_transition_prefix_waiters_required = 0;
+    uint64_t total_transition_prefix_waiters_ready = 0;
+    uint64_t total_transition_prefix_target_bytes = 0;
+    uint64_t total_transition_prefix_received_bytes = 0;
+    uint64_t total_transition_prefix_remaining_bytes = 0;
+    uint64_t total_transition_prefix_wait_ns = 0;
+    uint64_t max_transition_prefix_wait_ns = 0;
+    uint64_t max_transition_prefix_start_ns = 0;
+    uint64_t max_transition_prefix_deadline_ns = 0;
+    uint64_t max_transition_prefix_ready_ns = 0;
+    uint64_t total_transition_fallback_batches = 0;
+    uint64_t max_transition_fallback_batch = 0;
+    uint64_t total_transition_fallback_closed_batches = 0;
+    uint64_t total_transition_fallback_order_violations = 0;
+    uint64_t total_transition_prefix_barrier_violations = 0;
+    uint64_t terminal_transition_prefix_timers = 0;
+    uint64_t terminal_transition_prefix_waiting = 0;
+    uint64_t terminal_transition_prefix_resolved = 0;
+    uint64_t terminal_transition_prefix_timed_out = 0;
+    uint64_t terminal_transition_fallback_active = 0;
+    uint64_t terminal_transition_cursor = 0;
+    uint64_t terminal_transition_cohort = 0;
+    uint64_t terminal_transition_future_queue = 0;
+    uint64_t terminal_transition_current_batch = 0;
+    uint64_t terminal_transition_targets = 0;
+    uint64_t terminal_transition_holds = 0;
+    uint64_t total_transition_watchdog_rounded_payload_budget_bytes = 0;
+    uint64_t total_transition_watchdog_packet_count = 0;
+    uint64_t max_transition_watchdog_header_per_packet = 0;
+    uint64_t total_transition_watchdog_wire_bytes = 0;
+    uint64_t total_transition_watchdog_incumbent_count = 0;
+    uint64_t total_transition_watchdog_occupancy_bps = 0;
+    uint64_t max_transition_watchdog_capacity_bps = 0;
+    uint64_t max_transition_watchdog_residual_bps = 0;
+    uint64_t max_transition_watchdog_serialization_ns = 0;
+    uint64_t max_transition_watchdog_max_rtt_ns = 0;
+    uint64_t max_transition_watchdog_delay_ns = 0;
+    uint64_t max_transition_watchdog_start_ns = 0;
+    uint64_t max_transition_watchdog_deadline_ns = 0;
+    uint64_t terminal_transition_watchdog_budgets = 0;
+    uint64_t total_transition_watchdog_budget_records = 0;
+    uint64_t transition_watchdog_contributing_hardware = 0;
+    bool transition_watchdog_non_reconstructable = false;
+    bool transition_watchdog_record_state_inconsistent = false;
+    auto add_watchdog_stat = [](uint64_t &total, uint64_t value) {
+        NS_ABORT_MSG_IF(
+            total > std::numeric_limits<uint64_t>::max() - value,
+            "GUARD V13 global watchdog statistic overflow");
+        total += value;
+    };
     for (uint32_t i = 0; i < node_num; i++) {
         if (n.Get(i)->GetNodeType() != 0) continue;
         Ptr<RdmaDriver> driver = n.Get(i)->GetObject<RdmaDriver>();
@@ -2752,6 +3048,269 @@ int main(int argc, char *argv[]) {
         total_guard_cap_grant_updates += hw->m_guardCapGrantUpdates;
         max_guard_cap_reclaimed_bps = std::max(
             max_guard_cap_reclaimed_bps, hw->m_guardCapMaxReclaimedBps);
+        total_guard_membership_changes_deferred +=
+            hw->m_guardMembershipChangesDeferred;
+        total_guard_membership_batches += hw->m_guardMembershipBatches;
+        max_guard_membership_batch = std::max(
+            max_guard_membership_batch, hw->m_guardMembershipMaxBatch);
+        total_guard_membership_empty_cancellations +=
+            hw->m_guardMembershipEmptyCancellations;
+        total_guard_membership_timer_reschedules +=
+            hw->m_guardMembershipTimerReschedules;
+        total_guard_release_threshold_deferrals +=
+            hw->m_guardReleaseThresholdDeferrals;
+        total_guard_initial_collection_starts +=
+            hw->m_guardInitialCollectionStarts;
+        total_guard_initial_collection_flushes +=
+            hw->m_guardInitialCollectionFlushes;
+        total_guard_initial_collection_deferred_changes +=
+            hw->m_guardInitialCollectionDeferredChanges;
+        total_guard_initial_collection_reschedules +=
+            hw->m_guardInitialCollectionReschedules;
+        total_guard_initial_collection_cancellations +=
+            hw->m_guardInitialCollectionCancellations;
+        total_guard_initial_collection_quiet_flushes +=
+            hw->m_guardInitialCollectionQuietFlushes;
+        total_guard_initial_collection_hard_flushes +=
+            hw->m_guardInitialCollectionHardFlushes;
+        total_guard_initial_collection_wait_ns +=
+            hw->m_guardInitialCollectionWaitNs;
+        max_guard_initial_collection_wait_ns = std::max(
+            max_guard_initial_collection_wait_ns,
+            hw->m_guardInitialCollectionMaxWaitNs);
+        total_guard_reliability_refresh_events +=
+            hw->m_guardReliabilityRefreshEvents;
+        total_guard_reliability_grant_updates +=
+            hw->m_guardReliabilityGrantUpdates;
+        total_guard_grant_acks_sent += hw->m_guardGrantAcksSent;
+        total_guard_grant_ack_bytes_sent += hw->m_guardGrantAckBytesSent;
+        total_guard_grant_acks_received += hw->m_guardGrantAcksReceived;
+        total_guard_grant_ack_bytes_received += hw->m_guardGrantAckBytesReceived;
+        total_guard_grant_acks_stale += hw->m_guardGrantAcksStale;
+        total_guard_stale_grants_received += hw->m_guardStaleGrantsReceived;
+        total_guard_ack_required_batches += hw->m_guardAckRequiredBatches;
+        total_guard_ack_optional_batches += hw->m_guardAckOptionalBatches;
+        total_guard_ack_required_grants += hw->m_guardAckRequiredGrantsSent;
+        total_guard_ack_optional_grants += hw->m_guardAckOptionalGrantsSent;
+        total_guard_generation_zero_rejected += hw->m_guardGenerationZeroRejected;
+        total_guard_generation_mismatch_rejected +=
+            hw->m_guardGenerationMismatchRejected;
+        total_guard_fully_acked_batches += hw->m_guardFullyAckedBatches;
+        total_guard_pending_grant_acks += hw->m_guardPendingGrantAcks;
+        max_guard_grant_generation = std::max(
+            max_guard_grant_generation, hw->m_guardGrantGeneration);
+        total_guard_first_grant_gated_flows +=
+            hw->m_guardFirstGrantGatedFlows;
+        total_guard_first_grant_gate_releases +=
+            hw->m_guardFirstGrantGateReleases;
+        total_guard_progress_events_coalesced +=
+            hw->m_guardProgressEventsCoalesced;
+        total_fastpath_transactions += hw->m_guardFastpathTransactions;
+        total_fast_prepare_batches += hw->m_guardFastpathPrepareBatches;
+        total_fast_prepare_grants += hw->m_guardFastpathPrepareGrants;
+        total_fast_prepare_acks += hw->m_guardFastpathPrepareAcks;
+        total_fast_activate_batches += hw->m_guardFastpathActivateBatches;
+        total_fast_activate_grants += hw->m_guardFastpathActivateGrants;
+        total_fast_activate_acks += hw->m_guardFastpathActivateAcks;
+        total_transition_prepare_batches += hw->m_guardTransitionPrepareBatches;
+        total_transition_prepare_grants += hw->m_guardTransitionPrepareGrants;
+        total_transition_prepare_acks += hw->m_guardTransitionPrepareAcks;
+        total_transition_activate_batches += hw->m_guardTransitionActivateBatches;
+        total_transition_activate_grants += hw->m_guardTransitionActivateGrants;
+        total_transition_activate_acks += hw->m_guardTransitionActivateAcks;
+        total_release_batches += hw->m_guardFastpathOptionalReleaseGenerations;
+        total_release_grants += hw->m_guardFastpathOptionalReleaseGrants;
+        total_queued_membership_changes +=
+            hw->m_guardFastpathQueuedMembershipChanges;
+        total_high_transitions += hw->m_guardFastpathHighFanInTransitions;
+        total_high_collection_flushes +=
+            hw->m_guardFastpathHighCollectionFlushes;
+        total_waiters_activated += hw->m_guardFastpathWaitersActivated;
+        total_post_transition_fast_grants +=
+            hw->m_guardFastpathPostTransitionFastGrants;
+        total_barrier_violations += hw->m_guardFastpathBarrierViolations;
+        total_early_unlocks += hw->m_guardFastpathEarlyUnlocks;
+        max_join_queue = std::max(max_join_queue, hw->m_guardFastpathJoinQueueMax);
+        max_high_transition_registered_n = std::max(
+            max_high_transition_registered_n,
+            hw->m_guardFastpathHighTransitionRegisteredN);
+        max_high_transition_waiters = std::max(
+            max_high_transition_waiters,
+            hw->m_guardFastpathHighTransitionWaiters);
+        max_prefix_close_ns = std::max(
+            max_prefix_close_ns, hw->m_guardFastpathPrefixCloseNs);
+        max_transition_prepare_start_ns = std::max(
+            max_transition_prepare_start_ns,
+            hw->m_guardFastpathTransitionPrepareStartNs);
+        max_collection_flush_ns = std::max(
+            max_collection_flush_ns, hw->m_guardFastpathCollectionFlushNs);
+        max_last_transaction_close_ns = std::max(
+            max_last_transaction_close_ns,
+            hw->m_guardFastpathLastTransactionCloseNs);
+        total_fast_prepare_wire_grants +=
+            hw->m_guardFastPrepareWireGrantFrames;
+        total_fast_activate_wire_grants +=
+            hw->m_guardFastActivateWireGrantFrames;
+        total_transition_prepare_wire_grants +=
+            hw->m_guardTransitionPrepareWireGrantFrames;
+        total_transition_activate_wire_grants +=
+            hw->m_guardTransitionActivateWireGrantFrames;
+        total_release_wire_grants += hw->m_guardReleaseWireGrantFrames;
+        total_fast_prepare_wire_acks += hw->m_guardFastPrepareWireAckFrames;
+        total_fast_activate_wire_acks += hw->m_guardFastActivateWireAckFrames;
+        total_transition_prepare_wire_acks +=
+            hw->m_guardTransitionPrepareWireAckFrames;
+        total_transition_activate_wire_acks +=
+            hw->m_guardTransitionActivateWireAckFrames;
+        total_unattributed_grant_frames +=
+            hw->m_guardFastpathUnattributedGrantFrames;
+        total_unattributed_ack_frames +=
+            hw->m_guardFastpathUnattributedAckFrames;
+        terminal_pending_membership += hw->m_guardPendingMembershipChanges;
+        terminal_waiters += hw->m_guardFastpathWaiters.size();
+        terminal_transaction_waiters +=
+            hw->m_guardFastpathTransactionWaiters.size();
+        terminal_ready_waiters += hw->m_guardFastpathReadyWaiters.size();
+        terminal_collection_ready += hw->m_guardFastpathCollectionReady ? 1 : 0;
+        terminal_high_initial_flushed +=
+            hw->m_guardFastpathHighInitialCollectionFlushed ? 1 : 0;
+        terminal_high_initial_committed +=
+            hw->m_guardFastpathHighInitialCommitted ? 1 : 0;
+        terminal_membership_revision += hw->m_guardFastpathMembershipRevision;
+        terminal_consumed_membership_revision +=
+            hw->m_guardFastpathConsumedMembershipRevision;
+        terminal_phase = std::max(
+            terminal_phase, static_cast<uint32_t>(hw->m_guardFastpathPhase));
+        total_transition_prefix_starts +=
+            hw->m_guardTransitionPrefixBarrierStarts;
+        total_transition_prefix_ready +=
+            hw->m_guardTransitionPrefixBarrierReady;
+        total_transition_prefix_timeouts +=
+            hw->m_guardTransitionPrefixBarrierTimeouts;
+        total_transition_prefix_degraded +=
+            hw->m_guardTransitionPrefixDegradedTransitions;
+        total_transition_prefix_waiters_required +=
+            hw->m_guardTransitionPrefixWaitersRequired;
+        total_transition_prefix_waiters_ready +=
+            hw->m_guardTransitionPrefixWaitersReady;
+        total_transition_prefix_target_bytes +=
+            hw->m_guardTransitionPrefixTargetBytes;
+        total_transition_prefix_received_bytes +=
+            hw->m_guardTransitionPrefixReceivedBytes;
+        total_transition_prefix_remaining_bytes +=
+            hw->m_guardTransitionPrefixRemainingBytes;
+        total_transition_prefix_wait_ns +=
+            hw->m_guardTransitionPrefixWaitNs;
+        max_transition_prefix_wait_ns = std::max(
+            max_transition_prefix_wait_ns,
+            hw->m_guardTransitionPrefixMaxWaitNs);
+        max_transition_prefix_start_ns = std::max(
+            max_transition_prefix_start_ns,
+            hw->m_guardTransitionPrefixStartNs);
+        max_transition_prefix_deadline_ns = std::max(
+            max_transition_prefix_deadline_ns,
+            hw->m_guardTransitionPrefixDeadlineNs);
+        max_transition_prefix_ready_ns = std::max(
+            max_transition_prefix_ready_ns,
+            hw->m_guardTransitionPrefixReadyNs);
+        total_transition_fallback_batches +=
+            hw->m_guardTransitionFallbackBatches;
+        max_transition_fallback_batch = std::max(
+            max_transition_fallback_batch,
+            hw->m_guardTransitionFallbackMaxBatch);
+        total_transition_fallback_closed_batches +=
+            hw->m_guardTransitionFallbackClosedBatches;
+        total_transition_fallback_order_violations +=
+            hw->m_guardTransitionFallbackOrderViolations;
+        total_transition_prefix_barrier_violations +=
+            hw->m_guardTransitionPrefixBarrierViolations;
+        terminal_transition_prefix_timers +=
+            hw->m_guardTransitionPrefixDeadlineEvent.IsRunning() ? 1 : 0;
+        terminal_transition_prefix_waiting +=
+            hw->m_guardTransitionPrefixBarrierWaiting ? 1 : 0;
+        terminal_transition_prefix_resolved +=
+            hw->m_guardTransitionPrefixBarrierResolved ? 1 : 0;
+        terminal_transition_prefix_timed_out +=
+            hw->m_guardTransitionPrefixTimedOut ? 1 : 0;
+        terminal_transition_fallback_active +=
+            hw->m_guardTransitionFallbackActive ? 1 : 0;
+        terminal_transition_cursor +=
+            hw->m_guardTransitionActivationCursor;
+        terminal_transition_cohort +=
+            hw->m_guardTransitionActivationOrder.size();
+        terminal_transition_future_queue +=
+            hw->m_guardTransitionActivationOrder.size() >
+                    hw->m_guardTransitionActivationCursor
+                ? hw->m_guardTransitionActivationOrder.size() -
+                      hw->m_guardTransitionActivationCursor
+                : 0;
+        terminal_transition_current_batch +=
+            hw->m_guardTransitionCurrentBatch.size();
+        terminal_transition_targets +=
+            hw->m_guardTransitionPrefixTargets.size();
+        terminal_transition_holds +=
+            hw->m_guardTransitionActivationHolds.size();
+        add_watchdog_stat(
+            total_transition_watchdog_rounded_payload_budget_bytes,
+            hw->m_guardTransitionPrefixWatchdogRoundedPayloadBudgetBytes);
+        add_watchdog_stat(
+            total_transition_watchdog_packet_count,
+            hw->m_guardTransitionPrefixWatchdogPacketCount);
+        max_transition_watchdog_header_per_packet = std::max(
+            max_transition_watchdog_header_per_packet,
+            hw->m_guardTransitionPrefixWatchdogHeaderBytesPerPacket);
+        add_watchdog_stat(total_transition_watchdog_wire_bytes,
+                          hw->m_guardTransitionPrefixWatchdogWireBytes);
+        add_watchdog_stat(total_transition_watchdog_incumbent_count,
+                          hw->m_guardTransitionPrefixWatchdogIncumbentCount);
+        add_watchdog_stat(total_transition_watchdog_occupancy_bps,
+                          hw->m_guardTransitionPrefixWatchdogOccupancyBps);
+        max_transition_watchdog_capacity_bps = std::max(
+            max_transition_watchdog_capacity_bps,
+            hw->m_guardTransitionPrefixWatchdogReceiverCapacityBps);
+        max_transition_watchdog_residual_bps = std::max(
+            max_transition_watchdog_residual_bps,
+            hw->m_guardTransitionPrefixWatchdogResidualBps);
+        max_transition_watchdog_serialization_ns = std::max(
+            max_transition_watchdog_serialization_ns,
+            hw->m_guardTransitionPrefixWatchdogSerializationNs);
+        max_transition_watchdog_max_rtt_ns = std::max(
+            max_transition_watchdog_max_rtt_ns,
+            hw->m_guardTransitionPrefixWatchdogMaxRttNs);
+        max_transition_watchdog_delay_ns = std::max(
+            max_transition_watchdog_delay_ns,
+            hw->m_guardTransitionPrefixWatchdogDelayNs);
+        max_transition_watchdog_start_ns = std::max(
+            max_transition_watchdog_start_ns,
+            hw->m_guardTransitionPrefixWatchdogStartNs);
+        max_transition_watchdog_deadline_ns = std::max(
+            max_transition_watchdog_deadline_ns,
+            hw->m_guardTransitionPrefixWatchdogDeadlineNs);
+        add_watchdog_stat(
+            terminal_transition_watchdog_budgets,
+            hw->m_guardTransitionPrefixWatchdogBudgetActive ? 1 : 0);
+        add_watchdog_stat(
+            total_transition_watchdog_budget_records,
+            hw->m_guardTransitionPrefixWatchdogBudgetRecords);
+        if (hw->m_guardTransitionPrefixWatchdogBudgetRecords > 0) {
+            transition_watchdog_contributing_hardware++;
+        }
+        bool hardware_has_budget_fields =
+            hw->m_guardTransitionPrefixWatchdogRoundedPayloadBudgetBytes > 0 ||
+            hw->m_guardTransitionPrefixWatchdogPacketCount > 0 ||
+            hw->m_guardTransitionPrefixWatchdogWireBytes > 0 ||
+            hw->m_guardTransitionPrefixWatchdogReceiverCapacityBps > 0 ||
+            hw->m_guardTransitionPrefixWatchdogResidualBps > 0 ||
+            hw->m_guardTransitionPrefixWatchdogDelayNs > 0;
+        if ((hw->m_guardTransitionPrefixWatchdogBudgetRecords == 0) !=
+                !hardware_has_budget_fields ||
+            (hw->m_guardTransitionPrefixWatchdogBudgetRecords > 1 &&
+             !hw->m_guardTransitionPrefixWatchdogNonReconstructable)) {
+            transition_watchdog_record_state_inconsistent = true;
+        }
+        transition_watchdog_non_reconstructable =
+            transition_watchdog_non_reconstructable ||
+            hw->m_guardTransitionPrefixWatchdogNonReconstructable;
     }
     fprintf(guard_stats_output,
             "total %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu "
@@ -2876,6 +3435,238 @@ int main(int argc, char *argv[]) {
             max_guard_concurrency_deferred_flows, guard_concurrency_min_bdps,
             guard_grant_refresh_bdps,
             total_guard_remaining_refresh_events);
+    fprintf(guard_stats_output,
+            "guard_membership_coalescing window_ns %lu changes_deferred %lu "
+            "batches %lu max_batch %lu empty_cancellations %lu timer_reschedules %lu "
+            "release_threshold_deferrals %lu "
+            "initial_collection_quiet_ns %lu "
+            "initial_collection_full_deadline %u "
+            "initial_collection_starts %lu initial_collection_flushes %lu "
+            "initial_collection_deferred_changes %lu "
+            "initial_collection_reschedules %lu "
+            "initial_collection_cancellations %lu "
+            "initial_collection_quiet_flushes %lu initial_collection_hard_flushes %lu "
+            "initial_collection_wait_ns %lu "
+            "initial_collection_max_wait_ns %lu "
+            "max_windows %u "
+            "reliability_rtts %.6f refresh_events %lu refresh_grants %lu "
+            "first_grant_gated %lu first_grant_released %lu "
+            "generation %u ack_sent %lu ack_bytes_sent %lu ack_received %lu "
+            "ack_bytes_received %lu ack_stale %lu stale_grants %lu "
+            "ack_required_batches %lu ack_optional_batches %lu "
+            "ack_required_grants %lu ack_optional_grants %lu "
+            "generation_zero_rejected %lu generation_mismatch_rejected %lu "
+            "fully_acked_batches %lu pending %lu retry_grants %lu "
+            "progress_events_coalesced %lu\n",
+            guard_membership_coalesce_ns,
+            total_guard_membership_changes_deferred,
+            total_guard_membership_batches, max_guard_membership_batch,
+            total_guard_membership_empty_cancellations,
+            total_guard_membership_timer_reschedules,
+            total_guard_release_threshold_deferrals,
+            guard_initial_collection_quiet_ns == 0
+                ? guard_membership_coalesce_ns
+                : guard_initial_collection_quiet_ns,
+            guard_initial_collection_full_deadline ? 1 : 0,
+            total_guard_initial_collection_starts,
+            total_guard_initial_collection_flushes,
+            total_guard_initial_collection_deferred_changes,
+            total_guard_initial_collection_reschedules,
+            total_guard_initial_collection_cancellations,
+            total_guard_initial_collection_quiet_flushes,
+            total_guard_initial_collection_hard_flushes,
+            total_guard_initial_collection_wait_ns,
+            max_guard_initial_collection_wait_ns,
+            guard_membership_coalesce_max_windows,
+            guard_grant_reliability_rtts,
+            total_guard_reliability_refresh_events,
+            total_guard_reliability_grant_updates,
+            total_guard_first_grant_gated_flows,
+            total_guard_first_grant_gate_releases,
+            max_guard_grant_generation,
+            total_guard_grant_acks_sent,
+            total_guard_grant_ack_bytes_sent,
+            total_guard_grant_acks_received,
+            total_guard_grant_ack_bytes_received,
+            total_guard_grant_acks_stale,
+            total_guard_stale_grants_received,
+            total_guard_ack_required_batches,
+            total_guard_ack_optional_batches,
+            total_guard_ack_required_grants,
+            total_guard_ack_optional_grants,
+            total_guard_generation_zero_rejected,
+            total_guard_generation_mismatch_rejected,
+            total_guard_fully_acked_batches,
+            total_guard_pending_grant_acks,
+            total_guard_reliability_grant_updates,
+            total_guard_progress_events_coalesced);
+    uint64_t fastpath_wire_grant_frames =
+        total_fast_prepare_wire_grants + total_fast_activate_wire_grants +
+        total_transition_prepare_wire_grants +
+        total_transition_activate_wire_grants + total_release_wire_grants +
+        total_unattributed_grant_frames;
+    uint64_t fastpath_wire_ack_frames =
+        total_fast_prepare_wire_acks + total_fast_activate_wire_acks +
+        total_transition_prepare_wire_acks +
+        total_transition_activate_wire_acks + total_unattributed_ack_frames;
+    bool fastpath_wire_reconciled =
+        guard_small_set_fastpath_limit == 0 ||
+        (fastpath_wire_grant_frames == total_grants_sent &&
+         fastpath_wire_ack_frames == total_guard_grant_acks_sent &&
+         total_unattributed_grant_frames == 0 &&
+         total_unattributed_ack_frames == 0);
+    fprintf(guard_stats_output,
+            "guard_small_set_fastpath enabled %u limit %u transactions %lu ",
+            guard_small_set_fastpath_limit > 0 ? 1 : 0,
+            guard_small_set_fastpath_limit, total_fastpath_transactions);
+    fprintf(guard_stats_output,
+            "accepted_fast_prepare_batches %lu accepted_fast_prepare_grants %lu "
+            "accepted_fast_prepare_acks %lu accepted_fast_activate_batches %lu "
+            "accepted_fast_activate_grants %lu accepted_fast_activate_acks %lu ",
+            total_fast_prepare_batches, total_fast_prepare_grants,
+            total_fast_prepare_acks, total_fast_activate_batches,
+            total_fast_activate_grants, total_fast_activate_acks);
+    fprintf(guard_stats_output,
+            "accepted_transition_prepare_batches %lu "
+            "accepted_transition_prepare_grants %lu "
+            "accepted_transition_prepare_acks %lu "
+            "accepted_transition_activate_batches %lu "
+            "accepted_transition_activate_grants %lu "
+            "accepted_transition_activate_acks %lu ",
+            total_transition_prepare_batches, total_transition_prepare_grants,
+            total_transition_prepare_acks, total_transition_activate_batches,
+            total_transition_activate_grants, total_transition_activate_acks);
+    fprintf(guard_stats_output,
+            "accepted_release_batches %lu accepted_release_grants %lu "
+            "queued_membership_changes %lu high_transitions %lu "
+            "high_collection_flushes %lu waiters_activated %lu "
+            "post_transition_fast_grants %lu barrier_violations %lu "
+            "early_unlocks %lu join_queue_max %lu "
+            "high_transition_registered_n %lu high_transition_waiters %lu ",
+            total_release_batches, total_release_grants,
+            total_queued_membership_changes, total_high_transitions,
+            total_high_collection_flushes, total_waiters_activated,
+            total_post_transition_fast_grants, total_barrier_violations,
+            total_early_unlocks, max_join_queue,
+            max_high_transition_registered_n, max_high_transition_waiters);
+    fprintf(guard_stats_output,
+            "prefix_close_ns %lu collection_flush_ns %lu "
+            "transition_prepare_start_ns %lu last_transaction_close_ns %lu ",
+            max_prefix_close_ns, max_collection_flush_ns,
+            max_transition_prepare_start_ns, max_last_transaction_close_ns);
+    fprintf(guard_stats_output,
+            "fast_prepare_wire_grants %lu fast_activate_wire_grants %lu "
+            "transition_prepare_wire_grants %lu "
+            "transition_activate_wire_grants %lu release_wire_grants %lu "
+            "fast_prepare_wire_acks %lu fast_activate_wire_acks %lu "
+            "transition_prepare_wire_acks %lu "
+            "transition_activate_wire_acks %lu unattributed_grant_frames %lu "
+            "unattributed_ack_frames %lu wire_grant_frames %lu "
+            "wire_ack_frames %lu control_frames %lu global_grants_sent %lu "
+            "global_acks_sent %lu wire_reconciled %u ",
+            total_fast_prepare_wire_grants,
+            total_fast_activate_wire_grants,
+            total_transition_prepare_wire_grants,
+            total_transition_activate_wire_grants, total_release_wire_grants,
+            total_fast_prepare_wire_acks, total_fast_activate_wire_acks,
+            total_transition_prepare_wire_acks,
+            total_transition_activate_wire_acks,
+            total_unattributed_grant_frames,
+            total_unattributed_ack_frames, fastpath_wire_grant_frames,
+            fastpath_wire_ack_frames,
+            fastpath_wire_grant_frames + fastpath_wire_ack_frames,
+            total_grants_sent, total_guard_grant_acks_sent,
+            fastpath_wire_reconciled ? 1 : 0);
+    fprintf(guard_stats_output,
+            "terminal_phase %u terminal_pending_acks %lu "
+            "terminal_pending_membership %lu terminal_waiters %lu "
+            "terminal_transaction_waiters %lu terminal_ready_waiters %lu "
+            "terminal_collection_ready %lu terminal_initial_flushed %lu "
+            "terminal_transition_committed %lu terminal_revision %lu "
+            "terminal_consumed_revision %lu\n",
+            terminal_phase, total_guard_pending_grant_acks,
+            terminal_pending_membership, terminal_waiters,
+            terminal_transaction_waiters, terminal_ready_waiters,
+            terminal_collection_ready, terminal_high_initial_flushed,
+            terminal_high_initial_committed, terminal_membership_revision,
+            terminal_consumed_membership_revision);
+    if (guard_transition_prefix_barrier) {
+        fprintf(guard_stats_output,
+            "guard_transition_prefix enabled %u starts %lu ready %lu "
+            "timeouts %lu degraded %lu waiters_required %lu waiters_ready %lu "
+            "target_bytes %lu received_bytes %lu remaining_bytes %lu "
+            "wait_ns %lu max_wait_ns %lu start_ns %lu deadline_ns %lu "
+            "ready_ns %lu fallback_batches %lu fallback_max_batch %lu "
+            "fallback_closed_batches %lu order_violations %lu "
+            "barrier_violations %lu terminal_timer %lu terminal_waiting %lu "
+            "terminal_resolved %lu terminal_timed_out %lu "
+            "terminal_fallback %lu terminal_cursor %lu terminal_cohort %lu "
+            "terminal_future_queue %lu terminal_current_batch %lu "
+            "terminal_targets %lu terminal_holds %lu\n",
+            guard_transition_prefix_barrier ? 1 : 0,
+            total_transition_prefix_starts, total_transition_prefix_ready,
+            total_transition_prefix_timeouts,
+            total_transition_prefix_degraded,
+            total_transition_prefix_waiters_required,
+            total_transition_prefix_waiters_ready,
+            total_transition_prefix_target_bytes,
+            total_transition_prefix_received_bytes,
+            total_transition_prefix_remaining_bytes,
+            total_transition_prefix_wait_ns, max_transition_prefix_wait_ns,
+            max_transition_prefix_start_ns,
+            max_transition_prefix_deadline_ns,
+            max_transition_prefix_ready_ns,
+            total_transition_fallback_batches,
+            max_transition_fallback_batch,
+            total_transition_fallback_closed_batches,
+            total_transition_fallback_order_violations,
+            total_transition_prefix_barrier_violations,
+            terminal_transition_prefix_timers,
+            terminal_transition_prefix_waiting,
+            terminal_transition_prefix_resolved,
+            terminal_transition_prefix_timed_out,
+            terminal_transition_fallback_active,
+            terminal_transition_cursor, terminal_transition_cohort,
+            terminal_transition_future_queue,
+            terminal_transition_current_batch, terminal_transition_targets,
+            terminal_transition_holds);
+    }
+    if (guard_transition_prefix_wire_watchdog) {
+        bool global_watchdog_non_reconstructable =
+            RdmaHw::IsGuardTransitionPrefixWatchdogAggregateInconsistent(
+                total_transition_watchdog_budget_records,
+                transition_watchdog_contributing_hardware,
+                transition_watchdog_non_reconstructable);
+        bool transition_watchdog_inconsistent =
+            global_watchdog_non_reconstructable ||
+            transition_watchdog_record_state_inconsistent;
+        fprintf(guard_stats_output,
+            "guard_transition_prefix_watchdog enabled %u "
+            "records %lu non_reconstructable %u inconsistent %u "
+            "rounded_payload_budget_bytes %lu packet_count %lu "
+            "header_per_packet %lu wire_bytes %lu incumbent_count %lu "
+            "occupancy_bps %lu capacity_bps %lu residual_bps %lu "
+            "serialization_ns %lu max_rtt_ns %lu delay_ns %lu "
+            "start_ns %lu deadline_ns %lu terminal_budget %lu\n",
+            guard_transition_prefix_wire_watchdog ? 1 : 0,
+            total_transition_watchdog_budget_records,
+            global_watchdog_non_reconstructable ? 1 : 0,
+            transition_watchdog_inconsistent ? 1 : 0,
+            total_transition_watchdog_rounded_payload_budget_bytes,
+            total_transition_watchdog_packet_count,
+            max_transition_watchdog_header_per_packet,
+            total_transition_watchdog_wire_bytes,
+            total_transition_watchdog_incumbent_count,
+            total_transition_watchdog_occupancy_bps,
+            max_transition_watchdog_capacity_bps,
+            max_transition_watchdog_residual_bps,
+            max_transition_watchdog_serialization_ns,
+            max_transition_watchdog_max_rtt_ns,
+            max_transition_watchdog_delay_ns,
+            max_transition_watchdog_start_ns,
+            max_transition_watchdog_deadline_ns,
+            terminal_transition_watchdog_budgets);
+    }
     fprintf(guard_stats_output, "switch_drops ingress %u egress %u total %u\n",
             Settings::dropped_pkt_sw_ingress, Settings::dropped_pkt_sw_egress,
             Settings::dropped_pkt_sw_ingress + Settings::dropped_pkt_sw_egress);
