@@ -17,7 +17,7 @@ try:
     from experiments.run_campaign import CampaignError, directory_size, sha256_file
     from experiments.run_guard_v14_compatibility import (
         FRESH_SCOPE, PROFILE_KEYS, REPLAY_SCOPE, _load_gate, compatibility_plan,
-        load_preflight, read_spec, replay_plan, run_command,
+        load_preflight, profile_keys, read_spec, replay_plan, run_command,
         validate_sealed_replay,
     )
     from experiments.analyze_membership_coalescing_holdout import (
@@ -35,7 +35,7 @@ except ModuleNotFoundError:  # Direct execution from experiments/.
     from run_campaign import CampaignError, directory_size, sha256_file
     from run_guard_v14_compatibility import (
         FRESH_SCOPE, PROFILE_KEYS, REPLAY_SCOPE, _load_gate, compatibility_plan,
-        load_preflight, read_spec, replay_plan, run_command,
+        load_preflight, profile_keys, read_spec, replay_plan, run_command,
         validate_sealed_replay,
     )
     from analyze_membership_coalescing_holdout import (
@@ -82,6 +82,13 @@ MIXED_FIELDS = (
     "release_required", "release_optional", "last_hash_xor",
     "terminal_records", "terminal_holds", "terminal_ledger",
 )
+MIXED_FIELDS_V16 = (
+    "enabled", "freezes", "mixed_pg_freezes", "max_entries",
+    "max_priority_groups", "mixed_priority_group_mask",
+    "all_priority_group_mask", "prepare_decreases", "activation_waiters",
+    "activation_increases", "release_required", "release_optional",
+    "last_hash_xor", "terminal_records", "terminal_holds", "terminal_ledger",
+)
 REFRESH_FIELDS = (
     "enabled", "progress_requests", "progress_transactions", "progress_commits",
     "progress_busy_deferrals", "draining_requests", "draining_pending",
@@ -108,7 +115,9 @@ RECOVERY_FIELDS = (
 )
 OPTIONAL_CONFIG_KEYS = {
     "guard_transition_prefix_wire_watchdog",
-    "guard_transition_prefix_fail_closed", "guard_mixed_pg_vector_fastpath",
+    "guard_transition_prefix_fail_closed",
+    "guard_transition_prefix_ack_clock_fallback",
+    "guard_mixed_pg_vector_fastpath",
     "guard_serialized_progress_refresh", "guard_serialized_draining",
 }
 CONFIG_KEYS = {
@@ -116,6 +125,8 @@ CONFIG_KEYS = {
     "guard_gamma": "GUARD_RELEASE_GAMMA",
     **{key: key.upper() for key in PROFILE_KEYS
        if key not in ("guard_lambda", "guard_beta", "guard_gamma")},
+    "guard_transition_prefix_ack_clock_fallback":
+        "GUARD_TRANSITION_PREFIX_ACK_CLOCK_FALLBACK",
 }
 COMPLETION_RE = re.compile(
     r"finished so far:\s*(?P<finished>\d+)/ total:\s*(?P<total>\d+)")
@@ -327,7 +338,8 @@ def validate_manifest(manifest: Mapping[str, object], spec_path: Path,
                       spec: Mapping[str, object], campaign_dir: Path,
                       preflight: Mapping[str, object], scope: str) -> Tuple[Path, Mapping[str, object]]:
     identity = (manifest.get("scenario"), manifest.get("seed"))
-    if (manifest.get("schema_version") != 14 or manifest.get("scope") != scope or
+    if (manifest.get("schema_version") != int(spec["schema_version"]) or
+            manifest.get("scope") != scope or
             manifest.get("status") != "completed" or manifest.get("returncode") != 0 or
             manifest.get("stop_reason") != "completed" or manifest.get("git_dirty") or
             manifest.get("performance_metrics_emitted") is not False or
@@ -413,7 +425,8 @@ def _grant_key(row: Mapping[str, object]) -> Tuple[int, int]:
 
 
 def trace_closure(rows: Sequence[Mapping[str, object]], fresh: bool,
-                  receiver_capacity: int) -> Dict[str, int]:
+                  receiver_capacity: int,
+                  terminal_retire_flows: Sequence[int] = ()) -> Dict[str, int]:
     ordinals = {id(row): ordinal for ordinal, row in enumerate(rows)}
     bad_events = {"grant_stale", "grant_generation_zero",
                   "grant_generation_mismatch", "ack_stale"}
@@ -617,14 +630,27 @@ def trace_closure(rows: Sequence[Mapping[str, object]], fresh: bool,
                 raise SummaryError("allocation revisions are not strictly increasing")
             for index, revision in enumerate(revisions):
                 revision_rows = by_host_revision[(host, revision)]
-                needs_recompute = any(
+                dirty_rows = [row for row in revision_rows if
                     int(row["live_active_records"]) > 0 and
                     int(row["live_draining_reserved_bps"]) <
                         int(row["frozen_draining_reserved_bps"])
-                    for row in revision_rows)
-                if not needs_recompute:
+                ]
+                if not dirty_rows:
                     continue
                 if index + 1 >= len(revisions):
+                    terminal_retire = set(map(int, terminal_retire_flows))
+                    final_row = revision_rows[-1]
+                    if (terminal_retire and
+                            final_row["event"] == "ack_retire_close" and
+                            int(final_row["live_active_records"]) == 1 and
+                            int(final_row["flow_id"]) in terminal_retire):
+                        # Every dirty row remains conservative because live D
+                        # only fell below the immutable frozen D.  The last
+                        # authoritative event is emitted immediately before
+                        # removing the final ACTIVE flow, and lifecycle
+                        # evidence proves the same completion takes the set to
+                        # zero.  No later allocation can or should be frozen.
+                        continue
                     raise SummaryError("capacity-dirty frozen revision lacks a later recompute")
                 next_revision = revisions[index + 1]
                 if next_revision != revision + 1:
@@ -691,7 +717,8 @@ def _fnv_words(words: Sequence[int]) -> int:
 
 def audit_transition_rows(rows: Sequence[Mapping[str, object]], stats: Mapping[str, int],
                           small: Mapping[str, int], prefix: Mapping[str, int], capacity: int,
-                          mixed_pg_expected: bool) -> Dict[str, object]:
+                          mixed_pg_expected: bool,
+                          ack_clock_fallback: bool = False) -> Dict[str, object]:
     if (len(rows) != int(stats["records"]) or int(stats["records"]) !=
             int(stats["attempted"]) or int(stats["written"]) != len(rows) or
             int(stats["truncated"]) != 0 or int(prefix["starts"]) != len(rows) or
@@ -705,16 +732,21 @@ def audit_transition_rows(rows: Sequence[Mapping[str, object]], stats: Mapping[s
         if identity in identities:
             raise SummaryError(f"duplicate transition audit identity: {identity}")
         identities.add(identity)
+        ready = row["deadline_outcome"] == "ready"
+        fallback = row["deadline_outcome"] == "timeout_fallback"
+        expected_terminal = ("fallback_activation_ack_closed" if fallback
+                             else "activation_ack_closed")
         if (int(row["priority_group_set_hash"]) == 0 or
                 int(row["target_vector_hash"]) == 0 or
                 int(row["target_vector_entries"]) <= 0 or
                 int(row["capacity_bps"]) != capacity or
                 not 0 <= int(row["active_upper_bound_bps"]) < capacity or
-                int(row["prefix_observed_bytes"]) < int(row["prefix_target_bytes"]) or
+                (ready and int(row["prefix_observed_bytes"]) <
+                 int(row["prefix_target_bytes"])) or
                 int(row["start_ns"]) > int(row["deadline_ns"]) or
                 row["deadline_policy"] != "wire_residual_watchdog" or
-                row["deadline_outcome"] != "ready" or
-                row["terminal_closure"] != "activation_ack_closed"):
+                (not ready and not (ack_clock_fallback and fallback)) or
+                row["terminal_closure"] != expected_terminal):
             raise SummaryError(f"transition audit row did not close normally: {identity}")
         if (int(row["active_plus_draining_upper_bound_bps"]) !=
                 int(row["active_upper_bound_bps"]) +
@@ -734,6 +766,41 @@ def audit_transition_rows(rows: Sequence[Mapping[str, object]], stats: Mapping[s
         "epochs_per_receiver": {str(receiver): len(epochs)
                                 for receiver, epochs in sorted(per_receiver.items())},
     }
+
+
+def validate_v16_pg_provenance(
+        scenario: str, vector: Mapping[str, int]) -> None:
+    """Validate runtime PG identities without conflating later freezes with T1."""
+    freezes = int(vector["freezes"])
+    mixed_freezes = int(vector["mixed_pg_freezes"])
+    max_groups = int(vector["max_priority_groups"])
+    mixed_mask = int(vector["mixed_priority_group_mask"])
+    all_mask = int(vector["all_priority_group_mask"])
+    if (freezes <= 0 or not 1 <= max_groups <= 8 or all_mask <= 0 or
+            all_mask & ~0xff or mixed_mask & ~0xff or mixed_mask & ~all_mask or
+            all_mask.bit_count() < max_groups):
+        raise SummaryError("V16 frozen-vector PG provenance is malformed")
+    if ((mixed_freezes == 0 and (mixed_mask != 0 or max_groups != 1)) or
+            (mixed_freezes > 0 and
+             (max_groups < 2 or mixed_mask.bit_count() < max_groups))):
+        raise SummaryError("V16 mixed-PG counters and masks disagree")
+    if scenario == "mixed_pg_n15" and (
+            max_groups != 3 or mixed_mask != 0xe0 or all_mask != 0xf0):
+        raise SummaryError(
+            "mixed-PG runtime provenance differs from frozen PG4 then PG5--PG7 classes")
+
+
+def validate_v17_pg_provenance(
+        scenario: str, vector: Mapping[str, int]) -> None:
+    """Require mixed-vector execution without prescribing arrival grouping."""
+    validate_v16_pg_provenance("generic-runtime-provenance", vector)
+    if scenario == "mixed_pg_n15" and (
+            int(vector["mixed_pg_freezes"]) < 1 or
+            int(vector["max_priority_groups"]) < 2 or
+            int(vector["all_priority_group_mask"]) != 0xf0 or
+            int(vector["mixed_priority_group_mask"]).bit_count() < 2):
+        raise SummaryError(
+            "mixed-PG runtime evidence lacks PG4--PG7 coverage or a mixed vector")
 
 
 def _zero_terminal(small: Mapping[str, int], vector: Mapping[str, int] | None,
@@ -863,17 +930,38 @@ def validate_run(manifest: Mapping[str, object], spec_path: Path,
     watchdog = parse_transition_watchdog_stats(stats_path)
     if watchdog is None:
         raise SummaryError("wire watchdog stats row is absent")
-    if (int(small["enabled"]) != 1 or int(small["limit"]) != 4 or
+    ack_clock_fresh = int(spec["schema_version"]) >= 15 and scope == FRESH_SCOPE
+    common_prefix_failure = (
+            int(small["enabled"]) != 1 or int(small["limit"]) != 4 or
             int(small["barrier_violations"]) != 0 or int(small["early_unlocks"]) != 0 or
             int(small["unattributed_grant_frames"]) != 0 or
             int(small["unattributed_ack_frames"]) != 0 or
             int(small["wire_reconciled"]) != 1 or int(prefix["enabled"]) != 1 or
-            int(prefix["timeouts"]) != 0 or int(prefix["degraded"]) != 0 or
-            int(prefix["remaining_bytes"]) != 0 or int(prefix["fallback_batches"]) != 0 or
-            int(prefix["fallback_closed_batches"]) != 0 or
             int(prefix["order_violations"]) != 0 or
-            int(prefix["barrier_violations"]) != 0 or int(watchdog["enabled"]) != 1):
+            int(prefix["barrier_violations"]) != 0 or int(watchdog["enabled"]) != 1)
+    legacy_prefix_failure = (
+            int(prefix["timeouts"]) != 0 or int(prefix["degraded"]) != 0 or
+            int(prefix["remaining_bytes"]) != 0 or
+            int(prefix["fallback_batches"]) != 0 or
+            int(prefix["fallback_closed_batches"]) != 0)
+    v15_prefix_failure = (
+            int(prefix["timeouts"]) != int(prefix["degraded"]) or
+            int(prefix["fallback_batches"]) !=
+                int(prefix["fallback_closed_batches"]) or
+            (int(prefix["timeouts"]) == 0 and
+             int(prefix["fallback_batches"]) != 0) or
+            (int(prefix["timeouts"]) > 0 and
+             int(prefix["fallback_batches"]) < int(prefix["timeouts"])))
+    if (common_prefix_failure or
+            (v15_prefix_failure if ack_clock_fresh else legacy_prefix_failure)):
         raise SummaryError("safe fastpath/prefix mechanism gate failed")
+    ack_clock = None
+    if ack_clock_fresh:
+        ack_clock = _named_stats(
+            stats_path, "guard_transition_prefix_ack_clock_fallback",
+            ("enabled",))
+        if int(ack_clock["enabled"]) != 1:
+            raise SummaryError("V15 ACK-clocked fallback is not enabled")
 
     requirements = ({"registered_flows": count} if scope == REPLAY_SCOPE else
                     _requirements(spec, str(manifest["scenario"])))
@@ -913,9 +1001,16 @@ def validate_run(manifest: Mapping[str, object], spec_path: Path,
     else:
         trace_rows, trace_footer = parse_v14_trace(
             trace_path, int(spec["resource_limits"]["grant_trace_max_lines"]))
-        trace = trace_closure(trace_rows, True,
-                              int(spec["topology"]["receiver_capacity_bps"]))
-        vector = _named_stats(stats_path, "guard_mixed_pg_vector", MIXED_FIELDS)
+        terminal_retire_flows = (() if int(spec["schema_version"]) < 16 else
+            tuple(int(row["flow_id"]) for row in lifecycle_rows
+                  if row["release_reason"] == "completion" and
+                  int(row["active_after_release"]) == 0))
+        trace = trace_closure(
+            trace_rows, True, int(spec["topology"]["receiver_capacity_bps"]),
+            terminal_retire_flows)
+        vector_fields = (MIXED_FIELDS_V16 if int(spec["schema_version"]) >= 16
+                         else MIXED_FIELDS)
+        vector = _named_stats(stats_path, "guard_mixed_pg_vector", vector_fields)
         refresh = _named_stats(stats_path, "guard_refresh_draining", REFRESH_FIELDS)
         retired_ack = _named_stats(
             stats_path, "guard_retired_ack", RETIRED_ACK_FIELDS)
@@ -934,7 +1029,12 @@ def validate_run(manifest: Mapping[str, object], spec_path: Path,
         audit = audit_transition_rows(
             audit_rows, audit_stats, small, prefix,
             int(spec["topology"]["receiver_capacity_bps"]),
-            str(manifest["scenario"]) == "mixed_pg_n15")
+            (str(manifest["scenario"]) == "mixed_pg_n15" and
+             int(spec["schema_version"]) < 16), ack_clock_fresh)
+        if int(spec["schema_version"]) == 16:
+            validate_v16_pg_provenance(str(manifest["scenario"]), vector)
+        elif int(spec["schema_version"]) >= 17:
+            validate_v17_pg_provenance(str(manifest["scenario"]), vector)
         _zero_terminal(small, vector, refresh, prefix, watchdog)
         _apply_requirements(str(manifest["scenario"]), requirements, stats, small,
                             prefix, watchdog, vector, refresh, trace, audit)
@@ -952,6 +1052,7 @@ def validate_run(manifest: Mapping[str, object], spec_path: Path,
         "safe_activation": small, "transition_prefix": prefix,
         "transition_watchdog": watchdog, "target_vector": vector,
         "refresh_draining": refresh, "retired_ack": retired_ack,
+        "ack_clock_fallback": ack_clock,
         "transition_audit": audit,
         "feature_signals": {
             "sender_srpt_selections": int(stats["guard_sender_srpt_selections"]),
@@ -964,10 +1065,10 @@ def validate_run(manifest: Mapping[str, object], spec_path: Path,
     }
 
 
-def analyze(spec_path: Path, campaign_dir: Path, scope: str) -> Mapping[str, object]:
+def analyze_loaded(spec_path: Path, campaign_dir: Path, scope: str,
+                   spec: Mapping[str, object]) -> Mapping[str, object]:
     spec_path = spec_path.resolve()
     campaign_dir = campaign_dir.resolve()
-    spec = read_spec(spec_path)
     preflight_path = campaign_dir / "preflight.json"
     if preflight_path.is_symlink():
         raise SummaryError("preflight.json must not be a symlink")
@@ -994,7 +1095,8 @@ def analyze(spec_path: Path, campaign_dir: Path, scope: str) -> Mapping[str, obj
     runs = [validate_run(row, spec_path, spec, campaign_dir, preflight, scope)
             for row in manifests]
     return {
-        "schema_version": 14, "scope": scope, "status": "admitted",
+        "schema_version": int(spec["schema_version"]), "scope": scope,
+        "status": "admitted",
         "passed": True, "run_count": len(runs),
         "spec_sha256": sha256_file(spec_path),
         "preflight_sha256": sha256_file(campaign_dir / "preflight.json"),
@@ -1004,6 +1106,10 @@ def analyze(spec_path: Path, campaign_dir: Path, scope: str) -> Mapping[str, obj
         "mechanism_admission_passed": True, "performance_emitted": False,
         "runs": runs,
     }
+
+
+def analyze(spec_path: Path, campaign_dir: Path, scope: str) -> Mapping[str, object]:
+    return analyze_loaded(spec_path, campaign_dir, scope, read_spec(spec_path.resolve()))
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

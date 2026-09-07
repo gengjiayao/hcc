@@ -67,6 +67,7 @@ PROFILE_KEYS = (
     "guard_rebalance_interval_us", "guard_demand_threshold",
     "guard_receiver_util_threshold",
 )
+V15_PROFILE_EXTENSION = ("guard_transition_prefix_ack_clock_fallback",)
 FRESH_SCENARIOS = (
     "same_pg_n4", "same_pg_n15", "mixed_pg_n15",
     "same_sender_multiflow_srpt", "one_rtt_short_background",
@@ -93,6 +94,12 @@ def _canonical_sha(value: object) -> str:
 def _lexical_absolute(path: Path) -> Path:
     """Normalize dots without following a possibly hostile final symlink."""
     return Path(os.path.abspath(os.path.normpath(str(path))))
+
+
+def profile_keys(spec: Mapping[str, object]) -> Tuple[str, ...]:
+    """Keep V14 command order byte-stable for later ACK-clock schemas."""
+    return PROFILE_KEYS + (V15_PROFILE_EXTENSION
+                           if int(spec.get("schema_version", 0)) >= 15 else ())
 
 
 def read_spec(path: Path) -> Mapping[str, object]:
@@ -446,7 +453,7 @@ def run_command(repo: Path, spec: Mapping[str, object], identity: Mapping[str, o
         "--buffer", str(topology["buffer"]),
         "--monitor_profile", str(topology["monitor_profile"]),
     ]
-    for key in PROFILE_KEYS:
+    for key in profile_keys(spec):
         command.extend([f"--{key}", str(profile[key])])
     command.extend([
         "--guard_lifecycle_trace", "1", "--guard_lifecycle_max_lines",
@@ -521,7 +528,7 @@ def preflight(spec_path: Path, spec: Mapping[str, object], repo: Path,
         ordered.append({"ordinal": ordinal, **identity})
     probe_path = repo / str(spec["simulator_capability_probe"]["source"])
     frozen: Mapping[str, object] = {
-        "schema_version": 14, "created_at": _utc_now(),
+        "schema_version": int(spec["schema_version"]), "created_at": _utc_now(),
         "repo": str(repo.resolve()), "simulator_git_sha": sha,
         "git_dirty": False, "spec_path": str(spec_path.resolve()),
         "spec_sha256": sha256_file(spec_path),
@@ -537,7 +544,7 @@ def preflight(spec_path: Path, spec: Mapping[str, object], repo: Path,
     write_json(campaign_dir / "campaign.json", spec)
     write_json(campaign_dir / "preflight.json", frozen)
     write_json(campaign_dir / "stage-gate.json", {
-        "schema_version": 14, "preflight_sha256": sha256_file(
+        "schema_version": int(spec["schema_version"]), "preflight_sha256": sha256_file(
             campaign_dir / "preflight.json"),
         "replay_admission": None, "compatibility_execution_armed": False,
     })
@@ -550,7 +557,8 @@ def load_preflight(spec_path: Path, spec: Mapping[str, object], repo: Path,
     if path.is_symlink() or not path.is_file():
         raise CampaignError("missing preflight.json")
     preflight = json.loads(path.read_text(encoding="utf-8"))
-    if (preflight.get("schema_version") != 14 or preflight.get("git_dirty") or
+    if (preflight.get("schema_version") != int(spec["schema_version"]) or
+            preflight.get("git_dirty") or
             preflight.get("spec_sha256") != sha256_file(spec_path) or
             preflight.get("performance_metrics_permitted") is not False or
             preflight.get("resource_limits") != spec["resource_limits"]):
@@ -601,7 +609,7 @@ def _load_gate(campaign_dir: Path, preflight: Mapping[str, object]) -> Mapping[s
     if path.is_symlink() or not path.is_file():
         raise CampaignError("missing stage-gate.json")
     gate = json.loads(path.read_text(encoding="utf-8"))
-    if (gate.get("schema_version") != 14 or
+    if (gate.get("schema_version") != preflight.get("schema_version", 14) or
             gate.get("preflight_sha256") != sha256_file(campaign_dir / "preflight.json")):
         raise CampaignError("stage gate is detached from immutable preflight")
     return gate
@@ -631,7 +639,8 @@ def validate_sealed_replay(campaign_dir: Path, gate: Mapping[str, object],
     except (OSError, json.JSONDecodeError) as exc:
         raise CampaignError("sealed replay admission is not valid JSON") from exc
     runs = supplied.get("runs") if isinstance(supplied, dict) else None
-    if (not isinstance(supplied, dict) or supplied.get("schema_version") != 14 or
+    if (not isinstance(supplied, dict) or supplied.get("schema_version") !=
+            preflight.get("schema_version", 14) or
             supplied.get("scope") != REPLAY_SCOPE or
             supplied.get("status") != "admitted" or supplied.get("passed") is not True or
             supplied.get("mechanism_admission_passed") is not True or
@@ -776,7 +785,8 @@ def execute_scope(spec_path: Path, spec: Mapping[str, object], repo: Path,
         status = ("completed" if returncode == 0 and reason == "completed" and
                   output is not None else "failed")
         manifest: MutableMapping[str, object] = {
-            "schema_version": 14, "ordinal": ordinal, "scope": scope,
+            "schema_version": int(spec["schema_version"]), "ordinal": ordinal,
+            "scope": scope,
             "scenario": identity["scenario"], "seed": identity["seed"],
             "profile": identity["profile"], "status": status,
             "returncode": returncode, "stop_reason": reason,

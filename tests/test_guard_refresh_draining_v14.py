@@ -79,6 +79,27 @@ class GuardRefreshDrainingV14Test(unittest.TestCase):
                           "GuardSerializedDraining"):
             start = HW_CC.index('.AddAttribute("' + attribute + '"')
             self.assertIn("BooleanValue(false)", HW_CC[start:start + 600])
+        start = HW_CC.index('.AddAttribute("GuardCapacityAdmissionDeferral"')
+        self.assertIn("BooleanValue(false)", HW_CC[start:start + 600])
+
+    def test_v18_capacity_shortage_defers_without_consuming_membership(self):
+        start = HW_CC[HW_CC.index("void RdmaHw::StartGuardFastpathTransaction"):
+                      HW_CC.index("bool RdmaHw::ValidateGuardTransitionQueueCohort")]
+        self.assertLess(start.index("GuardFastpathTransactionFloorFits"),
+                        start.index("m_guardFastpathTransactionWaiters.clear()"))
+        self.assertLess(start.index("GuardFastpathTransactionFloorFits"),
+                        start.index("ConsumeGuardFastpathMembershipThrough"))
+        self.assertIn("m_guardCapacityAdmissionBlocked = true", start)
+        self.assertIn("m_guardCapacityAdmissionDeferrals++", start)
+        release = HW_CC[HW_CC.index("bool RdmaHw::ReleaseGuardDrainingOnCompletion"):
+                        HW_CC.index("bool RdmaHw::HandleRccRemove")]
+        self.assertLess(release.index("m_guardDrainingRecords.erase(found)"),
+                        release.index("StartGuardFastpathTransaction();"))
+        self.assertIn("m_guardCapacityAdmissionBlocked", release)
+        for token in ("--guard_capacity_admission_deferral",
+                      "guard_capacity_admission_deferral_config"):
+            self.assertIn(token, RUN)
+        self.assertIn("GUARD_CAPACITY_ADMISSION_DEFERRAL", DRIVER)
 
     def test_half_enabled_and_unsafe_combinations_fail_closed(self):
         self.assertIn(

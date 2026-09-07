@@ -1,0 +1,36 @@
+{
+  "schema_version": 15,
+  "name": "guard-v15-ack-clock-compatibility",
+  "base_spec": "experiments/guard_v14_compatibility.json",
+  "base_spec_sha256": "10966407ccdb5a027d83997cfea1c2290d2b759c100b616087eb13ba4cad85a7",
+  "minimum_simulator_commit": "69b56257ac2247fc165fef7477e3503f6a4f4118",
+  "candidate_only": true,
+  "performance_metrics_permitted": false,
+  "fresh_seeds": [146, 147, 148],
+  "profile_overrides": {
+    "final_guard": {
+      "guard_transition_prefix_fail_closed": 0,
+      "guard_transition_prefix_ack_clock_fallback": 1
+    },
+    "v13_replay_profile": {
+      "guard_transition_prefix_ack_clock_fallback": 0
+    }
+  },
+  "timeout_policy": {
+    "watchdog_interpretation": "diagnostic_trigger_not_end_to_end_service_bound",
+    "ready_path": "unchanged_single_required_activation_generation",
+    "timeout_path": "deterministic_required_ack_clocked_batches",
+    "batch_limit": 4,
+    "timeout_must_equal_degraded": true,
+    "fallback_batches_must_equal_closed_batches": true,
+    "every_timeout_must_emit_at_least_one_closed_batch": true,
+    "order_and_barrier_violations_max": 0,
+    "terminal_state_must_be_zero": true
+  },
+  "selection_policy": "V14 remains rejected. V15 freezes its explicit timeout policy, fresh seeds 146--148, all eight scenarios, gates, and limits before replay. No timeout constant, seed, scenario, or gate may change after preflight. Runner and analyzer must not open FCT or queue artifacts.",
+  "scope_limits": [
+    "The receiver-local watchdog is only a diagnostic trigger; V15 makes no deadline or queue-empty guarantee.",
+    "The ACK-clocked path preserves the frozen canonical vector and waits for every required ACK in a batch before sending the next batch.",
+    "This candidate-only campaign contains no HPCC or Homa arm and emits no performance result."
+  ]
+}

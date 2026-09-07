@@ -51,6 +51,26 @@ except ModuleNotFoundError:  # Direct execution from experiments/.
 BASE_TIME_SECONDS = 2.0
 
 
+# A current full-GUARD profile is an all-or-nothing protocol contract.  The
+# general-workload runner also supports the older paper campaigns, so only
+# require this complete set when any V17-era control is present.
+V17_GUARD_FIELDS = (
+    "guard_tail_congestion_gate", "guard_tail_safe_ratio",
+    "guard_tail_safe_samples", "guard_membership_coalesce_ns",
+    "guard_membership_coalesce_max_windows",
+    "guard_initial_collection_quiet_ns",
+    "guard_initial_collection_full_deadline", "guard_small_set_fastpath_limit",
+    "guard_transition_prefix_barrier",
+    "guard_transition_prefix_wire_watchdog",
+    "guard_transition_prefix_fail_closed",
+    "guard_transition_prefix_ack_clock_fallback",
+    "guard_mixed_pg_vector_fastpath", "guard_serialized_progress_refresh",
+    "guard_serialized_draining", "guard_grant_reliability_rtts",
+    "guard_cap_aware_reclaim", "guard_cap_headroom",
+    "guard_cap_min_share_fraction",
+)
+
+
 def read_spec(path: Path) -> Mapping[str, object]:
     with path.open(encoding="utf-8") as stream:
         spec = json.load(stream)
@@ -127,6 +147,13 @@ def read_spec(path: Path) -> Mapping[str, object]:
             missing = [field for field in concurrency_fields if field not in controls]
             raise CampaignError(
                 "bounded receiver concurrency must freeze both controls; missing "
+                + ", ".join(missing)
+            )
+        v17_present = [field for field in V17_GUARD_FIELDS if field in controls]
+        if v17_present and len(v17_present) != len(V17_GUARD_FIELDS):
+            missing = [field for field in V17_GUARD_FIELDS if field not in controls]
+            raise CampaignError(
+                "V17 GUARD profile must freeze the complete safety bundle; missing "
                 + ", ".join(missing)
             )
     return spec
@@ -391,13 +418,27 @@ def run_command(
         "guard_selective_registration", "guard_proactive_release",
         "guard_keep_last_hop_int", "guard_size_priority", "guard_sender_srpt",
         "guard_one_rtt_bypass", "guard_tail_bypass", "guard_tail_bypass_bdps",
+        "guard_tail_congestion_gate", "guard_tail_safe_ratio",
+        "guard_tail_safe_samples",
         "guard_adaptive_fabric_target", "guard_target_floor", "guard_queue_budget_bdps",
         "guard_adaptive_target_max_bdps",
         "guard_ack_interval_packets", "guard_fixed_window", "guard_remaining_aware",
         "guard_min_share_fraction", "guard_remaining_exponent",
         "guard_receiver_concurrency", "guard_concurrency_min_bdps",
         "guard_grant_refresh_bdps",
+        "guard_membership_coalesce_ns", "guard_membership_coalesce_max_windows",
+        "guard_initial_collection_quiet_ns",
+        "guard_initial_collection_full_deadline", "guard_small_set_fastpath_limit",
+        "guard_transition_prefix_barrier",
+        "guard_transition_prefix_wire_watchdog",
+        "guard_transition_prefix_fail_closed",
+        "guard_transition_prefix_ack_clock_fallback",
+        "guard_mixed_pg_vector_fastpath", "guard_serialized_progress_refresh",
+        "guard_serialized_draining", "guard_capacity_admission_deferral",
+        "guard_grant_reliability_rtts",
         "guard_srpt_quantum_packets", "guard_work_conserving",
+        "guard_cap_aware_reclaim", "guard_cap_headroom",
+        "guard_cap_min_share_fraction",
         "guard_rebalance_interval_us", "guard_demand_threshold",
         "guard_receiver_util_threshold",
     )

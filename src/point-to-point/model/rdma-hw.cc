@@ -322,6 +322,14 @@ TypeId RdmaHw::GetTypeId(void) {
                           MakeBooleanAccessor(
                               &RdmaHw::m_guardTransitionPrefixFailClosed),
                           MakeBooleanChecker())
+            .AddAttribute("GuardTransitionPrefixAckClockFallback",
+                          "For the V15 mixed-PG bundle, treat the receiver-local "
+                          "watchdog as a diagnostic trigger and activate frozen "
+                          "waiters in required-ACK-clocked batches",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(
+                              &RdmaHw::m_guardTransitionPrefixAckClockFallback),
+                          MakeBooleanChecker())
             .AddAttribute("GuardMixedPgVectorFastpath",
                           "Use one canonical, receiver-capacity-bounded target vector "
                           "across priority groups; disabled by default",
@@ -339,6 +347,13 @@ TypeId RdmaHw::GetTypeId(void) {
                           "contiguous receiver completion; disabled by default",
                           BooleanValue(false),
                           MakeBooleanAccessor(&RdmaHw::m_guardSerializedDraining),
+                          MakeBooleanChecker())
+            .AddAttribute("GuardCapacityAdmissionDeferral",
+                          "Delay a frozen waiter transaction while draining "
+                          "reservations cannot fund every sender minimum rate",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(
+                              &RdmaHw::m_guardCapacityAdmissionDeferral),
                           MakeBooleanChecker())
             .AddAttribute("GuardSrptQuantumPackets",
                           "Maximum consecutive SRPT packets before one round-robin service",
@@ -526,6 +541,9 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardVectorFreezes = 0;
     m_guardVectorMixedPgFreezes = 0;
     m_guardVectorMaxEntries = 0;
+    m_guardVectorMaxPriorityGroups = 0;
+    m_guardVectorMixedPriorityGroupMask = 0;
+    m_guardVectorAllPriorityGroupMask = 0;
     m_guardVectorPrepareDecreases = 0;
     m_guardVectorActivationWaiters = 0;
     m_guardVectorActivationIncreases = 0;
@@ -624,9 +642,15 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardTransitionPrefixBarrierEnabled = false;
     m_guardTransitionPrefixWireWatchdogEnabled = false;
     m_guardTransitionPrefixFailClosed = false;
+    m_guardTransitionPrefixAckClockFallback = false;
     m_guardMixedPgVectorFastpath = false;
     m_guardSerializedProgressRefresh = false;
     m_guardSerializedDraining = false;
+    m_guardCapacityAdmissionDeferral = false;
+    m_guardCapacityAdmissionBlocked = false;
+    m_guardCapacityAdmissionDeferrals = 0;
+    m_guardCapacityAdmissionResumes = 0;
+    m_guardCapacityAdmissionMaxWaiters = 0;
     m_guardFastpathPhase = GUARD_FASTPATH_IDLE;
     m_guardFastpathHighFanIn = false;
     m_guardFastpathHighInitialCollectionFlushed = false;
@@ -2664,6 +2688,18 @@ bool RdmaHw::ReleaseGuardDrainingOnCompletion(
                     "GUARD V14 completion found an invalid drain state");
     m_guardDrainingRecords.erase(found);
     m_guardDrainingCompletionReleases++;
+    if (m_guardCapacityAdmissionBlocked) {
+        NS_ABORT_MSG_IF(!m_guardCapacityAdmissionDeferral ||
+                            m_guardFastpathPhase != GUARD_FASTPATH_IDLE ||
+                            m_guardPendingGrantAcks != 0 ||
+                            m_guardFrozenVectorActive,
+                        "GUARD V18 capacity resume crossed serialized state");
+        StartGuardFastpathTransaction();
+        // Either the newly freed reservation admitted the immutable cohort,
+        // or more draining capacity must still complete.  In both cases the
+        // resumed membership vector already owns the capacity change.
+        return true;
+    }
     if (m_rate_flow_ctl_set.empty()) {
         // More than one D can complete at the same simulation time after the
         // last ACTIVE flow has left.  The first completion must preserve the
@@ -3014,6 +3050,7 @@ void RdmaHw::ResetGuardFastpathEpoch() {
     m_guardCapacityDirty = false;
     m_guardApplyingPendingDrains = false;
     m_guardTerminalResetDeferred = false;
+    m_guardCapacityAdmissionBlocked = false;
     m_guardProgressDirtyFlows.clear();
     m_guardProgressTransactionFlows.clear();
     m_guardFrozenVectorHash = 0;
@@ -3351,6 +3388,7 @@ bool RdmaHw::CanResetGuardCoordinator() const {
            m_guardPendingGrantAcks == 0 &&
            !m_guardProgressTransactionActive &&
            !m_guardProgressTransactionCapacityDirty &&
+           !m_guardCapacityAdmissionBlocked &&
            !m_guardTerminalResetDeferred &&
            m_guardProgressDirtyFlows.empty() &&
            m_guardProgressTransactionFlows.empty() && !m_guardCapacityDirty;
@@ -3660,7 +3698,19 @@ void RdmaHw::FreezeGuardFastpathTargetVector(uint64_t membership_revision) {
     std::unordered_set<uint16_t> priority_groups;
     for (const auto &target : m_guardFrozenTargetVector)
         priority_groups.emplace(target.identity.pg);
-    if (priority_groups.size() > 1) m_guardVectorMixedPgFreezes++;
+    uint64_t priority_group_mask = 0;
+    for (uint16_t priority_group : priority_groups) {
+        NS_ABORT_MSG_IF(priority_group >= 64,
+                        "GUARD V16 priority group cannot be represented in audit mask");
+        priority_group_mask |= 1ULL << priority_group;
+    }
+    m_guardVectorMaxPriorityGroups = std::max<uint64_t>(
+        m_guardVectorMaxPriorityGroups, priority_groups.size());
+    m_guardVectorAllPriorityGroupMask |= priority_group_mask;
+    if (priority_groups.size() > 1) {
+        m_guardVectorMixedPgFreezes++;
+        m_guardVectorMixedPriorityGroupMask |= priority_group_mask;
+    }
     m_guardVectorLastHash = m_guardFrozenVectorHash;
 }
 
@@ -3752,6 +3802,18 @@ uint64_t RdmaHw::ComputeGuardDrainingReservationBps(
     uint64_t effective_min_bps) {
     return std::max(effective_min_bps,
                     std::max(last_acked_bps, last_issued_bps));
+}
+
+bool RdmaHw::CanGuardAllocationFloorFit(
+    uint64_t capacity_bps, uint64_t draining_bps,
+    uint64_t active_records, uint64_t effective_min_bps) {
+    if (capacity_bps == 0 || active_records == 0 || effective_min_bps == 0 ||
+        draining_bps > capacity_bps) {
+        return false;
+    }
+    __uint128_t required = static_cast<__uint128_t>(active_records) *
+                           effective_min_bps;
+    return required <= capacity_bps - draining_bps;
 }
 
 bool RdmaHw::CanReleaseGuardDraining(uint64_t flow_size_bytes,
@@ -3870,10 +3932,65 @@ void RdmaHw::RetireGuardRequiredAck(
         m_guardRetiredAckPeak, m_guardRetiredAckRecords.size());
 }
 
+bool RdmaHw::GuardFastpathTransactionFloorFits(
+    uint64_t *live_waiters) {
+    const std::unordered_set<RdmaRxQueuePair*> &candidate_waiters =
+        m_guardFastpathCollectionReady ? m_guardFastpathReadyWaiters
+                                       : m_guardFastpathWaiters;
+    std::unordered_set<RdmaRxQueuePair*> cohort;
+    for (auto *flow : m_guardFastpathIncumbents) {
+        if (m_rate_flow_ctl_set.find(flow) != m_rate_flow_ctl_set.end())
+            cohort.emplace(flow);
+    }
+    uint64_t waiter_count = 0;
+    for (auto *flow : candidate_waiters) {
+        if (m_rate_flow_ctl_set.find(flow) != m_rate_flow_ctl_set.end() &&
+            cohort.emplace(flow).second) {
+            waiter_count++;
+        }
+    }
+    if (live_waiters != NULL) *live_waiters = waiter_count;
+    if (cohort.empty()) return true;
+    RdmaRxQueuePair *sample = *cohort.begin();
+    uint32_t receiver_nic = GetNicIdxOfRxQp(sample);
+    uint64_t capacity_bps =
+        m_nic[receiver_nic].dev->GetDataRate().GetBitRate();
+    uint64_t draining_bps = GetGuardDrainingReservedBps(receiver_nic);
+    NS_ABORT_MSG_IF(draining_bps > capacity_bps,
+                    "GUARD V18 draining reservation exceeds receiver capacity");
+    for (auto *flow : cohort) {
+        NS_ABORT_MSG_IF(GetNicIdxOfRxQp(flow) != receiver_nic,
+                        "GUARD V18 floor admission spans receiver NICs");
+    }
+    uint64_t minimum_mbps = m_minRate.GetBitRate() / 1000000ULL +
+        (m_minRate.GetBitRate() % 1000000ULL != 0 ? 1 : 0);
+    return CanGuardAllocationFloorFit(
+        capacity_bps, draining_bps, cohort.size(),
+        minimum_mbps * 1000000ULL);
+}
+
 void RdmaHw::StartGuardFastpathTransaction() {
     NS_ABORT_MSG_IF(m_guardFastpathPhase != GUARD_FASTPATH_IDLE ||
                         m_guardPendingGrantAcks != 0,
                     "GUARD fast-path transaction crossed an ACK barrier");
+    if (m_guardCapacityAdmissionDeferral) {
+        uint64_t live_waiters = 0;
+        if (!GuardFastpathTransactionFloorFits(&live_waiters)) {
+            NS_ABORT_MSG_IF(m_guardDrainingRecords.empty(),
+                            "GUARD V18 floor shortage lacks a draining release");
+            if (!m_guardCapacityAdmissionBlocked) {
+                m_guardCapacityAdmissionBlocked = true;
+                m_guardCapacityAdmissionDeferrals++;
+            }
+            m_guardCapacityAdmissionMaxWaiters = std::max(
+                m_guardCapacityAdmissionMaxWaiters, live_waiters);
+            return;
+        }
+        if (m_guardCapacityAdmissionBlocked) {
+            m_guardCapacityAdmissionBlocked = false;
+            m_guardCapacityAdmissionResumes++;
+        }
+    }
     m_guardFastpathTransactionWaiters.clear();
     m_guardFastpathTransactionIsTransition =
         m_guardFastpathCollectionReady && m_guardFastpathHighFanIn &&
@@ -4914,6 +5031,11 @@ void RdmaHw::CheckGuardTransitionPrefixBarrier() {
         NS_ABORT_MSG(
             "GUARD V14 fail-closed transition prefix deadline expired");
     }
+    NS_ABORT_MSG_IF(
+        m_guardMixedPgVectorFastpath &&
+            !m_guardTransitionPrefixAckClockFallback,
+        "GUARD mixed-PG prefix timeout lacks an explicitly enabled "
+        "ACK-clocked fallback policy");
     m_guardTransitionFallbackActive = true;
     m_guardTransitionActivationCursor = 0;
     m_guardTransitionActivationBatchIndex = 0;

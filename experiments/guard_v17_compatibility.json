@@ -1,0 +1,25 @@
+{
+  "schema_version": 17,
+  "name": "guard-v17-mixed-vector-compatibility",
+  "base_spec": "experiments/guard_v16_compatibility.json",
+  "base_spec_sha256": "9f5147adbd3f25dfbfc57faf4a8c502a96bdadde65f0499cd25f462133bd5c68",
+  "minimum_simulator_commit": "1c4769658e45a48977fc302625217435358b68f4",
+  "candidate_only": true,
+  "performance_metrics_permitted": false,
+  "fresh_seeds": [152, 153, 154],
+  "pg_provenance_policy": {
+    "source": "runtime exact GuardQpIdentity.pg in every frozen target vector",
+    "mixed_scenario_all_priority_group_mask": 240,
+    "mixed_scenario_mixed_freezes_min": 1,
+    "mixed_scenario_max_priority_groups_min": 2,
+    "mixed_scenario_mixed_mask_popcount_min": 2,
+    "arrival_grouping_constraint": "none",
+    "claim": "the run covers runtime PG4--PG7 and at least one canonical target vector spans multiple priority groups"
+  },
+  "selection_policy": "V16 remains rejected because its exact three-PG grouping predicate constrained incidental registration order rather than the mixed-vector safety property. V17 freezes fresh seeds 152--154 and requires runtime PG4--PG7 coverage plus at least one vector spanning two or more PGs. The V15 ACK-clock mechanism, eight scenarios, safety gates, resources, and timeout constants remain unchanged. No performance artifact may be opened.",
+  "scope_limits": [
+    "V17 changes the evidence predicate only; it does not change simulator behavior or reclassify V16.",
+    "Runtime masks come directly from exact frozen-vector identities and mixed-vector cardinality is checked per run.",
+    "This candidate-only campaign contains no HPCC or Homa arm and emits no performance result."
+  ]
+}

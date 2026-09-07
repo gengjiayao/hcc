@@ -223,9 +223,11 @@ uint32_t guard_small_set_fastpath_limit = 0;
 bool guard_transition_prefix_barrier = false;
 bool guard_transition_prefix_wire_watchdog = false;
 bool guard_transition_prefix_fail_closed = false;
+bool guard_transition_prefix_ack_clock_fallback = false;
 bool guard_mixed_pg_vector_fastpath = false;
 bool guard_serialized_progress_refresh = false;
 bool guard_serialized_draining = false;
+bool guard_capacity_admission_deferral = false;
 double guard_grant_reliability_rtts = 0.0;
 uint32_t guard_srpt_quantum_packets = 64;
 bool guard_work_conserving = false;
@@ -1442,6 +1444,16 @@ int main(int argc, char *argv[]) {
                 guard_transition_prefix_fail_closed = enabled != 0;
                 std::cerr << "GUARD_TRANSITION_PREFIX_FAIL_CLOSED\t"
                           << enabled << '\n';
+            } else if (key.compare("GUARD_TRANSITION_PREFIX_ACK_CLOCK_FALLBACK") == 0) {
+                uint32_t enabled;
+                conf >> enabled;
+                if (enabled > 1) {
+                    std::cerr << "GUARD_TRANSITION_PREFIX_ACK_CLOCK_FALLBACK must be 0 or 1\n";
+                    return 1;
+                }
+                guard_transition_prefix_ack_clock_fallback = enabled != 0;
+                std::cerr << "GUARD_TRANSITION_PREFIX_ACK_CLOCK_FALLBACK\t"
+                          << enabled << '\n';
             } else if (key.compare("GUARD_MIXED_PG_VECTOR_FASTPATH") == 0) {
                 uint32_t enabled;
                 conf >> enabled;
@@ -1471,6 +1483,16 @@ int main(int argc, char *argv[]) {
                 }
                 guard_serialized_draining = enabled != 0;
                 std::cerr << "GUARD_SERIALIZED_DRAINING\t" << enabled << '\n';
+            } else if (key.compare("GUARD_CAPACITY_ADMISSION_DEFERRAL") == 0) {
+                uint32_t enabled;
+                conf >> enabled;
+                if (enabled > 1) {
+                    std::cerr << "GUARD_CAPACITY_ADMISSION_DEFERRAL must be 0 or 1\n";
+                    return 1;
+                }
+                guard_capacity_admission_deferral = enabled != 0;
+                std::cerr << "GUARD_CAPACITY_ADMISSION_DEFERRAL\t"
+                          << enabled << '\n';
             } else if (key.compare("GUARD_SRPT_QUANTUM_PACKETS") == 0) {
                 conf >> guard_srpt_quantum_packets;
                 std::cerr << "GUARD_SRPT_QUANTUM_PACKETS\t"
@@ -1926,10 +1948,19 @@ int main(int argc, char *argv[]) {
                   << "CC_MODE 11\n";
         return 1;
     }
+    if (guard_transition_prefix_ack_clock_fallback &&
+        (!guard_transition_prefix_wire_watchdog ||
+         guard_transition_prefix_fail_closed || cc_mode != 11)) {
+        std::cerr << "GUARD V15 ACK-clocked prefix fallback requires CC_MODE 11, "
+                  << "the wire watchdog, and fail-closed mode disabled\n";
+        return 1;
+    }
     if (guard_mixed_pg_vector_fastpath &&
-        (!guard_transition_prefix_fail_closed || cc_mode != 11)) {
+        (cc_mode != 11 ||
+         (!guard_transition_prefix_fail_closed &&
+          !guard_transition_prefix_ack_clock_fallback))) {
         std::cerr << "GUARD V14 mixed-PG vector fast path requires CC_MODE 11 "
-                  << "and the fail-closed V14 prefix chain\n";
+                  << "and the V14 fail-closed or V15 ACK-clocked prefix chain\n";
         return 1;
     }
     if (guard_serialized_progress_refresh != guard_serialized_draining) {
@@ -1941,6 +1972,13 @@ int main(int argc, char *argv[]) {
          guard_grant_refresh_bdps <= 0 || !guard_proactive_release || cc_mode != 11)) {
         std::cerr << "GUARD V14 refresh/draining requires full GUARD, the mixed-PG "
                   << "vector, remaining-aware refresh, and proactive release\n";
+        return 1;
+    }
+    if (guard_capacity_admission_deferral &&
+        (!guard_serialized_draining || !guard_mixed_pg_vector_fastpath ||
+         guard_small_set_fastpath_limit != 4 || cc_mode != 11)) {
+        std::cerr << "GUARD V18 capacity admission deferral requires full GUARD, "
+                  << "serialized draining, and the mixed-vector fast path\n";
         return 1;
     }
     if (guard_membership_coalesce_ns > 0) {
@@ -2479,6 +2517,9 @@ int main(int argc, char *argv[]) {
                 "GuardTransitionPrefixFailClosed",
                 BooleanValue(guard_transition_prefix_fail_closed));
             rdmaHw->SetAttribute(
+                "GuardTransitionPrefixAckClockFallback",
+                BooleanValue(guard_transition_prefix_ack_clock_fallback));
+            rdmaHw->SetAttribute(
                 "GuardMixedPgVectorFastpath",
                 BooleanValue(guard_mixed_pg_vector_fastpath));
             rdmaHw->SetAttribute(
@@ -2487,6 +2528,9 @@ int main(int argc, char *argv[]) {
             rdmaHw->SetAttribute(
                 "GuardSerializedDraining",
                 BooleanValue(guard_serialized_draining));
+            rdmaHw->SetAttribute(
+                "GuardCapacityAdmissionDeferral",
+                BooleanValue(guard_capacity_admission_deferral));
             rdmaHw->SetAttribute("GuardSrptQuantumPackets",
                                  UintegerValue(guard_srpt_quantum_packets));
             rdmaHw->SetAttribute("GuardWorkConserving", BooleanValue(guard_work_conserving));
@@ -3146,6 +3190,9 @@ int main(int argc, char *argv[]) {
     uint64_t total_vector_freezes = 0;
     uint64_t total_vector_mixed_pg_freezes = 0;
     uint64_t max_vector_entries = 0;
+    uint64_t max_vector_priority_groups = 0;
+    uint64_t mixed_vector_priority_group_mask = 0;
+    uint64_t all_vector_priority_group_mask = 0;
     uint64_t total_vector_prepare_decreases = 0;
     uint64_t total_vector_activation_waiters = 0;
     uint64_t total_vector_activation_increases = 0;
@@ -3169,6 +3216,10 @@ int main(int argc, char *argv[]) {
     uint64_t terminal_draining_records = 0;
     uint64_t terminal_draining_reserved_bps = 0;
     uint64_t terminal_progress_dirty = 0;
+    uint64_t total_capacity_admission_deferrals = 0;
+    uint64_t total_capacity_admission_resumes = 0;
+    uint64_t max_capacity_admission_waiters = 0;
+    uint64_t terminal_capacity_admission_blocked = 0;
     uint64_t max_join_queue = 0;
     uint64_t max_high_transition_registered_n = 0;
     uint64_t max_high_transition_waiters = 0;
@@ -3411,6 +3462,12 @@ int main(int argc, char *argv[]) {
         total_vector_mixed_pg_freezes += hw->m_guardVectorMixedPgFreezes;
         max_vector_entries = std::max(max_vector_entries,
                                       hw->m_guardVectorMaxEntries);
+        max_vector_priority_groups = std::max(
+            max_vector_priority_groups, hw->m_guardVectorMaxPriorityGroups);
+        mixed_vector_priority_group_mask |=
+            hw->m_guardVectorMixedPriorityGroupMask;
+        all_vector_priority_group_mask |=
+            hw->m_guardVectorAllPriorityGroupMask;
         total_vector_prepare_decreases += hw->m_guardVectorPrepareDecreases;
         total_vector_activation_waiters += hw->m_guardVectorActivationWaiters;
         total_vector_activation_increases += hw->m_guardVectorActivationIncreases;
@@ -3443,6 +3500,15 @@ int main(int argc, char *argv[]) {
             max_draining_reserved_bps, hw->m_guardDrainingMaxReservedBps);
         terminal_draining_records += hw->m_guardDrainingRecords.size();
         terminal_progress_dirty += hw->m_guardProgressDirtyFlows.size();
+        total_capacity_admission_deferrals +=
+            hw->m_guardCapacityAdmissionDeferrals;
+        total_capacity_admission_resumes +=
+            hw->m_guardCapacityAdmissionResumes;
+        max_capacity_admission_waiters = std::max(
+            max_capacity_admission_waiters,
+            hw->m_guardCapacityAdmissionMaxWaiters);
+        terminal_capacity_admission_blocked +=
+            hw->m_guardCapacityAdmissionBlocked ? 1 : 0;
         for (const auto &item : hw->m_guardDrainingRecords) {
             if (item.second.state == GUARD_DRAINING)
                 terminal_draining_reserved_bps += item.second.reservedBps;
@@ -3910,12 +3976,17 @@ int main(int argc, char *argv[]) {
     if (guard_mixed_pg_vector_fastpath) {
         fprintf(guard_stats_output,
                 "guard_mixed_pg_vector enabled 1 freezes %lu mixed_pg_freezes %lu "
-                "max_entries %lu prepare_decreases %lu activation_waiters %lu "
+                "max_entries %lu max_priority_groups %lu "
+                "mixed_priority_group_mask %lu all_priority_group_mask %lu "
+                "prepare_decreases %lu activation_waiters %lu "
                 "activation_increases %lu release_required %lu release_optional %lu "
                 "last_hash_xor %lu terminal_records %lu terminal_holds %lu "
                 "terminal_ledger %lu\n",
                 total_vector_freezes, total_vector_mixed_pg_freezes,
-                max_vector_entries, total_vector_prepare_decreases,
+                max_vector_entries, max_vector_priority_groups,
+                mixed_vector_priority_group_mask,
+                all_vector_priority_group_mask,
+                total_vector_prepare_decreases,
                 total_vector_activation_waiters,
                 total_vector_activation_increases,
                 total_vector_release_required, total_vector_release_optional,
@@ -3950,6 +4021,16 @@ int main(int argc, char *argv[]) {
             total_draining_completion_releases, max_draining_records,
             max_draining_reserved_bps, terminal_draining_records,
             terminal_draining_reserved_bps, terminal_progress_dirty);
+    }
+    if (guard_capacity_admission_deferral) {
+        fprintf(
+            guard_stats_output,
+            "guard_capacity_admission enabled 1 deferrals %lu resumes %lu "
+            "max_waiters %lu terminal_blocked %lu\n",
+            total_capacity_admission_deferrals,
+            total_capacity_admission_resumes,
+            max_capacity_admission_waiters,
+            terminal_capacity_admission_blocked);
     }
     if (guard_transition_prefix_barrier) {
         fprintf(guard_stats_output,
@@ -3991,6 +4072,10 @@ int main(int argc, char *argv[]) {
             terminal_transition_future_queue,
             terminal_transition_current_batch, terminal_transition_targets,
             terminal_transition_holds);
+    }
+    if (guard_transition_prefix_ack_clock_fallback) {
+        fprintf(guard_stats_output,
+                "guard_transition_prefix_ack_clock_fallback enabled 1\n");
     }
     if (guard_transition_prefix_wire_watchdog) {
         bool global_watchdog_non_reconstructable =

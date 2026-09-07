@@ -119,8 +119,8 @@ GUARD_INITIAL_COLLECTION_QUIET_NS {guard_initial_collection_quiet_ns}
 GUARD_INITIAL_COLLECTION_FULL_DEADLINE {guard_initial_collection_full_deadline}
 GUARD_SMALL_SET_FASTPATH_LIMIT {guard_small_set_fastpath_limit}
 GUARD_TRANSITION_PREFIX_BARRIER {guard_transition_prefix_barrier}
-{guard_transition_prefix_fail_closed_config}{guard_transition_prefix_wire_watchdog_config}GUARD_GRANT_RELIABILITY_RTTS {guard_grant_reliability_rtts}
-{guard_mixed_pg_vector_fastpath_config}{guard_serialized_progress_refresh_config}{guard_serialized_draining_config}GUARD_SRPT_QUANTUM_PACKETS {guard_srpt_quantum_packets}
+{guard_transition_prefix_fail_closed_config}{guard_transition_prefix_wire_watchdog_config}{guard_transition_prefix_ack_clock_fallback_config}GUARD_GRANT_RELIABILITY_RTTS {guard_grant_reliability_rtts}
+{guard_mixed_pg_vector_fastpath_config}{guard_serialized_progress_refresh_config}{guard_serialized_draining_config}{guard_capacity_admission_deferral_config}GUARD_SRPT_QUANTUM_PACKETS {guard_srpt_quantum_packets}
 GUARD_WORK_CONSERVING {guard_work_conserving}
 GUARD_CAP_AWARE_RECLAIM {guard_cap_aware_reclaim}
 GUARD_CAP_HEADROOM {guard_cap_headroom}
@@ -493,6 +493,9 @@ def main():
     parser.add_argument('--guard_transition_prefix_fail_closed', type=int,
                         choices=(0, 1), default=0,
                         help="V14 abort-on-prefix-deadline policy (default: 0)")
+    parser.add_argument('--guard_transition_prefix_ack_clock_fallback', type=int,
+                        choices=(0, 1), default=0,
+                        help="V15 required-ACK-clocked mixed-PG timeout fallback (default: 0)")
     parser.add_argument('--guard_mixed_pg_vector_fastpath', type=int,
                         choices=(0, 1), default=0,
                         help="V14 canonical vector across receiver priority groups (default: 0)")
@@ -502,6 +505,9 @@ def main():
     parser.add_argument('--guard_serialized_draining', type=int,
                         choices=(0, 1), default=0,
                         help="V14 capacity reservation for proactive draining (default: 0)")
+    parser.add_argument('--guard_capacity_admission_deferral', type=int,
+                        choices=(0, 1), default=0,
+                        help="V18 wait for draining capacity before admitting a frozen cohort (default: 0)")
     parser.add_argument('--guard_grant_reliability_rtts', type=float, default=0.0,
                         help="cached grant refresh in equal-share service rounds [0,64] (default: 0)")
     parser.add_argument('--guard_srpt_quantum_packets', type=int, default=64,
@@ -692,11 +698,19 @@ def main():
     if args.guard_transition_prefix_fail_closed and args.cc != "guard":
         raise Exception(
             "CONFIG ERROR: V14 fail-closed prefix deadlines require full GUARD mode.")
+    if args.guard_transition_prefix_ack_clock_fallback and (
+            not args.guard_transition_prefix_wire_watchdog or
+            args.guard_transition_prefix_fail_closed or args.cc != "guard"):
+        raise Exception(
+            "CONFIG ERROR: V15 ACK-clocked prefix fallback requires full GUARD, "
+            "the wire watchdog, and fail-closed mode disabled.")
     if (args.guard_mixed_pg_vector_fastpath and
-            (not args.guard_transition_prefix_fail_closed or args.cc != "guard")):
+            (args.cc != "guard" or
+             not (args.guard_transition_prefix_fail_closed or
+                  args.guard_transition_prefix_ack_clock_fallback))):
         raise Exception(
             "CONFIG ERROR: V14 mixed-PG vector fast path requires full GUARD "
-            "and --guard_transition_prefix_fail_closed 1.")
+            "and either the V14 fail-closed policy or the V15 ACK-clocked fallback.")
     if args.guard_serialized_progress_refresh != args.guard_serialized_draining:
         raise Exception(
             "CONFIG ERROR: V14 refresh/draining must be enabled as one fail-closed bundle.")
@@ -708,6 +722,13 @@ def main():
         raise Exception(
             "CONFIG ERROR: V14 refresh/draining requires full GUARD, mixed-PG vector, "
             "remaining-aware refresh, and proactive release.")
+    if args.guard_capacity_admission_deferral and (
+            not args.guard_serialized_draining or
+            not args.guard_mixed_pg_vector_fastpath or
+            args.guard_small_set_fastpath_limit != 4 or args.cc != "guard"):
+        raise Exception(
+            "CONFIG ERROR: V18 capacity admission deferral requires full GUARD, "
+            "serialized draining, and mixed-vector limit 4.")
     if not 0.0 < args.guard_demand_threshold < 1.0:
         raise Exception("CONFIG ERROR: --guard_demand_threshold must be in (0, 1).")
     if not 0.0 < args.guard_receiver_util_threshold < 1.0:
@@ -1144,6 +1165,9 @@ def main():
                                         guard_transition_prefix_fail_closed_config=(
                                             "GUARD_TRANSITION_PREFIX_FAIL_CLOSED 1\n"
                                             if args.guard_transition_prefix_fail_closed else ""),
+                                        guard_transition_prefix_ack_clock_fallback_config=(
+                                            "GUARD_TRANSITION_PREFIX_ACK_CLOCK_FALLBACK 1\n"
+                                            if args.guard_transition_prefix_ack_clock_fallback else ""),
                                         guard_mixed_pg_vector_fastpath_config=(
                                             "GUARD_MIXED_PG_VECTOR_FASTPATH 1\n"
                                             if args.guard_mixed_pg_vector_fastpath else ""),
@@ -1153,6 +1177,9 @@ def main():
                                         guard_serialized_draining_config=(
                                             "GUARD_SERIALIZED_DRAINING 1\n"
                                             if args.guard_serialized_draining else ""),
+                                        guard_capacity_admission_deferral_config=(
+                                            "GUARD_CAPACITY_ADMISSION_DEFERRAL 1\n"
+                                            if args.guard_capacity_admission_deferral else ""),
                                         guard_grant_reliability_rtts=args.guard_grant_reliability_rtts,
                                         guard_srpt_quantum_packets=args.guard_srpt_quantum_packets,
                                         guard_work_conserving=args.guard_work_conserving,

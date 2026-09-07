@@ -22,6 +22,7 @@ from experiments.summarize_general_workloads import (
     mechanism_checks,
     homa_completion_checks,
     parse_controller,
+    validate_config,
 )
 
 
@@ -52,6 +53,38 @@ class GeneralWorkloadRunnerTests(unittest.TestCase):
             path.write_text("1\n0 1 4 1000 2.000001\n")
             with self.assertRaisesRegex(CampaignError, "expected PG3"):
                 inspect_flow_file(path, hosts=2, duration=0.02, expected_pg=3)
+
+    def test_absent_opt_in_fail_closed_flag_means_disabled(self):
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = (Path(directory) / "flow.txt").resolve()
+            snapshot.write_text("0\n")
+            manifest = {
+                "seed": 160,
+                "output_dir": str(Path(directory).resolve()),
+            }
+            spec = {
+                "defaults": {"guard_transition_prefix_fail_closed": 0},
+                "arms": {"guard": {"cc": "guard"}},
+            }
+            config = {
+                "CC_MODE": "11",
+                "ENABLE_PFC": "1",
+                "ENABLE_IRN": "0",
+                "RANDOM_SEED": "160",
+                "PREFLIGHT_MAX_FLOWS": "10000",
+                "MONITOR_PROFILE": "bulk",
+                "GUARD_CONTROLLER_TRACE": "0",
+                "FLOW_FILE": str(snapshot),
+            }
+            self.assertEqual(
+                validate_config(config, manifest, "guard", False, snapshot, spec),
+                [],
+            )
+            config["GUARD_TRANSITION_PREFIX_FAIL_CLOSED"] = "1"
+            self.assertIn(
+                "GUARD_TRANSITION_PREFIX_FAIL_CLOSED=1, expected 0",
+                validate_config(config, manifest, "guard", False, snapshot, spec),
+            )
 
     def test_only_single_predeclared_fallback_can_rescue_flow_cap(self):
         def traces(*counts):
@@ -209,6 +242,76 @@ class GeneralWorkloadRunnerTests(unittest.TestCase):
         )
         self.assertEqual(spec["defaults"]["guard_receiver_concurrency"], 1)
         self.assertEqual(spec["defaults"]["guard_concurrency_min_bdps"], 12.0)
+
+    def test_v17_development_profile_passes_complete_safety_bundle(self):
+        spec = read_spec(
+            self.repo / "experiments/campaigns/guard_v17_ali50_development.json"
+        )
+        self.assertTrue(spec["development_only"])
+        self.assertEqual(spec["seeds"], [155, 156, 157, 158, 159])
+        workload = {
+            "name": "AliStorage50", "cdf": "AliStorage2019",
+            "selected_profile": "primary",
+            "attempts": {"primary": {"profile": {
+                "topo": "leaf_spine_8_100G_OS2", "hosts": 8,
+                "oversubscription": 2, "simul_time": 0.01,
+                "netload": 50, "bw": 100,
+            }}},
+        }
+        trace = {"seed": 155, "path": "/tmp/v17-flow.txt", "sha256": "same"}
+        command = run_command(self.repo, spec, workload, trace, "guard", True)
+        exact = {
+            "--guard_membership_coalesce_ns": "12480",
+            "--guard_initial_collection_quiet_ns": "16640",
+            "--guard_small_set_fastpath_limit": "4",
+            "--guard_transition_prefix_barrier": "1",
+            "--guard_transition_prefix_wire_watchdog": "1",
+            "--guard_transition_prefix_fail_closed": "0",
+            "--guard_transition_prefix_ack_clock_fallback": "1",
+            "--guard_mixed_pg_vector_fastpath": "1",
+            "--guard_serialized_progress_refresh": "1",
+            "--guard_serialized_draining": "1",
+            "--guard_grant_reliability_rtts": "2.0",
+        }
+        for option, value in exact.items():
+            self.assertEqual(command[command.index(option) + 1], value)
+        self.assertNotIn("--guard_controller_trace", command)
+
+    def test_v17_profile_rejects_partial_safety_bundle(self):
+        path = self.repo / "experiments/campaigns/guard_v17_ali50_development.json"
+        value = json.loads(path.read_text())
+        del value["defaults"]["guard_serialized_draining"]
+        with tempfile.TemporaryDirectory() as directory:
+            partial = Path(directory) / "partial.json"
+            partial.write_text(json.dumps(value))
+            with self.assertRaisesRegex(CampaignError, "complete safety bundle"):
+                read_spec(partial)
+
+    def test_v18_freezes_capacity_admission_and_fresh_seeds(self):
+        spec = read_spec(
+            self.repo / "experiments/campaigns/guard_v18_ali50_development.json"
+        )
+        self.assertEqual(spec["mechanism_profile"], "V18")
+        self.assertEqual(spec["seeds"], [160, 161, 162, 163, 164])
+        workload = {
+            "name": "AliStorage50", "cdf": "AliStorage2019",
+            "selected_profile": "primary",
+            "attempts": {"primary": {"profile": {
+                "topo": "leaf_spine_8_100G_OS2", "hosts": 8,
+                "oversubscription": 2, "simul_time": 0.01,
+                "netload": 50, "bw": 100,
+            }}},
+        }
+        trace = {"seed": 160, "path": "/tmp/v18-flow.txt", "sha256": "same"}
+        command = run_command(self.repo, spec, workload, trace, "guard", True)
+        option = "--guard_capacity_admission_deferral"
+        self.assertEqual(command[command.index(option) + 1], "1")
+
+    def test_v17_mechanism_gate_has_no_performance_artifact_reader(self):
+        source = (self.repo / "experiments/analyze_guard_v17_general_mechanisms.py").read_text()
+        for forbidden in ("_out_fct", "_out_queue_stats", "parse_fct(",
+                          "queue_summary_metrics("):
+            self.assertNotIn(forbidden, source)
 
     def test_formal_plan_requires_passing_workload_and_excludes_seed1(self):
         selected = []

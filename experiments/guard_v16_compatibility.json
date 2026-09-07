@@ -1,0 +1,25 @@
+{
+  "schema_version": 16,
+  "name": "guard-v16-vector-pg-compatibility",
+  "base_spec": "experiments/guard_v15_compatibility.json",
+  "base_spec_sha256": "a19545295849fc8156980a0302287899eca4b72e7ef1aae16911430e07211f5a",
+  "minimum_simulator_commit": "1c4769658e45a48977fc302625217435358b68f4",
+  "candidate_only": true,
+  "performance_metrics_permitted": false,
+  "fresh_seeds": [149, 150, 151],
+  "pg_provenance_policy": {
+    "source": "runtime exact GuardQpIdentity.pg in every frozen target vector",
+    "transition_audit_interpretation": "the initial high-fan-in transition may contain only the earliest PG4 cohort",
+    "mixed_scenario_max_priority_groups": 3,
+    "mixed_scenario_mixed_priority_group_mask": 224,
+    "mixed_scenario_all_priority_group_mask": 240,
+    "mask_meaning": "bit p denotes that runtime priority group p appeared in a frozen vector",
+    "required_classes": "PG4 appears in early equal-size vectors; one or more later mixed vectors jointly exercise exactly PG5, PG6, and PG7"
+  },
+  "selection_policy": "V15 remains rejected because its preregistered transition-row hash gate conflated the initial high-fan-in cohort with later frozen vectors. V16 freezes runtime per-freeze PG provenance, fresh seeds 149--151, the same eight scenarios, and every V15 safety gate before replay. No performance artifact may be opened.",
+  "scope_limits": [
+    "V16 changes evidence only; the V15 ACK-clocked mechanism and all timeout constants remain unchanged.",
+    "The runtime PG masks are derived from exact frozen-vector identities, not recomputed from flow sizes.",
+    "This candidate-only campaign contains no HPCC or Homa arm and emits no performance result."
+  ]
+}

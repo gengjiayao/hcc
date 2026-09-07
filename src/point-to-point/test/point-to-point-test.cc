@@ -595,6 +595,27 @@ GuardMixedPgVectorTest::DoRun (void)
       100000000000ULL,
       "pending decrease removal must reserve the possibly applied issue");
   NS_TEST_ASSERT_MSG_EQ (
+      RdmaHw::CanGuardAllocationFloorFit (
+        100000000000ULL, 99500000000ULL, 5, 100000000ULL),
+      true,
+      "five 100M floors must exactly fit the residual capacity");
+  NS_TEST_ASSERT_MSG_EQ (
+      RdmaHw::CanGuardAllocationFloorFit (
+        100000000000ULL, 99500000000ULL, 6, 100000000ULL),
+      false,
+      "six 100M floors must defer while only 500M remains");
+  NS_TEST_ASSERT_MSG_EQ (
+      RdmaHw::CanGuardAllocationFloorFit (
+        100000000000ULL, 100000000001ULL, 1, 100000000ULL),
+      false,
+      "a draining reservation above capacity must fail closed");
+  NS_TEST_ASSERT_MSG_EQ (
+      RdmaHw::CanGuardAllocationFloorFit (
+        18446744073709551615ULL, 0, 18446744073709551615ULL,
+        18446744073709551615ULL),
+      false,
+      "floor multiplication must not overflow into admission");
+  NS_TEST_ASSERT_MSG_EQ (
       RdmaHw::CanReleaseGuardDraining (10000, 9000), false,
       "an out-of-order final packet must not release draining");
   NS_TEST_ASSERT_MSG_EQ (

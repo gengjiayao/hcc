@@ -14,13 +14,15 @@ CPP_TEST = (ROOT / "src/point-to-point/test/point-to-point-test.cc").read_text()
 
 
 class GuardMixedPgVectorV14Test(unittest.TestCase):
-    def test_feature_is_default_off_and_requires_fail_closed_chain(self):
+    def test_feature_is_default_off_and_requires_an_explicit_timeout_policy(self):
         attribute = HW_CC.index('.AddAttribute("GuardMixedPgVectorFastpath"')
         self.assertIn("BooleanValue(false)", HW_CC[attribute:attribute + 500])
         self.assertIn('key.compare("GUARD_MIXED_PG_VECTOR_FASTPATH")', DRIVER)
-        self.assertIn("!guard_transition_prefix_fail_closed", DRIVER)
+        self.assertIn("!guard_transition_prefix_fail_closed &&", DRIVER)
+        self.assertIn("!guard_transition_prefix_ack_clock_fallback", DRIVER)
         self.assertIn("--guard_mixed_pg_vector_fastpath", RUN)
-        self.assertIn("not args.guard_transition_prefix_fail_closed", RUN)
+        self.assertIn("args.guard_transition_prefix_fail_closed or", RUN)
+        self.assertIn("args.guard_transition_prefix_ack_clock_fallback", RUN)
         self.assertIn("GUARD_MIXED_PG_VECTOR_FASTPATH 1", RUN)
 
     def test_full_tuple_live_and_tombstone_collisions_fail_closed(self):

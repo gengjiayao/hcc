@@ -1,0 +1,283 @@
+#!/usr/bin/env python3
+"""Mechanism-only gate for a V17 GUARD/HPCC/Homa development matrix.
+
+This program intentionally never opens FCT or queue artifacts.  It creates
+the admission file consumed by ``run_general_workloads.py`` and, after all
+five seeds exist, a separate seal that authorizes the performance summarizer.
+"""
+
+from __future__ import annotations
+
+import argparse
+from collections import Counter
+import json
+from pathlib import Path
+import re
+from typing import Dict, List, Mapping, Sequence
+
+try:
+    from experiments.analyze_guard_v14_compatibility import (
+        MIXED_FIELDS_V16, REFRESH_FIELDS, RETIRED_ACK_FIELDS, _named_stats,
+        _zero_terminal, validate_v16_pg_provenance,
+    )
+    from experiments.analyze_membership_coalescing_holdout import (
+        parse_coalescing_stats, parse_small_set_stats,
+        parse_transition_prefix_stats, parse_transition_watchdog_stats,
+    )
+    from experiments.run_campaign import directory_size, sha256_file, write_json
+    from experiments.summarize_campaign import SummaryError, parse_guard_stats, parse_pfc
+    from experiments.summarize_general_workloads import (
+        ZERO_RECOVERY_FIELDS, homa_completion_checks, mechanism_checks,
+        validate_config,
+    )
+    from experiments.summarize_workload import parse_config, parse_snapshot
+except ModuleNotFoundError:
+    from analyze_guard_v14_compatibility import (
+        MIXED_FIELDS_V16, REFRESH_FIELDS, RETIRED_ACK_FIELDS, _named_stats,
+        _zero_terminal, validate_v16_pg_provenance,
+    )
+    from analyze_membership_coalescing_holdout import (
+        parse_coalescing_stats, parse_small_set_stats,
+        parse_transition_prefix_stats, parse_transition_watchdog_stats,
+    )
+    from run_campaign import directory_size, sha256_file, write_json
+    from summarize_campaign import SummaryError, parse_guard_stats, parse_pfc
+    from summarize_general_workloads import (
+        ZERO_RECOVERY_FIELDS, homa_completion_checks, mechanism_checks,
+        validate_config,
+    )
+    from summarize_workload import parse_config, parse_snapshot
+
+
+COMPLETION_RE = re.compile(
+    r"finished so far:\s*(?P<finished>\d+)/ total:\s*(?P<total>\d+)"
+)
+
+
+class MechanismError(RuntimeError):
+    """A frozen run does not meet its non-performance admission contract."""
+
+
+def read_json(path: Path) -> Mapping[str, object]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise MechanismError(f"JSON root must be an object: {path}")
+    return value
+
+
+def one_artifact(output: Path, suffix: str) -> Path:
+    matches = list(output.glob(f"*{suffix}"))
+    if len(matches) != 1:
+        raise MechanismError(f"expected one *{suffix} under {output}, got {len(matches)}")
+    return matches[0]
+
+
+def completion_from_log(path: Path, expected: int) -> Dict[str, int]:
+    matches = list(COMPLETION_RE.finditer(path.read_text(encoding="utf-8", errors="strict")))
+    if not matches:
+        raise MechanismError(f"missing completion marker: {path}")
+    finished = int(matches[-1].group("finished"))
+    total = int(matches[-1].group("total"))
+    if finished != expected or total != expected:
+        raise MechanismError(f"completion is {finished}/{total}, expected {expected}/{expected}")
+    return {"finished": finished, "total": total}
+
+
+def guard_v17_checks(stats_path: Path, stats: Mapping[str, object],
+                     profile: str) -> Dict[str, object]:
+    membership = parse_coalescing_stats(stats_path, 13)
+    small = parse_small_set_stats(stats_path)
+    prefix = parse_transition_prefix_stats(stats_path)
+    watchdog = parse_transition_watchdog_stats(stats_path)
+    if watchdog is None:
+        raise MechanismError("missing V17 watchdog stats")
+    vector = _named_stats(stats_path, "guard_mixed_pg_vector", MIXED_FIELDS_V16)
+    refresh = _named_stats(stats_path, "guard_refresh_draining", REFRESH_FIELDS)
+    retired = _named_stats(stats_path, "guard_retired_ack", RETIRED_ACK_FIELDS)
+    ack_clock = _named_stats(
+        stats_path, "guard_transition_prefix_ack_clock_fallback", ("enabled",))
+    capacity_admission = None
+    if profile == "V18":
+        capacity_admission = _named_stats(
+            stats_path, "guard_capacity_admission",
+            ("enabled", "deferrals", "resumes", "max_waiters",
+             "terminal_blocked"))
+
+    for field in ("ack_stale", "stale_grants", "generation_zero_rejected",
+                  "generation_mismatch_rejected", "pending", "retry_grants"):
+        if int(membership[field]) != 0:
+            raise MechanismError(f"membership {field} is nonzero")
+    if (int(stats["grants_sent"]) <= 0 or
+            int(stats["grants_sent"]) != int(stats["grants_received"]) or
+            int(membership["ack_sent"]) != int(membership["ack_received"])):
+        raise MechanismError("grant or generation-ACK counters do not close")
+    if (int(small["enabled"]) != 1 or int(small["limit"]) != 4 or
+            int(small["barrier_violations"]) != 0 or
+            int(small["early_unlocks"]) != 0 or
+            int(small["unattributed_grant_frames"]) != 0 or
+            int(small["unattributed_ack_frames"]) != 0 or
+            int(small["wire_reconciled"]) != 1):
+        raise MechanismError("small-set/vector wire accounting did not close")
+    if (int(prefix["enabled"]) != 1 or int(prefix["order_violations"]) != 0 or
+            int(prefix["barrier_violations"]) != 0 or
+            int(prefix["timeouts"]) != int(prefix["degraded"]) or
+            int(prefix["fallback_batches"]) != int(prefix["fallback_closed_batches"]) or
+            (int(prefix["timeouts"]) == 0 and int(prefix["fallback_batches"]) != 0) or
+            (int(prefix["timeouts"]) > 0 and
+             int(prefix["fallback_batches"]) < int(prefix["timeouts"])) or
+            int(prefix["remaining_bytes"]) != 0):
+        raise MechanismError("prefix/ACK-clock fallback did not close")
+    if int(watchdog["enabled"]) != 1 or int(ack_clock["enabled"]) != 1:
+        raise MechanismError("V17 watchdog or ACK-clock fallback is disabled")
+    validate_v16_pg_provenance("generic-runtime-provenance", vector)
+    if (int(vector["enabled"]) != 1 or int(vector["freezes"]) <= 0 or
+            int(refresh["enabled"]) != 1 or
+            int(refresh["progress_transactions"]) != int(refresh["progress_commits"]) or
+            int(refresh["draining_requests"]) !=
+                int(refresh["draining_direct"]) + int(refresh["draining_pending"]) or
+            int(refresh["completion_releases"]) != int(refresh["draining_requests"])):
+        raise MechanismError("mixed vector or serialized refresh/draining did not close")
+    if (int(retired["closures"]) != int(retired["received"]) or
+            int(retired["terminal"]) != 0 or int(retired["overflow"]) != 0):
+        raise MechanismError("retired generation ACK records did not close")
+    _zero_terminal(small, vector, refresh, prefix, watchdog)
+    if capacity_admission is not None and (
+            int(capacity_admission["enabled"]) != 1 or
+            int(capacity_admission["deferrals"]) <= 0 or
+            int(capacity_admission["deferrals"]) !=
+                int(capacity_admission["resumes"]) or
+            int(capacity_admission["max_waiters"]) <= 0 or
+            int(capacity_admission["terminal_blocked"]) != 0):
+        raise MechanismError("V18 capacity admission did not defer and close")
+    return {
+        "membership": membership, "safe_activation": small,
+        "transition_prefix": prefix, "watchdog": watchdog,
+        "target_vector": vector, "refresh_draining": refresh,
+        "retired_ack": retired, "ack_clock": ack_clock,
+        "capacity_admission": capacity_admission,
+    }
+
+
+def validate_run(campaign: Path, spec: Mapping[str, object], preflight: Mapping[str, object],
+                 workload: Mapping[str, object], seed: int, arm: str) -> Dict[str, object]:
+    manifest_path = campaign / "runs" / str(workload["name"]) / f"seed{seed}" / arm / "manifest.json"
+    manifest = read_json(manifest_path)
+    if manifest.get("status") != "completed" or manifest.get("git_dirty") is not False:
+        raise MechanismError(f"run is not a clean completion: {manifest_path}")
+    if str(manifest.get("git_sha")) != str(preflight["git_sha"]):
+        raise MechanismError("simulator revision differs from sealed preflight")
+    output = Path(str(manifest["output_dir"]))
+    if directory_size(output) >= int(dict(spec["limits"])["run_bytes"]):
+        raise MechanismError("run output reached its byte cap")
+    trace = next(row for row in workload["selected_traces"] if int(row["seed"]) == seed)
+    snapshot = one_artifact(output, "_input_flow.txt")
+    profile = workload["attempts"][workload["selected_profile"]]["profile"]
+    flows, metadata = parse_snapshot(snapshot, int(profile["hosts"]), 10_000)
+    if (metadata["sha256"] != trace["sha256"] or
+            Counter(int(flow["pg"]) for flow in flows) != Counter({3: len(flows)})):
+        raise MechanismError("private flow snapshot hash or PG differs from preflight")
+    completion = completion_from_log(output / "config.log", int(trace["flow_count"]))
+    config = parse_config(output / "config.txt")
+    errors = validate_config(config, manifest, arm, False, snapshot, spec)
+    if errors:
+        raise MechanismError("; ".join(errors))
+    stats_path = one_artifact(output, "_out_guard_stats.txt")
+    stats = parse_guard_stats(stats_path)
+    pfc = parse_pfc(one_artifact(output, "_out_pfc.txt"))
+    if any(int(stats[field]) != 0 for field in ZERO_RECOVERY_FIELDS):
+        raise MechanismError("drop/recovery/timeout counter is nonzero")
+    if (int(pfc["pfc_pause_events"]) != 0 or int(pfc["pfc_resume_events"]) != 0 or
+            int(stats["pfc_pause_count"]) != 0 or int(stats["pfc_resume_count"]) != 0):
+        raise MechanismError("PFC is nonzero")
+    base_checks = mechanism_checks(arm, stats)
+    if not all(base_checks.values()):
+        raise MechanismError(f"base mechanism gate failed: {base_checks}")
+    detail: Mapping[str, object] = {}
+    if arm == "guard":
+        detail = guard_v17_checks(
+            stats_path, stats, str(spec["mechanism_profile"]))
+    elif arm == "homa":
+        homa_checks = homa_completion_checks(stats, int(trace["flow_count"]))
+        if not all(homa_checks.values()):
+            raise MechanismError(f"Homa completion gate failed: {homa_checks}")
+    return {
+        "workload": workload["name"], "seed": seed, "arm": arm,
+        "passed": True, "flow_sha256": trace["sha256"],
+        "flow_count": trace["flow_count"], "completion": completion,
+        "output_id": manifest["output_id"], "output_bytes": directory_size(output),
+        "base_checks": base_checks, "detail": detail,
+        "performance_emitted": False,
+    }
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("campaign_dir", type=Path)
+    parser.add_argument("--phase", choices=("admission", "formal"), required=True)
+    args = parser.parse_args(argv)
+    campaign = args.campaign_dir.resolve()
+    spec = read_json(campaign / "campaign.json")
+    preflight = read_json(campaign / "preflight.json")
+    if (spec.get("development_only") is not True or
+            spec.get("mechanism_profile") not in ("V17", "V18")):
+        raise MechanismError("this analyzer only admits a frozen V17/V18 development spec")
+    seeds = [int(spec["seeds"][0])] if args.phase == "admission" else list(map(int, spec["seeds"]))
+    workloads = [row for row in preflight["workloads"] if row["decision"] == "included"]
+    rows: List[Dict[str, object]] = []
+    failures: List[Dict[str, object]] = []
+    for workload in workloads:
+        for seed in seeds:
+            for arm in spec["arms"]:
+                try:
+                    rows.append(validate_run(campaign, spec, preflight, workload, seed, arm))
+                except (MechanismError, SummaryError, OSError, KeyError, ValueError,
+                        StopIteration) as exc:
+                    failures.append({"workload": workload["name"], "seed": seed,
+                                     "arm": arm, "error": str(exc)})
+    expected = len(workloads) * len(seeds) * len(spec["arms"])
+    hashes_close = all(len({row["flow_sha256"] for row in rows
+                            if row["workload"] == workload["name"] and
+                            row["seed"] == seed}) == 1
+                       for workload in workloads for seed in seeds)
+    passed = len(rows) == expected and not failures and hashes_close
+    report = {
+        "schema_version": 1, "phase": args.phase, "passed": passed,
+        "expected_runs": expected, "admitted_runs": len(rows),
+        "flow_hashes_close_within_seed": hashes_close,
+        "preflight_sha256": sha256_file(campaign / "preflight.json"),
+        "simulator_git_sha": preflight["git_sha"], "rows": rows,
+        "failures": failures, "performance_emitted": False,
+        "performance_unsealed": args.phase == "formal" and passed,
+    }
+    summary = campaign / "summary"
+    summary.mkdir(parents=True, exist_ok=True)
+    write_json(summary / f"mechanism-{args.phase}.json", report)
+    if args.phase == "admission":
+        decisions = {}
+        for workload in workloads:
+            selected = [row for row in rows if row["workload"] == workload["name"]]
+            workload_passed = passed and len(selected) == len(spec["arms"])
+            decisions[str(workload["name"])] = {
+                "passed": workload_passed,
+                "flow_hash_matched": hashes_close,
+                "arms": selected,
+                "decision": "extend_to_five_seeds" if workload_passed
+                            else "exclude_without_performance",
+            }
+        write_json(summary / "admission.json", {
+            "schema_version": 1,
+            "gate": f"seed-{seeds[0]} V17 mechanisms before performance",
+            "preflight_sha256": report["preflight_sha256"],
+            "workloads": decisions, "all_selected_passed": passed,
+            "performance_emitted": False,
+        })
+    print(f"{args.phase}: admitted {len(rows)}/{expected}; performance sealed")
+    return 0 if passed else 1
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except MechanismError as error:
+        print(f"error: {error}")
+        raise SystemExit(2)

@@ -568,6 +568,9 @@ class RdmaHw : public Object {
     uint64_t m_guardVectorFreezes;
     uint64_t m_guardVectorMixedPgFreezes;
     uint64_t m_guardVectorMaxEntries;
+    uint64_t m_guardVectorMaxPriorityGroups;
+    uint64_t m_guardVectorMixedPriorityGroupMask;
+    uint64_t m_guardVectorAllPriorityGroupMask;
     uint64_t m_guardVectorPrepareDecreases;
     uint64_t m_guardVectorActivationWaiters;
     uint64_t m_guardVectorActivationIncreases;
@@ -744,9 +747,15 @@ class RdmaHw : public Object {
     bool m_guardTransitionPrefixBarrierEnabled;
     bool m_guardTransitionPrefixWireWatchdogEnabled;
     bool m_guardTransitionPrefixFailClosed;
+    bool m_guardTransitionPrefixAckClockFallback;
     bool m_guardMixedPgVectorFastpath;
     bool m_guardSerializedProgressRefresh;
     bool m_guardSerializedDraining;
+    bool m_guardCapacityAdmissionDeferral;
+    bool m_guardCapacityAdmissionBlocked;
+    uint64_t m_guardCapacityAdmissionDeferrals;
+    uint64_t m_guardCapacityAdmissionResumes;
+    uint64_t m_guardCapacityAdmissionMaxWaiters;
     GuardFastpathPhase m_guardFastpathPhase;
     bool m_guardFastpathHighFanIn;
     bool m_guardFastpathHighInitialCollectionFlushed;
@@ -875,6 +884,7 @@ class RdmaHw : public Object {
     void ScheduleGuardFastpathHighCollection(const char *set_change);
     void FlushGuardFastpathHighCollection();
     void StartGuardFastpathTransaction();
+    bool GuardFastpathTransactionFloorFits(uint64_t *live_waiters = NULL);
     void StartGuardFastpathPrepare();
     void StartGuardFastpathActivate();
     void FreezeGuardFastpathTargetVector(uint64_t membership_revision);
@@ -894,6 +904,9 @@ class RdmaHw : public Object {
     static uint64_t ComputeGuardDrainingReservationBps(
         uint64_t last_acked_bps, uint64_t last_issued_bps,
         uint64_t effective_min_bps);
+    static bool CanGuardAllocationFloorFit(
+        uint64_t capacity_bps, uint64_t draining_bps,
+        uint64_t active_records, uint64_t effective_min_bps);
     static bool CanReleaseGuardDraining(uint64_t flow_size_bytes,
                                         uint64_t next_expected_seq);
     static bool IsGuardLedgerActionCompatible(uint8_t action,

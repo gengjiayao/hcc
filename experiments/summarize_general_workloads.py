@@ -223,6 +223,10 @@ def validate_config(
     controller_trace: bool, expected_snapshot: Path, spec: Mapping[str, object],
 ) -> List[str]:
     errors: List[str] = []
+    # run.py omits this legacy opt-in line when the flag is false.  Its
+    # absence therefore has the same simulator meaning as an explicit zero;
+    # an explicit nonzero value must still fail the frozen configuration.
+    optional_false_keys = {"GUARD_TRANSITION_PREFIX_FAIL_CLOSED"}
     expected = {
         "CC_MODE": CC_MODES[arm],
         "ENABLE_PFC": 1,
@@ -248,6 +252,9 @@ def validate_config(
             "guard_one_rtt_bypass": "GUARD_ONE_RTT_BYPASS",
             "guard_tail_bypass": "GUARD_TAIL_BYPASS",
             "guard_tail_bypass_bdps": "GUARD_TAIL_BYPASS_BDPS",
+            "guard_tail_congestion_gate": "GUARD_TAIL_CONGESTION_GATE",
+            "guard_tail_safe_ratio": "GUARD_TAIL_SAFE_RATIO",
+            "guard_tail_safe_samples": "GUARD_TAIL_SAFE_SAMPLES",
             "guard_adaptive_fabric_target": "GUARD_ADAPTIVE_FABRIC_TARGET",
             "guard_target_floor": "GUARD_TARGET_FLOOR",
             "guard_queue_budget_bdps": "GUARD_QUEUE_BUDGET_BDPS",
@@ -260,14 +267,41 @@ def validate_config(
             "guard_receiver_concurrency": "GUARD_RECEIVER_CONCURRENCY",
             "guard_concurrency_min_bdps": "GUARD_CONCURRENCY_MIN_BDPS",
             "guard_grant_refresh_bdps": "GUARD_GRANT_REFRESH_BDPS",
+            "guard_membership_coalesce_ns": "GUARD_MEMBERSHIP_COALESCE_NS",
+            "guard_membership_coalesce_max_windows":
+                "GUARD_MEMBERSHIP_COALESCE_MAX_WINDOWS",
+            "guard_initial_collection_quiet_ns":
+                "GUARD_INITIAL_COLLECTION_QUIET_NS",
+            "guard_initial_collection_full_deadline":
+                "GUARD_INITIAL_COLLECTION_FULL_DEADLINE",
+            "guard_small_set_fastpath_limit": "GUARD_SMALL_SET_FASTPATH_LIMIT",
+            "guard_transition_prefix_barrier": "GUARD_TRANSITION_PREFIX_BARRIER",
+            "guard_transition_prefix_wire_watchdog":
+                "GUARD_TRANSITION_PREFIX_WIRE_WATCHDOG",
+            "guard_transition_prefix_fail_closed":
+                "GUARD_TRANSITION_PREFIX_FAIL_CLOSED",
+            "guard_transition_prefix_ack_clock_fallback":
+                "GUARD_TRANSITION_PREFIX_ACK_CLOCK_FALLBACK",
+            "guard_mixed_pg_vector_fastpath": "GUARD_MIXED_PG_VECTOR_FASTPATH",
+            "guard_serialized_progress_refresh":
+                "GUARD_SERIALIZED_PROGRESS_REFRESH",
+            "guard_serialized_draining": "GUARD_SERIALIZED_DRAINING",
+            "guard_capacity_admission_deferral":
+                "GUARD_CAPACITY_ADMISSION_DEFERRAL",
+            "guard_grant_reliability_rtts": "GUARD_GRANT_RELIABILITY_RTTS",
             "guard_srpt_quantum_packets": "GUARD_SRPT_QUANTUM_PACKETS",
             "guard_work_conserving": "GUARD_WORK_CONSERVING",
+            "guard_cap_aware_reclaim": "GUARD_CAP_AWARE_RECLAIM",
+            "guard_cap_headroom": "GUARD_CAP_HEADROOM",
+            "guard_cap_min_share_fraction": "GUARD_CAP_MIN_SHARE_FRACTION",
         }
         for option, key in config_names.items():
             if option in controls:
                 expected[key] = controls[option]
     for key, value in expected.items():
         actual = config.get(key)
+        if actual is None and key in optional_false_keys and str(value) == "0":
+            continue
         if str(actual) != str(value):
             errors.append(f"{key}={actual}, expected {value}")
     configured_flow = Path(config.get("FLOW_FILE", ""))

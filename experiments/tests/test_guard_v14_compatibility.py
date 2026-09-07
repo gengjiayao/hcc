@@ -384,6 +384,43 @@ class GuardV14CompatibilityTests(unittest.TestCase):
         with self.assertRaisesRegex(SummaryError, "reappeared"):
             analyzer.trace_closure(reused, True, CAPACITY)
 
+    def test_terminal_retired_ack_does_not_require_an_impossible_refreeze(self) -> None:
+        rows = retired_exchange(7, 11, 0, "fast_prepare", 4)
+        close = next(row for row in rows if row["event"] == "ack_retire_close")
+        close.update({
+            "live_active_records": 1,
+            "live_draining_records": 0,
+            "live_draining_reserved_bps": 0,
+            "capacity_recompute_pending": 1,
+        })
+        with self.assertRaisesRegex(SummaryError, "lacks a later recompute"):
+            analyzer.trace_closure(rows, True, CAPACITY)
+        result = analyzer.trace_closure(
+            rows, True, CAPACITY, terminal_retire_flows=(7,))
+        self.assertEqual(result["capacity_recomputed_revisions"], 0)
+        with self.assertRaisesRegex(SummaryError, "lacks a later recompute"):
+            analyzer.trace_closure(
+                rows, True, CAPACITY, terminal_retire_flows=(8,))
+
+        # D can disappear earlier in the same immutable transaction.  The
+        # vector remains conservative until a later recipient retires as the
+        # final ACTIVE flow; that terminal closure also makes refreeze
+        # impossible and unnecessary.
+        multi = required_exchange(6, 12, 0, "fast_prepare", 5)
+        multi += retired_exchange(7, 13, 100, "fast_activate", 5)
+        for row in multi:
+            if row["snapshot_valid"] == 1 and row["event"] != "sent":
+                row.update({
+                    "live_draining_records": 0,
+                    "live_draining_reserved_bps": 0,
+                    "capacity_recompute_pending": 1,
+                })
+        next(row for row in multi if row["event"] == "ack_retire_close")[
+            "live_active_records"] = 1
+        result = analyzer.trace_closure(
+            multi, True, CAPACITY, terminal_retire_flows=(7,))
+        self.assertEqual(result["capacity_recomputed_revisions"], 0)
+
     def test_transition_audit_allows_wire_prefix_upper_bound_over_capacity(self) -> None:
         row: dict[str, object] = {
             field: 1 for field in analyzer.AUDIT_FIELDS

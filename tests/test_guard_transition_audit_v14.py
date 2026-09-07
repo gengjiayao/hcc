@@ -35,7 +35,7 @@ class GuardTransitionAuditV14Test(unittest.TestCase):
         self.assertIn("--guard_transition_prefix_fail_closed", RUN)
         self.assertIn("default=0", RUN[RUN.index("--guard_transition_audit"):])
         self.assertIn(
-            "{guard_transition_prefix_wire_watchdog_config}GUARD_GRANT_RELIABILITY_RTTS",
+            "{guard_transition_prefix_ack_clock_fallback_config}GUARD_GRANT_RELIABILITY_RTTS",
             RUN)
         self.assertIn(
             'if args.guard_transition_audit else ""', RUN)

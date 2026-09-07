@@ -46,7 +46,7 @@ class GuardTransitionPrefixV13Test(unittest.TestCase):
 
     def test_disabled_v13_preserves_v12_config_and_stats_shape(self):
         self.assertIn(
-            '{guard_transition_prefix_wire_watchdog_config}GUARD_GRANT_RELIABILITY_RTTS',
+            '{guard_transition_prefix_ack_clock_fallback_config}GUARD_GRANT_RELIABILITY_RTTS',
             RUN)
         self.assertIn(
             'if args.guard_transition_prefix_wire_watchdog else ""', RUN)
