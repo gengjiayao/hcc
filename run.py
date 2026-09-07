@@ -111,6 +111,14 @@ GUARD_REMAINING_AWARE {guard_remaining_aware}
 GUARD_MIN_SHARE_FRACTION {guard_min_share_fraction}
 GUARD_REMAINING_EXPONENT {guard_remaining_exponent}
 GUARD_RECEIVER_CONCURRENCY {guard_receiver_concurrency}
+GUARD_ADAPTIVE_ELEPHANT_CONCURRENCY {guard_adaptive_elephant_concurrency}
+GUARD_ELEPHANT_AGING_RTTS {guard_elephant_aging_rtts}
+GUARD_ELEPHANT_CAP_SPILLOVER {guard_elephant_cap_spillover}
+GUARD_ELEPHANT_SPILLOVER_ENTER_REPORTS {guard_elephant_spillover_enter_reports}
+GUARD_ELEPHANT_SPILLOVER_EXIT_REPORTS {guard_elephant_spillover_exit_reports}
+GUARD_ELEPHANT_FABRIC_TARGET {guard_elephant_fabric_target}
+GUARD_ELEPHANT_FABRIC_TARGET_SCALE {guard_elephant_fabric_target_scale}
+GUARD_ELEPHANT_RECEIVER_AUTHORITY {guard_elephant_receiver_authority}
 GUARD_CONCURRENCY_MIN_BDPS {guard_concurrency_min_bdps}
 GUARD_GRANT_REFRESH_BDPS {guard_grant_refresh_bdps}
 GUARD_MEMBERSHIP_COALESCE_NS {guard_membership_coalesce_ns}
@@ -469,6 +477,29 @@ def main():
                         help="inverse-remaining-size exponent in [0,2] (default: 1)")
     parser.add_argument('--guard_receiver_concurrency', type=int, default=0,
                         help="registered flows served above MinRate; 0 serves all (default: 0)")
+    parser.add_argument('--guard_adaptive_elephant_concurrency', type=int,
+                        choices=(0, 1), default=0,
+                        help="use floor-sqrt elephant width capped by receiver concurrency")
+    parser.add_argument('--guard_elephant_aging_rtts', type=float, default=0.0,
+                        help="deferred-elephant wait before one K=1 service quantum; 0 disables")
+    parser.add_argument('--guard_elephant_cap_spillover', type=int,
+                        choices=(0, 1), default=0,
+                        help="spill only a confirmed fabric-limited K=1 elephant share")
+    parser.add_argument('--guard_elephant_spillover_enter_reports', type=int,
+                        default=3,
+                        help="fabric-bound reports required to enter spillover [1,8]")
+    parser.add_argument('--guard_elephant_spillover_exit_reports', type=int,
+                        default=1,
+                        help="unbound reports required to exit spillover [1,8]")
+    parser.add_argument('--guard_elephant_fabric_target', type=int,
+                        choices=(0, 1), default=0,
+                        help="scale the HPCC target only for configured elephants")
+    parser.add_argument('--guard_elephant_fabric_target_scale', type=float,
+                        default=1.0,
+                        help="eligible-elephant HPCC target scale [1,2]")
+    parser.add_argument('--guard_elephant_receiver_authority', type=int,
+                        choices=(0, 1), default=0,
+                        help="let a selected >threshold elephant follow its receiver cap")
     parser.add_argument('--guard_concurrency_min_bdps', type=float, default=8.0,
                         help="apply receiver concurrency bound only above this many BDPs (default: 8)")
     parser.add_argument('--guard_grant_refresh_bdps', type=float, default=1.0,
@@ -635,6 +666,60 @@ def main():
         raise Exception("CONFIG ERROR: --guard_remaining_exponent must be in [0, 2].")
     if args.guard_receiver_concurrency < 0:
         raise Exception("CONFIG ERROR: --guard_receiver_concurrency must be non-negative.")
+    if args.guard_adaptive_elephant_concurrency and args.guard_receiver_concurrency < 2:
+        raise Exception(
+            "CONFIG ERROR: adaptive elephant concurrency requires receiver concurrency >= 2.")
+    if not 0.0 <= args.guard_elephant_aging_rtts <= 64.0:
+        raise Exception("CONFIG ERROR: --guard_elephant_aging_rtts must be in [0, 64].")
+    if args.guard_elephant_aging_rtts > 0.0:
+        if args.guard_receiver_concurrency != 1:
+            raise Exception("CONFIG ERROR: elephant aging requires receiver concurrency 1.")
+        if args.guard_adaptive_elephant_concurrency:
+            raise Exception("CONFIG ERROR: elephant aging and adaptive concurrency are exclusive.")
+    if args.guard_elephant_cap_spillover:
+        if args.guard_receiver_concurrency != 1:
+            raise Exception("CONFIG ERROR: elephant cap spillover requires receiver concurrency 1.")
+        if args.guard_adaptive_elephant_concurrency or args.guard_elephant_aging_rtts > 0.0:
+            raise Exception(
+                "CONFIG ERROR: elephant cap spillover is exclusive with adaptive concurrency and aging.")
+    if not 1 <= args.guard_elephant_spillover_enter_reports <= 8:
+        raise Exception(
+            "CONFIG ERROR: --guard_elephant_spillover_enter_reports must be in [1, 8].")
+    if not 1 <= args.guard_elephant_spillover_exit_reports <= 8:
+        raise Exception(
+            "CONFIG ERROR: --guard_elephant_spillover_exit_reports must be in [1, 8].")
+    if not 1.0 <= args.guard_elephant_fabric_target_scale <= 2.0:
+        raise Exception(
+            "CONFIG ERROR: --guard_elephant_fabric_target_scale must be in [1, 2].")
+    if args.guard_elephant_fabric_target:
+        if (args.cc != "guard" or args.guard_adaptive_fabric_target or
+                args.guard_elephant_cap_spillover or
+                args.guard_adaptive_elephant_concurrency or
+                args.guard_elephant_aging_rtts > 0.0 or
+                args.guard_receiver_concurrency != 1 or
+                not args.guard_remaining_aware or
+                not args.guard_mixed_pg_vector_fastpath or
+                not args.guard_serialized_progress_refresh or
+                not args.guard_serialized_draining or
+                not args.guard_capacity_admission_deferral):
+            raise Exception(
+                "CONFIG ERROR: elephant fabric target requires K=1 final GUARD, "
+                "the V18/V14 bundle, and other fabric/elephant adaptations disabled.")
+    if args.guard_elephant_receiver_authority:
+        if (args.cc != "guard" or args.guard_adaptive_fabric_target or
+                args.guard_elephant_fabric_target or
+                args.guard_elephant_cap_spillover or
+                args.guard_adaptive_elephant_concurrency or
+                args.guard_elephant_aging_rtts > 0.0 or
+                args.guard_receiver_concurrency != 1 or
+                not args.guard_remaining_aware or
+                not args.guard_mixed_pg_vector_fastpath or
+                not args.guard_serialized_progress_refresh or
+                not args.guard_serialized_draining or
+                not args.guard_capacity_admission_deferral):
+            raise Exception(
+                "CONFIG ERROR: elephant receiver authority requires K=1 final GUARD, "
+                "the V18/V14 bundle, and other fabric/elephant adaptations disabled.")
     if not 0.0 <= args.guard_concurrency_min_bdps <= 64.0:
         raise Exception("CONFIG ERROR: --guard_concurrency_min_bdps must be in [0, 64].")
     if not 0.0 <= args.guard_grant_refresh_bdps <= 16.0:
@@ -673,12 +758,20 @@ def main():
             raise Exception(
                 "CONFIG ERROR: V11 small-set fast path requires membership quiet 12480 ns, "
                 "initial quiet 16640 ns, five windows, and sliding initial mode.")
+        frozen_concurrency = (
+            args.guard_receiver_concurrency > 0 and
+            args.guard_mixed_pg_vector_fastpath and
+            args.guard_serialized_progress_refresh and
+            args.guard_serialized_draining and
+            args.guard_capacity_admission_deferral)
         if ((args.guard_remaining_aware != 0 and
              not args.guard_serialized_progress_refresh) or
-                args.guard_receiver_concurrency != 0):
+                (args.guard_receiver_concurrency != 0 and
+                 not frozen_concurrency)):
             raise Exception(
                 "CONFIG ERROR: V11 small-set fast path permits remaining-aware grants "
-                "only through the V14 serialized bundle and forbids receiver concurrency.")
+                "and bounded receiver concurrency only through the complete "
+                "V18 canonical-vector bundle.")
     if args.guard_transition_prefix_barrier and (
             args.guard_small_set_fastpath_limit != 4 or
             args.guard_fixed_window != 1):
@@ -729,6 +822,25 @@ def main():
         raise Exception(
             "CONFIG ERROR: V18 capacity admission deferral requires full GUARD, "
             "serialized draining, and mixed-vector limit 4.")
+    if args.guard_elephant_aging_rtts > 0.0 and (
+            args.cc != "guard" or args.guard_remaining_aware != 1 or
+            not args.guard_mixed_pg_vector_fastpath or
+            not args.guard_serialized_progress_refresh or
+            not args.guard_serialized_draining or
+            not args.guard_capacity_admission_deferral):
+        raise Exception(
+            "CONFIG ERROR: elephant aging requires the complete V18 "
+            "canonical-vector bundle.")
+    if args.guard_elephant_cap_spillover and (
+            args.cc != "guard" or args.guard_remaining_aware != 1 or
+            not args.guard_mixed_pg_vector_fastpath or
+            not args.guard_serialized_progress_refresh or
+            not args.guard_serialized_draining or
+            not args.guard_capacity_admission_deferral or
+            args.guard_cap_aware_reclaim or args.guard_work_conserving):
+        raise Exception(
+            "CONFIG ERROR: elephant cap spillover requires fixed K=1, the complete V18 "
+            "canonical-vector bundle, and legacy reclaim disabled.")
     if not 0.0 < args.guard_demand_threshold < 1.0:
         raise Exception("CONFIG ERROR: --guard_demand_threshold must be in (0, 1).")
     if not 0.0 < args.guard_receiver_util_threshold < 1.0:
@@ -1151,6 +1263,14 @@ def main():
                                         guard_min_share_fraction=args.guard_min_share_fraction,
                                         guard_remaining_exponent=args.guard_remaining_exponent,
                                         guard_receiver_concurrency=args.guard_receiver_concurrency,
+                                        guard_adaptive_elephant_concurrency=args.guard_adaptive_elephant_concurrency,
+                                        guard_elephant_aging_rtts=args.guard_elephant_aging_rtts,
+                                        guard_elephant_cap_spillover=args.guard_elephant_cap_spillover,
+                                        guard_elephant_spillover_enter_reports=args.guard_elephant_spillover_enter_reports,
+                                        guard_elephant_spillover_exit_reports=args.guard_elephant_spillover_exit_reports,
+                                        guard_elephant_fabric_target=args.guard_elephant_fabric_target,
+                                        guard_elephant_fabric_target_scale=args.guard_elephant_fabric_target_scale,
+                                        guard_elephant_receiver_authority=args.guard_elephant_receiver_authority,
                                         guard_concurrency_min_bdps=args.guard_concurrency_min_bdps,
                                         guard_grant_refresh_bdps=args.guard_grant_refresh_bdps,
                                         guard_membership_coalesce_ns=args.guard_membership_coalesce_ns,

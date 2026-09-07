@@ -144,7 +144,26 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
     }
     guard_receiver = {
         "guard_remaining_aware": 0, "guard_min_share_fraction": 0.0,
-        "guard_remaining_exponent": 0.0, "guard_grant_refresh_bdps": 0.0,
+        "guard_remaining_exponent": 0.0, "guard_receiver_concurrency": 0,
+        "guard_concurrency_limited_allocations": 0,
+        "guard_concurrency_max_deferred_flows": 0,
+        "guard_adaptive_elephant_concurrency": 0,
+        "guard_adaptive_concurrency_promotions": 0,
+        "guard_adaptive_concurrency_max_effective": 0,
+        "guard_elephant_aging_enabled": 0,
+        "guard_elephant_aging_rtts": 0.0,
+        "guard_elephant_aging_rotations": 0,
+        "guard_elephant_aging_max_wait_ns": 0,
+        "guard_elephant_aging_active_deferred": 0,
+        "guard_elephant_spillover_enabled": 0,
+        "guard_elephant_spillover_enter_reports": 0,
+        "guard_elephant_spillover_exit_reports": 0,
+        "guard_elephant_spillover_under_grant_percent": 0,
+        "guard_elephant_spillover_headroom_percent": 0,
+        "guard_elephant_spillover_refresh_requests": 0,
+        "guard_elephant_spillover_vectors": 0,
+        "guard_elephant_spillover_max_bps": 0,
+        "guard_concurrency_min_bdps": 0.0, "guard_grant_refresh_bdps": 0.0,
         "guard_remaining_refresh_events": 0,
     }
     guard_cap_aware = {
@@ -154,6 +173,30 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
         "guard_cap_reports_received": 0, "guard_fabric_bound_reports": 0,
         "guard_cap_rebalance_events": 0, "guard_cap_grant_updates": 0,
         "guard_cap_max_reclaimed_bps": 0,
+    }
+    guard_elephant_spillover = {
+        "guard_elephant_spillover_enabled": 0,
+        "guard_elephant_spillover_enter_reports": 0,
+        "guard_elephant_spillover_exit_reports": 0,
+        "guard_elephant_spillover_under_grant_percent": 0,
+        "guard_elephant_spillover_headroom_percent": 0,
+        "guard_elephant_spillover_refresh_requests": 0,
+        "guard_elephant_spillover_vectors": 0,
+        "guard_elephant_spillover_max_bps": 0,
+    }
+    guard_elephant_fabric_target = {
+        "guard_elephant_fabric_target_enabled": 0,
+        "guard_elephant_fabric_target_scale": 1.0,
+        "guard_elephant_fabric_target_threshold_bdps": 0.0,
+        "guard_elephant_fabric_target_updates": 0,
+        "guard_elephant_fabric_target_max_effective": 0.0,
+    }
+    guard_elephant_receiver_authority = {
+        "guard_elephant_receiver_authority_enabled": 0,
+        "guard_elephant_receiver_authority_threshold_bdps": 0.0,
+        "guard_elephant_receiver_authority_bindings": 0,
+        "guard_elephant_receiver_authority_rate_changes": 0,
+        "guard_elephant_receiver_authority_max_released_bps": 0,
     }
     switch_drops = {"ingress": 0, "egress": 0, "total": 0}
     priorities: Dict[int, Dict[str, int]] = {}
@@ -302,6 +345,70 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
                     "guard_grant_refresh_bdps": float(parts[16]),
                     "guard_remaining_refresh_events": int(parts[18]),
                 }
+            elif parts[:2] == ["guard_receiver_scheduler", "remaining_aware"] and len(parts) == 25:
+                guard_receiver = {
+                    "guard_remaining_aware": int(parts[2]),
+                    "guard_min_share_fraction": float(parts[4]),
+                    "guard_remaining_exponent": float(parts[6]),
+                    "guard_receiver_concurrency": int(parts[8]),
+                    "guard_concurrency_limited_allocations": int(parts[10]),
+                    "guard_concurrency_max_deferred_flows": int(parts[12]),
+                    "guard_adaptive_elephant_concurrency": int(parts[14]),
+                    "guard_adaptive_concurrency_promotions": int(parts[16]),
+                    "guard_adaptive_concurrency_max_effective": int(parts[18]),
+                    "guard_concurrency_min_bdps": float(parts[20]),
+                    "guard_grant_refresh_bdps": float(parts[22]),
+                    "guard_remaining_refresh_events": int(parts[24]),
+                }
+            elif parts[:2] == ["guard_elephant_aging", "enabled"] and len(parts) == 11:
+                guard_receiver.update({
+                    "guard_elephant_aging_enabled": int(parts[2]),
+                    "guard_elephant_aging_rtts": float(parts[4]),
+                    "guard_elephant_aging_rotations": int(parts[6]),
+                    "guard_elephant_aging_max_wait_ns": int(parts[8]),
+                    "guard_elephant_aging_active_deferred": int(parts[10]),
+                })
+            elif parts[:2] == ["guard_elephant_spillover", "enabled"] and len(parts) == 15:
+                # V23 wrote one fixed confirmation threshold. Preserve its
+                # historical artifacts by projecting that threshold onto the
+                # configurable enter/exit schema introduced by V24.
+                guard_elephant_spillover = {
+                    "guard_elephant_spillover_enabled": int(parts[2]),
+                    "guard_elephant_spillover_enter_reports": int(parts[4]),
+                    "guard_elephant_spillover_exit_reports": 1,
+                    "guard_elephant_spillover_under_grant_percent": int(parts[6]),
+                    "guard_elephant_spillover_headroom_percent": int(parts[8]),
+                    "guard_elephant_spillover_refresh_requests": int(parts[10]),
+                    "guard_elephant_spillover_vectors": int(parts[12]),
+                    "guard_elephant_spillover_max_bps": int(parts[14]),
+                }
+            elif parts[:2] == ["guard_elephant_spillover", "enabled"] and len(parts) == 17:
+                guard_elephant_spillover = {
+                    "guard_elephant_spillover_enabled": int(parts[2]),
+                    "guard_elephant_spillover_enter_reports": int(parts[4]),
+                    "guard_elephant_spillover_exit_reports": int(parts[6]),
+                    "guard_elephant_spillover_under_grant_percent": int(parts[8]),
+                    "guard_elephant_spillover_headroom_percent": int(parts[10]),
+                    "guard_elephant_spillover_refresh_requests": int(parts[12]),
+                    "guard_elephant_spillover_vectors": int(parts[14]),
+                    "guard_elephant_spillover_max_bps": int(parts[16]),
+                }
+            elif parts[:2] == ["guard_elephant_fabric_target", "enabled"] and len(parts) == 11:
+                guard_elephant_fabric_target = {
+                    "guard_elephant_fabric_target_enabled": int(parts[2]),
+                    "guard_elephant_fabric_target_scale": float(parts[4]),
+                    "guard_elephant_fabric_target_threshold_bdps": float(parts[6]),
+                    "guard_elephant_fabric_target_updates": int(parts[8]),
+                    "guard_elephant_fabric_target_max_effective": float(parts[10]),
+                }
+            elif parts[:2] == ["guard_elephant_receiver_authority", "enabled"] and len(parts) == 11:
+                guard_elephant_receiver_authority = {
+                    "guard_elephant_receiver_authority_enabled": int(parts[2]),
+                    "guard_elephant_receiver_authority_threshold_bdps": float(parts[4]),
+                    "guard_elephant_receiver_authority_bindings": int(parts[6]),
+                    "guard_elephant_receiver_authority_rate_changes": int(parts[8]),
+                    "guard_elephant_receiver_authority_max_released_bps": int(parts[10]),
+                }
             elif parts and parts[0] == "homa_priority" and len(parts) == 4:
                 try:
                     priority = int(parts[1])
@@ -325,6 +432,9 @@ def parse_guard_stats(path: Path) -> Dict[str, object]:
     result.update(guard_tail)
     result.update(guard_adaptive_target)
     result.update(guard_receiver)
+    result.update(guard_elephant_spillover)
+    result.update(guard_elephant_fabric_target)
+    result.update(guard_elephant_receiver_authority)
     result.update(guard_cap_aware)
     result.update({f"switch_drops_{key}": value for key, value in switch_drops.items()})
     result["pfc_priority"] = priorities

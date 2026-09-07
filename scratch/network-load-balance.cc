@@ -213,6 +213,14 @@ bool guard_remaining_aware = true;
 double guard_min_share_fraction = 0.0;
 double guard_remaining_exponent = 1.0;
 uint32_t guard_receiver_concurrency = 0;
+bool guard_adaptive_elephant_concurrency = false;
+double guard_elephant_aging_rtts = 0.0;
+bool guard_elephant_cap_spillover = false;
+uint32_t guard_elephant_spillover_enter_reports = 3;
+uint32_t guard_elephant_spillover_exit_reports = 1;
+bool guard_elephant_fabric_target = false;
+double guard_elephant_fabric_target_scale = 1.0;
+bool guard_elephant_receiver_authority = false;
 double guard_concurrency_min_bdps = 8.0;
 double guard_grant_refresh_bdps = 1.0;
 uint64_t guard_membership_coalesce_ns = 0;
@@ -1382,6 +1390,38 @@ int main(int argc, char *argv[]) {
                 conf >> guard_receiver_concurrency;
                 std::cerr << "GUARD_RECEIVER_CONCURRENCY\t"
                           << guard_receiver_concurrency << '\n';
+            } else if (key.compare("GUARD_ADAPTIVE_ELEPHANT_CONCURRENCY") == 0) {
+                conf >> guard_adaptive_elephant_concurrency;
+                std::cerr << "GUARD_ADAPTIVE_ELEPHANT_CONCURRENCY\t"
+                          << guard_adaptive_elephant_concurrency << '\n';
+            } else if (key.compare("GUARD_ELEPHANT_AGING_RTTS") == 0) {
+                conf >> guard_elephant_aging_rtts;
+                std::cerr << "GUARD_ELEPHANT_AGING_RTTS\t"
+                          << guard_elephant_aging_rtts << '\n';
+            } else if (key.compare("GUARD_ELEPHANT_CAP_SPILLOVER") == 0) {
+                conf >> guard_elephant_cap_spillover;
+                std::cerr << "GUARD_ELEPHANT_CAP_SPILLOVER\t"
+                          << guard_elephant_cap_spillover << '\n';
+            } else if (key.compare("GUARD_ELEPHANT_SPILLOVER_ENTER_REPORTS") == 0) {
+                conf >> guard_elephant_spillover_enter_reports;
+                std::cerr << "GUARD_ELEPHANT_SPILLOVER_ENTER_REPORTS\t"
+                          << guard_elephant_spillover_enter_reports << '\n';
+            } else if (key.compare("GUARD_ELEPHANT_SPILLOVER_EXIT_REPORTS") == 0) {
+                conf >> guard_elephant_spillover_exit_reports;
+                std::cerr << "GUARD_ELEPHANT_SPILLOVER_EXIT_REPORTS\t"
+                          << guard_elephant_spillover_exit_reports << '\n';
+            } else if (key.compare("GUARD_ELEPHANT_FABRIC_TARGET") == 0) {
+                conf >> guard_elephant_fabric_target;
+                std::cerr << "GUARD_ELEPHANT_FABRIC_TARGET\t"
+                          << guard_elephant_fabric_target << '\n';
+            } else if (key.compare("GUARD_ELEPHANT_FABRIC_TARGET_SCALE") == 0) {
+                conf >> guard_elephant_fabric_target_scale;
+                std::cerr << "GUARD_ELEPHANT_FABRIC_TARGET_SCALE\t"
+                          << guard_elephant_fabric_target_scale << '\n';
+            } else if (key.compare("GUARD_ELEPHANT_RECEIVER_AUTHORITY") == 0) {
+                conf >> guard_elephant_receiver_authority;
+                std::cerr << "GUARD_ELEPHANT_RECEIVER_AUTHORITY\t"
+                          << guard_elephant_receiver_authority << '\n';
             } else if (key.compare("GUARD_CONCURRENCY_MIN_BDPS") == 0) {
                 conf >> guard_concurrency_min_bdps;
                 std::cerr << "GUARD_CONCURRENCY_MIN_BDPS\t"
@@ -1785,6 +1825,70 @@ int main(int argc, char *argv[]) {
         std::cerr << "GUARD_CONCURRENCY_MIN_BDPS must be in [0, 64]\n";
         return 1;
     }
+    if (guard_adaptive_elephant_concurrency &&
+        (guard_receiver_concurrency < 2 || !guard_remaining_aware ||
+         !guard_mixed_pg_vector_fastpath || !guard_serialized_progress_refresh ||
+         !guard_serialized_draining || !guard_capacity_admission_deferral ||
+         cc_mode != 11)) {
+        std::cerr << "GUARD adaptive elephant concurrency requires max K >= 2 "
+                  << "and the complete V18 canonical-vector bundle\n";
+        return 1;
+    }
+    if (guard_elephant_aging_rtts < 0.0 || guard_elephant_aging_rtts > 64.0) {
+        std::cerr << "GUARD_ELEPHANT_AGING_RTTS must be in [0, 64]\n";
+        return 1;
+    }
+    if (guard_elephant_aging_rtts > 0.0 &&
+        (guard_receiver_concurrency != 1 || guard_adaptive_elephant_concurrency ||
+         !guard_remaining_aware || !guard_mixed_pg_vector_fastpath ||
+         !guard_serialized_progress_refresh || !guard_serialized_draining ||
+         !guard_capacity_admission_deferral || cc_mode != 11)) {
+        std::cerr << "GUARD elephant aging requires fixed K=1 and the complete "
+                  << "V18 canonical-vector bundle\n";
+        return 1;
+    }
+    if (guard_elephant_cap_spillover &&
+        (guard_receiver_concurrency != 1 || guard_adaptive_elephant_concurrency ||
+         guard_elephant_aging_rtts > 0.0 || !guard_remaining_aware ||
+         !guard_mixed_pg_vector_fastpath || !guard_serialized_progress_refresh ||
+         !guard_serialized_draining || !guard_capacity_admission_deferral ||
+         guard_cap_aware_reclaim || guard_work_conserving || cc_mode != 11)) {
+        std::cerr << "GUARD elephant cap spillover requires fixed K=1, the complete "
+                  << "V18 canonical-vector bundle, and legacy reclaim disabled\n";
+        return 1;
+    }
+    if (guard_elephant_spillover_enter_reports < 1 ||
+        guard_elephant_spillover_enter_reports > 8 ||
+        guard_elephant_spillover_exit_reports < 1 ||
+        guard_elephant_spillover_exit_reports > 8) {
+        std::cerr << "GUARD elephant spillover enter/exit reports must be in [1,8]\n";
+        return 1;
+    }
+    if (guard_elephant_fabric_target_scale < 1.0 ||
+        guard_elephant_fabric_target_scale > 2.0) {
+        std::cerr << "GUARD elephant fabric target scale must be in [1,2]\n";
+        return 1;
+    }
+    if (guard_elephant_fabric_target &&
+        (cc_mode != 11 || guard_adaptive_fabric_target ||
+         guard_elephant_cap_spillover || guard_adaptive_elephant_concurrency ||
+         guard_elephant_aging_rtts > 0.0 || guard_receiver_concurrency != 1 ||
+         !guard_remaining_aware || !guard_mixed_pg_vector_fastpath ||
+         !guard_serialized_progress_refresh || !guard_serialized_draining ||
+         !guard_capacity_admission_deferral)) {
+        std::cerr << "GUARD elephant fabric target requires the final K=1 vector bundle\n";
+        return 1;
+    }
+    if (guard_elephant_receiver_authority &&
+        (cc_mode != 11 || guard_adaptive_fabric_target ||
+         guard_elephant_fabric_target || guard_elephant_cap_spillover ||
+         guard_adaptive_elephant_concurrency || guard_elephant_aging_rtts > 0.0 ||
+         guard_receiver_concurrency != 1 || !guard_remaining_aware ||
+         !guard_mixed_pg_vector_fastpath || !guard_serialized_progress_refresh ||
+         !guard_serialized_draining || !guard_capacity_admission_deferral)) {
+        std::cerr << "GUARD elephant receiver authority requires the final K=1 vector bundle\n";
+        return 1;
+    }
     if (homa_overcommit < 1 || homa_overcommit > 6) {
         std::cerr << "HOMA_OVERCOMMIT must be in [1, 6]\n";
         return 1;
@@ -1916,12 +2020,17 @@ int main(int argc, char *argv[]) {
                       << "five windows, and sliding initial mode\n";
             return 1;
         }
+        bool frozen_concurrency =
+            guard_receiver_concurrency > 0 &&
+            guard_mixed_pg_vector_fastpath &&
+            guard_serialized_progress_refresh && guard_serialized_draining &&
+            guard_capacity_admission_deferral;
         if ((guard_remaining_aware &&
              !guard_serialized_progress_refresh) ||
-            guard_receiver_concurrency != 0) {
+            (guard_receiver_concurrency != 0 && !frozen_concurrency)) {
             std::cerr << "GUARD V11 small-set fast path permits remaining-aware "
-                      << "grants only through the V14 serialized bundle and "
-                      << "forbids receiver concurrency\n";
+                      << "grants and bounded receiver concurrency only through "
+                      << "the complete V18 canonical-vector bundle\n";
             return 1;
         }
     }
@@ -2489,6 +2598,24 @@ int main(int argc, char *argv[]) {
                                  DoubleValue(guard_remaining_exponent));
             rdmaHw->SetAttribute("GuardReceiverConcurrency",
                                  UintegerValue(guard_receiver_concurrency));
+            rdmaHw->SetAttribute("GuardAdaptiveElephantConcurrency",
+                                 BooleanValue(guard_adaptive_elephant_concurrency));
+            rdmaHw->SetAttribute("GuardElephantAgingRtts",
+                                 DoubleValue(guard_elephant_aging_rtts));
+            rdmaHw->SetAttribute("GuardElephantCapSpillover",
+                                 BooleanValue(guard_elephant_cap_spillover));
+            rdmaHw->SetAttribute(
+                "GuardElephantSpilloverEnterReports",
+                UintegerValue(guard_elephant_spillover_enter_reports));
+            rdmaHw->SetAttribute(
+                "GuardElephantSpilloverExitReports",
+                UintegerValue(guard_elephant_spillover_exit_reports));
+            rdmaHw->SetAttribute("GuardElephantFabricTarget",
+                                 BooleanValue(guard_elephant_fabric_target));
+            rdmaHw->SetAttribute("GuardElephantFabricTargetScale",
+                                 DoubleValue(guard_elephant_fabric_target_scale));
+            rdmaHw->SetAttribute("GuardElephantReceiverAuthority",
+                                 BooleanValue(guard_elephant_receiver_authority));
             rdmaHw->SetAttribute("GuardConcurrencyMinBdps",
                                  DoubleValue(guard_concurrency_min_bdps));
             rdmaHw->SetAttribute("GuardGrantRefreshBdps",
@@ -3125,6 +3252,20 @@ int main(int argc, char *argv[]) {
     uint64_t total_guard_cap_rebalance_events = 0;
     uint64_t total_guard_cap_grant_updates = 0;
     uint64_t max_guard_cap_reclaimed_bps = 0;
+    uint64_t total_guard_elephant_spillover_refresh_requests = 0;
+    uint64_t total_guard_elephant_spillover_vectors = 0;
+    uint64_t max_guard_elephant_spillover_bps = 0;
+    uint64_t total_guard_elephant_spillover_allocator_checks = 0;
+    uint64_t total_guard_elephant_spillover_no_pair_checks = 0;
+    uint64_t total_guard_elephant_spillover_donor_inactive_checks = 0;
+    uint64_t total_guard_elephant_spillover_eligible_non_donor_checks = 0;
+    uint64_t total_guard_elephant_spillover_donor_stale_checks = 0;
+    uint64_t total_guard_elephant_spillover_cap_at_or_above_target_checks = 0;
+    uint64_t total_guard_elephant_fabric_target_updates = 0;
+    double max_guard_elephant_fabric_target_effective = 0.0;
+    uint64_t total_guard_elephant_receiver_authority_bindings = 0;
+    uint64_t total_guard_elephant_receiver_authority_rate_changes = 0;
+    uint64_t max_guard_elephant_receiver_authority_released_bps = 0;
     uint64_t total_guard_membership_changes_deferred = 0;
     uint64_t total_guard_membership_batches = 0;
     uint64_t max_guard_membership_batch = 0;
@@ -3369,6 +3510,37 @@ int main(int argc, char *argv[]) {
         total_guard_cap_grant_updates += hw->m_guardCapGrantUpdates;
         max_guard_cap_reclaimed_bps = std::max(
             max_guard_cap_reclaimed_bps, hw->m_guardCapMaxReclaimedBps);
+        total_guard_elephant_spillover_refresh_requests +=
+            hw->m_guardElephantSpilloverRefreshRequests;
+        total_guard_elephant_spillover_vectors +=
+            hw->m_guardElephantSpilloverVectors;
+        max_guard_elephant_spillover_bps = std::max(
+            max_guard_elephant_spillover_bps,
+            hw->m_guardElephantSpilloverMaxBps);
+        total_guard_elephant_spillover_allocator_checks +=
+            hw->m_guardElephantSpilloverAllocatorChecks;
+        total_guard_elephant_spillover_no_pair_checks +=
+            hw->m_guardElephantSpilloverNoPairChecks;
+        total_guard_elephant_spillover_donor_inactive_checks +=
+            hw->m_guardElephantSpilloverDonorInactiveChecks;
+        total_guard_elephant_spillover_eligible_non_donor_checks +=
+            hw->m_guardElephantSpilloverEligibleNonDonorChecks;
+        total_guard_elephant_spillover_donor_stale_checks +=
+            hw->m_guardElephantSpilloverDonorStaleChecks;
+        total_guard_elephant_spillover_cap_at_or_above_target_checks +=
+            hw->m_guardElephantSpilloverCapAtOrAboveTargetChecks;
+        total_guard_elephant_fabric_target_updates +=
+            hw->m_guardElephantFabricTargetUpdates;
+        max_guard_elephant_fabric_target_effective = std::max(
+            max_guard_elephant_fabric_target_effective,
+            hw->m_guardElephantFabricTargetMaxEffective);
+        total_guard_elephant_receiver_authority_bindings +=
+            hw->m_guardElephantReceiverAuthorityBindings;
+        total_guard_elephant_receiver_authority_rate_changes +=
+            hw->m_guardElephantReceiverAuthorityRateChanges;
+        max_guard_elephant_receiver_authority_released_bps = std::max(
+            max_guard_elephant_receiver_authority_released_bps,
+            hw->m_guardElephantReceiverAuthorityMaxReleasedBps);
         total_guard_membership_changes_deferred +=
             hw->m_guardMembershipChangesDeferred;
         total_guard_membership_batches += hw->m_guardMembershipBatches;
@@ -3732,6 +3904,42 @@ int main(int argc, char *argv[]) {
             total_guard_cap_rebalance_events, total_guard_cap_grant_updates,
             max_guard_cap_reclaimed_bps);
     fprintf(guard_stats_output,
+            "guard_elephant_spillover enabled %u enter_reports %u exit_reports %u "
+            "under_grant_percent 5 headroom_percent 10 refresh_requests %lu "
+            "vectors %lu max_bps %lu\n",
+            guard_elephant_cap_spillover ? 1 : 0,
+            guard_elephant_spillover_enter_reports,
+            guard_elephant_spillover_exit_reports,
+            total_guard_elephant_spillover_refresh_requests,
+            total_guard_elephant_spillover_vectors,
+            max_guard_elephant_spillover_bps);
+    fprintf(guard_stats_output,
+            "guard_elephant_spillover_diagnostics allocator_checks %lu "
+            "no_pair %lu donor_inactive %lu eligible_non_donor %lu "
+            "donor_stale %lu cap_at_or_above_target %lu\n",
+            total_guard_elephant_spillover_allocator_checks,
+            total_guard_elephant_spillover_no_pair_checks,
+            total_guard_elephant_spillover_donor_inactive_checks,
+            total_guard_elephant_spillover_eligible_non_donor_checks,
+            total_guard_elephant_spillover_donor_stale_checks,
+            total_guard_elephant_spillover_cap_at_or_above_target_checks);
+    fprintf(guard_stats_output,
+            "guard_elephant_fabric_target enabled %u scale %.9f "
+            "threshold_bdps %.6f updates %lu max_effective_target %.9f\n",
+            guard_elephant_fabric_target ? 1 : 0,
+            guard_elephant_fabric_target_scale,
+            guard_concurrency_min_bdps,
+            total_guard_elephant_fabric_target_updates,
+            max_guard_elephant_fabric_target_effective);
+    fprintf(guard_stats_output,
+            "guard_elephant_receiver_authority enabled %u threshold_bdps %.6f "
+            "bindings %lu rate_changes %lu max_released_bps %lu\n",
+            guard_elephant_receiver_authority ? 1 : 0,
+            guard_concurrency_min_bdps,
+            total_guard_elephant_receiver_authority_bindings,
+            total_guard_elephant_receiver_authority_rate_changes,
+            max_guard_elephant_receiver_authority_released_bps);
+    fprintf(guard_stats_output,
             "guard_sender_scheduler enabled %u quantum_packets %u selections %lu non_rr %lu "
             "forced_rr %lu\n",
             guard_sender_srpt ? 1 : 0, guard_srpt_quantum_packets,
@@ -3752,6 +3960,11 @@ int main(int argc, char *argv[]) {
     uint64_t total_guard_remaining_refresh_events = 0;
     uint64_t total_guard_concurrency_limited_allocations = 0;
     uint64_t max_guard_concurrency_deferred_flows = 0;
+    uint64_t total_guard_adaptive_concurrency_promotions = 0;
+    uint64_t max_guard_adaptive_concurrency_effective = 0;
+    uint64_t total_guard_elephant_aging_rotations = 0;
+    uint64_t max_guard_elephant_aging_wait_ns = 0;
+    uint64_t total_guard_elephant_aging_active_deferred = 0;
     for (uint32_t i = 0; i < node_num; i++) {
         if (n.Get(i)->GetNodeType() != 0) continue;
         Ptr<RdmaDriver> driver = n.Get(i)->GetObject<RdmaDriver>();
@@ -3781,6 +3994,20 @@ int main(int argc, char *argv[]) {
         max_guard_concurrency_deferred_flows = std::max<uint64_t>(
             max_guard_concurrency_deferred_flows,
             driver->m_rdma->m_guardConcurrencyMaxDeferredFlows);
+        total_guard_adaptive_concurrency_promotions +=
+            driver->m_rdma->m_guardAdaptiveConcurrencyPromotions;
+        max_guard_adaptive_concurrency_effective = std::max<uint64_t>(
+            max_guard_adaptive_concurrency_effective,
+            driver->m_rdma->m_guardAdaptiveConcurrencyMaxEffective);
+        total_guard_elephant_aging_rotations +=
+            driver->m_rdma->m_guardElephantAgingRotations;
+        max_guard_elephant_aging_wait_ns = std::max<uint64_t>(
+            max_guard_elephant_aging_wait_ns,
+            driver->m_rdma->m_guardElephantAgingMaxWaitNs);
+        for (auto *flow : driver->m_rdma->m_rate_flow_ctl_set) {
+            if (flow->m_guard_elephant_deferred_since_ns >= 0)
+                total_guard_elephant_aging_active_deferred++;
+        }
     }
     fprintf(guard_stats_output,
             "guard_one_rtt_bypass enabled %u flows %lu feedbacks_skipped %lu "
@@ -3810,14 +4037,26 @@ int main(int argc, char *argv[]) {
     fprintf(guard_stats_output,
             "guard_receiver_scheduler remaining_aware %u min_share_fraction %.6f "
             "remaining_exponent %.6f concurrency %u limited_allocations %lu "
-            "max_deferred %lu concurrency_min_bdps %.6f refresh_bdps %.6f "
+            "max_deferred %lu adaptive_concurrency %u adaptive_promotions %lu "
+            "adaptive_max_effective %lu concurrency_min_bdps %.6f refresh_bdps %.6f "
             "refresh_events %lu\n",
             guard_remaining_aware ? 1 : 0, guard_min_share_fraction,
             guard_remaining_exponent, guard_receiver_concurrency,
             total_guard_concurrency_limited_allocations,
-            max_guard_concurrency_deferred_flows, guard_concurrency_min_bdps,
+            max_guard_concurrency_deferred_flows,
+            guard_adaptive_elephant_concurrency ? 1 : 0,
+            total_guard_adaptive_concurrency_promotions,
+            max_guard_adaptive_concurrency_effective, guard_concurrency_min_bdps,
             guard_grant_refresh_bdps,
             total_guard_remaining_refresh_events);
+    fprintf(guard_stats_output,
+            "guard_elephant_aging enabled %u wait_rtts %.6f rotations %lu "
+            "max_wait_ns %lu active_deferred %lu\n",
+            guard_elephant_aging_rtts > 0.0 ? 1 : 0,
+            guard_elephant_aging_rtts,
+            total_guard_elephant_aging_rotations,
+            max_guard_elephant_aging_wait_ns,
+            total_guard_elephant_aging_active_deferred);
     fprintf(guard_stats_output,
             "guard_membership_coalescing window_ns %lu changes_deferred %lu "
             "batches %lu max_batch %lu empty_cancellations %lu timer_reschedules %lu "

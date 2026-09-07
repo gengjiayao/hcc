@@ -267,7 +267,7 @@ class GuardRefreshDrainingV14Test(unittest.TestCase):
         for token in ("GetGuardDrainingReservedBps(receiver_nic)",
                       "allocatable_bps = capacity_bps - draining_reserved_bps",
                       "waiter_floor > allocatable_bps",
-                      "ComputeGuardFrozenRequestedTargets(allocatable_bps"):
+                      "ComputeGuardFrozenRequestedTargets(capacity_bps, allocatable_bps"):
             self.assertIn(token, freeze)
         self.assertIn("potential_sum + m_guardFrozenDrainingReservedBps", HW_CC)
         required = HW_CC[
@@ -279,6 +279,31 @@ class GuardRefreshDrainingV14Test(unittest.TestCase):
                         HW_CC.index("void RdmaHw::BeginGuardTransitionAudit")]
         self.assertIn("words.push_back(draining_reserved_bps)", encoder)
         self.assertIn("words.push_back(allocatable_capacity_bps)", encoder)
+
+    def test_frozen_allocator_applies_bounded_elephant_service(self):
+        allocator = HW_CC[
+            HW_CC.index("bool RdmaHw::ComputeGuardFrozenRequestedTargets"):
+            HW_CC.index("bool RdmaHw::IsGuardLedgerActionCompatible")]
+        for token in (
+                "flow->m_guard_flow_size",
+                "m_guardConcurrencyMinBdps",
+                "elephants.size() > effective_concurrency",
+                "receives_residual[elephants[rank]] = true",
+                "m_guardConcurrencyLimitedAllocations++",
+                "m_guardConcurrencyMaxDeferredFlows"):
+            self.assertIn(token, allocator)
+        self.assertLess(
+            allocator.index("(*inputs)[index].requestedBps = floor_share"),
+            allocator.index("weights[index] / weight_sum"))
+
+    def test_bounded_elephant_mode_requires_complete_frozen_bundle(self):
+        for source in (RUN, DRIVER):
+            self.assertIn("frozen_concurrency", source)
+            self.assertIn("guard_receiver_concurrency", source)
+            self.assertIn("guard_mixed_pg_vector_fastpath", source)
+            self.assertIn("guard_serialized_progress_refresh", source)
+            self.assertIn("guard_serialized_draining", source)
+            self.assertIn("guard_capacity_admission_deferral", source)
 
     def test_watchdog_occupancy_includes_draining(self):
         budget = HW_CC[

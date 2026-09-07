@@ -271,6 +271,7 @@ class RdmaRxQueuePair : public Object {  // Rx side queue pair
     uint64_t m_guard_last_schedule_seq;
     uint64_t m_guard_pending_progress_seq;
     uint64_t m_guard_flow_size;
+    int64_t m_guard_elephant_deferred_since_ns;
     int64_t m_guard_register_ns;
     uint64_t m_guard_registration_membership_revision;
     uint64_t m_guard_first_grant_gate_bytes;
@@ -286,6 +287,12 @@ class RdmaRxQueuePair : public Object {  // Rx side queue pair
     bool m_guard_report_fabric_bound;
     bool m_guard_cap_limited;
     Time m_guard_last_cap_report_time;
+    uint64_t m_guard_spillover_reported_cap_bps;
+    uint32_t m_guard_spillover_fabric_reports;
+    uint32_t m_guard_spillover_unbound_reports;
+    bool m_guard_spillover_report_fabric_bound;
+    bool m_guard_spillover_active;
+    Time m_guard_spillover_last_report_time;
 
     static TypeId GetTypeId(void);
     RdmaRxQueuePair();

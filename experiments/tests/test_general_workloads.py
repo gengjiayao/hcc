@@ -307,6 +307,296 @@ class GeneralWorkloadRunnerTests(unittest.TestCase):
         option = "--guard_capacity_admission_deferral"
         self.assertEqual(command[command.index(option) + 1], "1")
 
+    def test_v19_freezes_canonical_bounded_elephant_service(self):
+        spec = read_spec(
+            self.repo / "experiments/campaigns/guard_v19_ali50_development.json"
+        )
+        self.assertEqual(spec["mechanism_profile"], "V19")
+        self.assertEqual(spec["seeds"], [165, 166, 167, 168, 169])
+        self.assertEqual(spec["defaults"]["guard_receiver_concurrency"], 1)
+        self.assertEqual(spec["defaults"]["guard_concurrency_min_bdps"], 12.0)
+        workload = {
+            "name": "AliStorage50", "cdf": "AliStorage2019",
+            "selected_profile": "primary",
+            "attempts": {"primary": {"profile": {
+                "topo": "leaf_spine_8_100G_OS2", "hosts": 8,
+                "oversubscription": 2, "simul_time": 0.01,
+                "netload": 50, "bw": 100,
+            }}},
+        }
+        trace = {"seed": 165, "path": "/tmp/v19-flow.txt", "sha256": "same"}
+        command = run_command(self.repo, spec, workload, trace, "guard", True)
+        for option, value in (
+                ("--guard_receiver_concurrency", "1"),
+                ("--guard_concurrency_min_bdps", "12.0"),
+                ("--guard_capacity_admission_deferral", "1")):
+            self.assertEqual(command[command.index(option) + 1], value)
+
+    def test_v20_freezes_matched_k1_k2_pair(self):
+        spec = read_spec(
+            self.repo / "experiments/campaigns/guard_v20_elephant_k_development.json"
+        )
+        self.assertEqual(spec["mechanism_profile"], "V20")
+        self.assertEqual(spec["seeds"], [170, 171, 172, 173, 174])
+        self.assertEqual(set(spec["arms"]), {"guard_k1", "guard_k2"})
+        workload = {
+            "name": "AliStorage50", "cdf": "AliStorage2019",
+            "selected_profile": "primary",
+            "attempts": {"primary": {"profile": {
+                "topo": "leaf_spine_8_100G_OS2", "hosts": 8,
+                "oversubscription": 2, "simul_time": 0.01,
+                "netload": 50, "bw": 100,
+            }}},
+        }
+        trace = {"seed": 170, "path": "/tmp/v20-flow.txt", "sha256": "same"}
+        for arm, expected in (("guard_k1", "1"), ("guard_k2", "2")):
+            command = run_command(self.repo, spec, workload, trace, arm, True)
+            option = "--guard_receiver_concurrency"
+            self.assertEqual(command[command.index(option) + 1], expected)
+            self.assertEqual(command[command.index("--guard_concurrency_min_bdps") + 1],
+                             "12.0")
+
+    def test_v20_rejects_a_second_changed_control(self):
+        path = self.repo / "experiments/campaigns/guard_v20_elephant_k_development.json"
+        value = json.loads(path.read_text())
+        value["arms"]["guard_k2"]["guard_lambda"] = 2.0
+        with tempfile.TemporaryDirectory() as directory:
+            modified = Path(directory) / "v20.json"
+            modified.write_text(json.dumps(value))
+            with self.assertRaisesRegex(CampaignError, "changes controls other than K"):
+                read_spec(modified)
+
+    def test_v21_freezes_sublinear_adaptive_pair(self):
+        spec = read_spec(
+            self.repo /
+            "experiments/campaigns/guard_v21_adaptive_elephant_development.json"
+        )
+        self.assertEqual(spec["mechanism_profile"], "V21")
+        self.assertEqual(spec["seeds"], [175, 176, 177, 178, 179])
+        self.assertEqual(set(spec["arms"]), {"guard_k1", "guard_adaptive"})
+        workload = {
+            "name": "AliStorage50", "cdf": "AliStorage2019",
+            "selected_profile": "primary",
+            "attempts": {"primary": {"profile": {
+                "topo": "leaf_spine_8_100G_OS2", "hosts": 8,
+                "oversubscription": 2, "simul_time": 0.01,
+                "netload": 50, "bw": 100,
+            }}},
+        }
+        trace = {"seed": 175, "path": "/tmp/v21-flow.txt", "sha256": "same"}
+        expected = {
+            "guard_k1": ("1", "0"),
+            "guard_adaptive": ("2", "1"),
+        }
+        for arm, values in expected.items():
+            command = run_command(self.repo, spec, workload, trace, arm, True)
+            self.assertEqual(
+                command[command.index("--guard_receiver_concurrency") + 1], values[0])
+            self.assertEqual(
+                command[command.index("--guard_adaptive_elephant_concurrency") + 1],
+                values[1])
+
+    def test_v21_rejects_an_extra_adaptive_arm_change(self):
+        path = (self.repo /
+                "experiments/campaigns/guard_v21_adaptive_elephant_development.json")
+        value = json.loads(path.read_text())
+        value["arms"]["guard_adaptive"]["guard_remaining_exponent"] = 2.0
+        with tempfile.TemporaryDirectory() as directory:
+            modified = Path(directory) / "v21.json"
+            modified.write_text(json.dumps(value))
+            with self.assertRaisesRegex(CampaignError, "other than adaptive K"):
+                read_spec(modified)
+
+    def test_v22_freezes_fixed_k_aging_pair(self):
+        spec = read_spec(
+            self.repo /
+            "experiments/campaigns/guard_v22_elephant_aging_development.json"
+        )
+        self.assertEqual(spec["mechanism_profile"], "V22")
+        self.assertEqual(spec["seeds"], [180, 181, 182, 183, 184])
+        self.assertEqual(set(spec["arms"]), {"guard_k1", "guard_aging"})
+        workload = {
+            "name": "AliStorage50", "cdf": "AliStorage2019",
+            "selected_profile": "primary",
+            "attempts": {"primary": {"profile": {
+                "topo": "leaf_spine_8_100G_OS2", "hosts": 8,
+                "oversubscription": 2, "simul_time": 0.01,
+                "netload": 50, "bw": 100,
+            }}},
+        }
+        trace = {"seed": 180, "path": "/tmp/v22-flow.txt", "sha256": "same"}
+        for arm, wait in (("guard_k1", "0.0"), ("guard_aging", "2.0")):
+            command = run_command(self.repo, spec, workload, trace, arm, True)
+            self.assertEqual(
+                command[command.index("--guard_receiver_concurrency") + 1], "1")
+            self.assertEqual(
+                command[command.index("--guard_elephant_aging_rtts") + 1], wait)
+
+    def test_v22_rejects_an_extra_aging_arm_change(self):
+        path = (self.repo /
+                "experiments/campaigns/guard_v22_elephant_aging_development.json")
+        value = json.loads(path.read_text())
+        value["arms"]["guard_aging"]["guard_remaining_exponent"] = 2.0
+        with tempfile.TemporaryDirectory() as directory:
+            modified = Path(directory) / "v22.json"
+            modified.write_text(json.dumps(value))
+            with self.assertRaisesRegex(CampaignError, "other than aging"):
+                read_spec(modified)
+
+    def test_v24_freezes_fast_enter_slow_exit_pair(self):
+        spec = read_spec(
+            self.repo /
+            "experiments/campaigns/guard_v24_fast_spillover_development.json"
+        )
+        self.assertEqual(spec["mechanism_profile"], "V24")
+        self.assertEqual(spec["seeds"], [190, 191, 192, 193, 194])
+        self.assertEqual(set(spec["arms"]), {"guard_k1", "guard_spillover"})
+        self.assertEqual(spec["defaults"]["guard_elephant_spillover_enter_reports"], 1)
+        self.assertEqual(spec["defaults"]["guard_elephant_spillover_exit_reports"], 2)
+        workload = {
+            "name": "AliStorage50", "cdf": "AliStorage2019",
+            "selected_profile": "primary",
+            "attempts": {"primary": {"profile": {
+                "topo": "leaf_spine_8_100G_OS2", "hosts": 8,
+                "oversubscription": 2, "simul_time": 0.01,
+                "netload": 50, "bw": 100,
+            }}},
+        }
+        trace = {"seed": 190, "path": "/tmp/v24-flow.txt", "sha256": "same"}
+        for arm, enabled in (("guard_k1", "0"), ("guard_spillover", "1")):
+            command = run_command(self.repo, spec, workload, trace, arm, True)
+            self.assertEqual(
+                command[command.index("--guard_elephant_cap_spillover") + 1],
+                enabled)
+            self.assertEqual(
+                command[command.index("--guard_elephant_spillover_enter_reports") + 1],
+                "1")
+            self.assertEqual(
+                command[command.index("--guard_elephant_spillover_exit_reports") + 1],
+                "2")
+
+    def test_v24_rejects_changed_hysteresis(self):
+        path = (self.repo /
+                "experiments/campaigns/guard_v24_fast_spillover_development.json")
+        value = json.loads(path.read_text())
+        value["defaults"]["guard_elephant_spillover_exit_reports"] = 3
+        with tempfile.TemporaryDirectory() as directory:
+            modified = Path(directory) / "v24.json"
+            modified.write_text(json.dumps(value))
+            with self.assertRaisesRegex(CampaignError, "enter/exit reports"):
+                read_spec(modified)
+
+    def test_v25_freezes_class_scoped_elephant_target(self):
+        spec = read_spec(
+            self.repo /
+            "experiments/campaigns/guard_v25_elephant_fabric_target_development.json"
+        )
+        self.assertEqual(spec["mechanism_profile"], "V25")
+        self.assertEqual(spec["seeds"], [195, 196, 197, 198, 199])
+        self.assertEqual(set(spec["arms"]), {"guard_k1", "guard_elephant_target"})
+        self.assertEqual(spec["defaults"]["guard_elephant_fabric_target_scale"], 11 / 9)
+        workload = {
+            "name": "AliStorage50", "cdf": "AliStorage2019",
+            "selected_profile": "primary",
+            "attempts": {"primary": {"profile": {
+                "topo": "leaf_spine_8_100G_OS2", "hosts": 8,
+                "oversubscription": 2, "simul_time": 0.01,
+                "netload": 50, "bw": 100,
+            }}},
+        }
+        trace = {"seed": 195, "path": "/tmp/v25-flow.txt", "sha256": "same"}
+        for arm, enabled in (("guard_k1", "0"), ("guard_elephant_target", "1")):
+            command = run_command(self.repo, spec, workload, trace, arm, True)
+            self.assertEqual(
+                command[command.index("--guard_elephant_fabric_target") + 1],
+                enabled)
+            self.assertEqual(
+                float(command[command.index(
+                    "--guard_elephant_fabric_target_scale") + 1]),
+                11 / 9)
+
+    def test_v25_rejects_changed_scale(self):
+        path = (self.repo /
+                "experiments/campaigns/guard_v25_elephant_fabric_target_development.json")
+        value = json.loads(path.read_text())
+        value["defaults"]["guard_elephant_fabric_target_scale"] = 1.2
+        with tempfile.TemporaryDirectory() as directory:
+            modified = Path(directory) / "v25.json"
+            modified.write_text(json.dumps(value))
+            with self.assertRaisesRegex(CampaignError, "scale to 11/9"):
+                read_spec(modified)
+
+    def test_v26_freezes_selected_elephant_receiver_authority(self):
+        spec = read_spec(
+            self.repo /
+            "experiments/campaigns/guard_v26_elephant_receiver_authority_development.json"
+        )
+        self.assertEqual(spec["mechanism_profile"], "V26")
+        self.assertEqual(spec["seeds"], [200, 201, 202, 203, 204])
+        self.assertEqual(
+            set(spec["arms"]), {"guard_k1", "guard_elephant_authority"})
+        workload = {
+            "name": "AliStorage50", "cdf": "AliStorage2019",
+            "selected_profile": "primary",
+            "attempts": {"primary": {"profile": {
+                "topo": "leaf_spine_8_100G_OS2", "hosts": 8,
+                "oversubscription": 2, "simul_time": 0.01,
+                "netload": 50, "bw": 100,
+            }}},
+        }
+        trace = {"seed": 200, "path": "/tmp/v26-flow.txt", "sha256": "same"}
+        for arm, enabled in (("guard_k1", "0"),
+                             ("guard_elephant_authority", "1")):
+            command = run_command(self.repo, spec, workload, trace, arm, True)
+            self.assertEqual(
+                command[command.index(
+                    "--guard_elephant_receiver_authority") + 1], enabled)
+            self.assertEqual(
+                command[command.index("--guard_receiver_concurrency") + 1], "1")
+
+    def test_v26_rejects_an_extra_authority_arm_change(self):
+        path = (self.repo /
+                "experiments/campaigns/guard_v26_elephant_receiver_authority_development.json")
+        value = json.loads(path.read_text())
+        value["arms"]["guard_elephant_authority"]["guard_remaining_exponent"] = 2.0
+        with tempfile.TemporaryDirectory() as directory:
+            modified = Path(directory) / "v26.json"
+            modified.write_text(json.dumps(value))
+            with self.assertRaisesRegex(CampaignError, "other than receiver authority"):
+                read_spec(modified)
+
+    def test_guard_k_aliases_use_full_guard_mechanism_checks(self):
+        stats = {
+            "grants_sent": 1, "grants_received": 1,
+            "hpcc_valid_feedback": 1, "hpcc_actual_rate_changes": 1,
+            "reactive_binding_updates": 1,
+            "guard_sender_srpt_enabled": 1,
+            "guard_sender_srpt_selections": 1,
+            "guard_sender_srpt_non_rr": 1,
+            "guard_tail_bypass_flows": 1,
+            "guard_remaining_refresh_events": 1,
+            "guard_adaptive_target_enabled": 0,
+            "guard_elephant_receiver_authority_bindings": 1,
+        }
+        self.assertTrue(all(mechanism_checks("guard_k1", stats).values()))
+        self.assertTrue(all(mechanism_checks("guard_k2", stats).values()))
+        self.assertTrue(all(mechanism_checks("guard_aging", stats).values()))
+        self.assertTrue(all(mechanism_checks("guard_spillover", stats).values()))
+        self.assertTrue(all(mechanism_checks("guard_elephant_target", stats).values()))
+        self.assertTrue(all(mechanism_checks("guard_elephant_authority", stats).values()))
+
+    def test_fct_metrics_include_standard_goodput_jain(self):
+        rows = [
+            {"size": 1000, "duration_ns": 1000, "fct_us": 1,
+             "slowdown": 1},
+            {"size": 2000, "duration_ns": 2000, "fct_us": 2,
+             "slowdown": 2},
+        ]
+        buckets = [{"name": "all_sizes"}]
+        metrics = fct_metrics(rows, buckets)
+        self.assertEqual(metrics["overall_flow_goodput_jain"], 1.0)
+        self.assertEqual(metrics["all_sizes_flow_goodput_jain"], 1.0)
+
     def test_v17_mechanism_gate_has_no_performance_artifact_reader(self):
         source = (self.repo / "experiments/analyze_guard_v17_general_mechanisms.py").read_text()
         for forbidden in ("_out_fct", "_out_queue_stats", "parse_fct(",

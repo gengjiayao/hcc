@@ -254,6 +254,18 @@ TypeId RdmaHw::GetTypeId(void) {
                           UintegerValue(0),
                           MakeUintegerAccessor(&RdmaHw::m_guardReceiverConcurrency),
                           MakeUintegerChecker<uint32_t>())
+            .AddAttribute("GuardAdaptiveElephantConcurrency",
+                          "Use a sublinear floor-sqrt elephant service width, capped by "
+                          "GuardReceiverConcurrency",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(&RdmaHw::m_guardAdaptiveElephantConcurrency),
+                          MakeBooleanChecker())
+            .AddAttribute("GuardElephantAgingRtts",
+                          "Deferred-elephant wait in base RTTs before one K=1 service "
+                          "quantum; zero disables aging",
+                          DoubleValue(0.0),
+                          MakeDoubleAccessor(&RdmaHw::m_guardElephantAgingRtts),
+                          MakeDoubleChecker<double>(0.0, 64.0))
             .AddAttribute("GuardConcurrencyMinBdps",
                           "Apply the receiver concurrency bound only above this many BDPs",
                           DoubleValue(8.0),
@@ -369,6 +381,39 @@ TypeId RdmaHw::GetTypeId(void) {
                           BooleanValue(false),
                           MakeBooleanAccessor(&RdmaHw::m_guardCapAwareReclaim),
                           MakeBooleanChecker())
+            .AddAttribute("GuardElephantCapSpillover",
+                          "Transfer only a confirmed fabric-limited K=1 elephant's "
+                          "unused receiver share to the next elephant",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(&RdmaHw::m_guardElephantCapSpillover),
+                          MakeBooleanChecker())
+            .AddAttribute("GuardElephantSpilloverEnterReports",
+                          "Consecutive fabric-bound reports required to enter spillover",
+                          UintegerValue(3),
+                          MakeUintegerAccessor(
+                              &RdmaHw::m_guardElephantSpilloverEnterReports),
+                          MakeUintegerChecker<uint32_t>(1, 8))
+            .AddAttribute("GuardElephantSpilloverExitReports",
+                          "Consecutive unbound reports required to leave spillover",
+                          UintegerValue(1),
+                          MakeUintegerAccessor(
+                              &RdmaHw::m_guardElephantSpilloverExitReports),
+                          MakeUintegerChecker<uint32_t>(1, 8))
+            .AddAttribute("GuardElephantFabricTarget",
+                          "Use a larger HPCC target only for greater-than-threshold elephants",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(&RdmaHw::m_guardElephantFabricTarget),
+                          MakeBooleanChecker())
+            .AddAttribute("GuardElephantFabricTargetScale",
+                          "Scale applied to the GUARD HPCC target for eligible elephants",
+                          DoubleValue(1.0),
+                          MakeDoubleAccessor(&RdmaHw::m_guardElephantFabricTargetScale),
+                          MakeDoubleChecker<double>(1.0, 2.0))
+            .AddAttribute("GuardElephantReceiverAuthority",
+                          "Let a selected greater-than-threshold elephant follow its receiver cap",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(&RdmaHw::m_guardElephantReceiverAuthority),
+                          MakeBooleanChecker())
             .AddAttribute("GuardCapHeadroom",
                           "Headroom above a reported shared-fabric cap",
                           DoubleValue(1.1), MakeDoubleAccessor(&RdmaHw::m_guardCapHeadroom),
@@ -478,6 +523,20 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardCapRebalanceEvents = 0;
     m_guardCapGrantUpdates = 0;
     m_guardCapMaxReclaimedBps = 0;
+    m_guardElephantSpilloverRefreshRequests = 0;
+    m_guardElephantSpilloverVectors = 0;
+    m_guardElephantSpilloverMaxBps = 0;
+    m_guardElephantSpilloverAllocatorChecks = 0;
+    m_guardElephantSpilloverNoPairChecks = 0;
+    m_guardElephantSpilloverDonorInactiveChecks = 0;
+    m_guardElephantSpilloverEligibleNonDonorChecks = 0;
+    m_guardElephantSpilloverDonorStaleChecks = 0;
+    m_guardElephantSpilloverCapAtOrAboveTargetChecks = 0;
+    m_guardElephantFabricTargetUpdates = 0;
+    m_guardElephantFabricTargetMaxEffective = 0.0;
+    m_guardElephantReceiverAuthorityBindings = 0;
+    m_guardElephantReceiverAuthorityRateChanges = 0;
+    m_guardElephantReceiverAuthorityMaxReleasedBps = 0;
     m_guardRemainingRefreshEvents = 0;
     m_guardMembershipChangesDeferred = 0;
     m_guardMembershipBatches = 0;
@@ -615,6 +674,10 @@ RdmaHw::RdmaHw() : homa_simple_scheduler(this), homa_scheduler(this) {
     m_guardTransitionPrefixWatchdogNonReconstructable = false;
     m_guardConcurrencyLimitedAllocations = 0;
     m_guardConcurrencyMaxDeferredFlows = 0;
+    m_guardAdaptiveConcurrencyPromotions = 0;
+    m_guardAdaptiveConcurrencyMaxEffective = 0;
+    m_guardElephantAgingRotations = 0;
+    m_guardElephantAgingMaxWaitNs = 0;
     m_guardOneRttBypassFlows = 0;
     m_guardOneRttBypassFeedbacks = 0;
     m_guardOneRttAcksSuppressed = 0;
@@ -1556,13 +1619,18 @@ int RdmaHw::ReceiveRate(Ptr<Packet> p, CustomHeader &ch) {
     m_guardRateGrantsReceived++;
     TraceGuardGrantReceive(qp, p, curRate.GetBitRate(), generation, "received",
                            ack_required, phase_tag);
-    DataRate old_rate = qp->m_rate;
-    SyncHwRate(qp, qp->hp.m_curRate);
     if (compact && generation > 0) {
+        // Commit the already validated receiver decision before composing the
+        // pacing rate.  V26 authority must take effect on this grant rather
+        // than waiting for an unrelated later HPCC sample.
         qp->m_guard_last_grant_generation = generation;
         qp->m_guard_last_generation_rate_bps = received_rate_bps;
         qp->m_guard_last_generation_ack_required = ack_required;
         qp->m_guard_last_generation_phase_tag = phase_tag;
+    }
+    DataRate old_rate = qp->m_rate;
+    SyncHwRate(qp, qp->hp.m_curRate);
+    if (compact && generation > 0) {
         if (ack_required) {
             if (GuardSmallSetFastpathEnabled()) {
                 CountGuardFastpathAckFrame(phase_tag);
@@ -1570,7 +1638,8 @@ int RdmaHw::ReceiveRate(Ptr<Packet> p, CustomHeader &ch) {
             SendGuardGrantAck(qp, generation, phase_tag);
         }
     }
-    const char *binding = qp->m_guard_tail_bypass
+    const char *binding = (qp->m_guard_tail_bypass ||
+                           UsesGuardElephantReceiverAuthority(qp))
                               ? "grant"
                               : qp->hp.m_curRate < qp->hp.m_grantRate
                                     ? "reactive"
@@ -1689,6 +1758,85 @@ int RdmaHw::ReceiveGuardCapReport(Ptr<Packet> /*p*/, CustomHeader &ch) {
     bool fabric_bound =
         ((ch.ack.flags >> qbbHeader::FLAG_GUARD_FABRIC_BOUND) & 1) != 0;
     Time now = Simulator::Now();
+    if (m_guardElephantCapSpillover) {
+        Time spillover_freshness = NanoSeconds(1);
+        if (rx_qp->m_base_rtt_sec > 0) {
+            spillover_freshness = Seconds(4.0 * rx_qp->m_base_rtt_sec);
+        }
+        bool spillover_fresh_previous =
+            !rx_qp->m_guard_spillover_last_report_time.IsZero() &&
+            now - rx_qp->m_guard_spillover_last_report_time <=
+                spillover_freshness;
+        bool below_grant = rx_qp->m_guard_grant_rate_bps > 0 &&
+            static_cast<__uint128_t>(reported_rate_bps) * 100U <
+                static_cast<__uint128_t>(rx_qp->m_guard_grant_rate_bps) * 95U;
+        bool was_eligible = rx_qp->m_guard_spillover_active;
+        uint64_t old_cap_bps = rx_qp->m_guard_spillover_reported_cap_bps;
+        if (fabric_bound && below_grant) {
+            if (spillover_fresh_previous &&
+                rx_qp->m_guard_spillover_report_fabric_bound &&
+                old_cap_bps > 0) {
+                // The maximum observation in the consecutive streak is the
+                // conservative donor cap: spillover never reclaims a rate that any
+                // confirming sample says the shortest elephant could use.
+                rx_qp->m_guard_spillover_reported_cap_bps =
+                    std::max(old_cap_bps, reported_rate_bps);
+                if (rx_qp->m_guard_spillover_fabric_reports <
+                    std::numeric_limits<uint32_t>::max()) {
+                    rx_qp->m_guard_spillover_fabric_reports++;
+                }
+            } else {
+                rx_qp->m_guard_spillover_reported_cap_bps = reported_rate_bps;
+                rx_qp->m_guard_spillover_fabric_reports = 1;
+            }
+            rx_qp->m_guard_spillover_unbound_reports = 0;
+            rx_qp->m_guard_spillover_report_fabric_bound = true;
+            if (rx_qp->m_guard_spillover_fabric_reports >=
+                m_guardElephantSpilloverEnterReports) {
+                rx_qp->m_guard_spillover_active = true;
+            }
+        } else {
+            rx_qp->m_guard_spillover_reported_cap_bps = 0;
+            rx_qp->m_guard_spillover_fabric_reports = 0;
+            bool consecutive_unbound = spillover_fresh_previous &&
+                !rx_qp->m_guard_spillover_report_fabric_bound;
+            if (consecutive_unbound) {
+                if (rx_qp->m_guard_spillover_unbound_reports <
+                    std::numeric_limits<uint32_t>::max()) {
+                    rx_qp->m_guard_spillover_unbound_reports++;
+                }
+            } else {
+                rx_qp->m_guard_spillover_unbound_reports = 1;
+            }
+            rx_qp->m_guard_spillover_report_fabric_bound = false;
+            if (spillover_fresh_previous &&
+                rx_qp->m_guard_spillover_active &&
+                rx_qp->m_guard_spillover_unbound_reports <
+                    m_guardElephantSpilloverExitReports) {
+                // One recovery sample may be caused by the conservative
+                // receiver cap itself.  Keep the active latch, but raise the
+                // donor cap estimate so V24 can only reclaim less capacity.
+                rx_qp->m_guard_spillover_reported_cap_bps =
+                    std::max(old_cap_bps, reported_rate_bps);
+            } else {
+                rx_qp->m_guard_spillover_active = false;
+                rx_qp->m_guard_spillover_reported_cap_bps = 0;
+            }
+        }
+        rx_qp->m_guard_spillover_last_report_time = now;
+        bool is_eligible = rx_qp->m_guard_spillover_active &&
+            rx_qp->m_guard_spillover_reported_cap_bps > 0;
+        uint64_t new_cap_bps = rx_qp->m_guard_spillover_reported_cap_bps;
+        uint64_t cap_delta = old_cap_bps > new_cap_bps
+            ? old_cap_bps - new_cap_bps : new_cap_bps - old_cap_bps;
+        uint64_t material_delta = std::max<uint64_t>(
+            100000000ULL, old_cap_bps / 20ULL);
+        if (was_eligible != is_eligible ||
+            (is_eligible && cap_delta >= material_delta)) {
+            RequestGuardCapacityRefresh();
+        }
+    }
+
     Time freshness = MilliSeconds(1);
     if (rx_qp->m_base_rtt_sec > 0) {
         freshness = std::max(freshness, Seconds(32.0 * rx_qp->m_base_rtt_sec));
@@ -1739,7 +1887,7 @@ int RdmaHw::ReceiveGuardCapReport(Ptr<Packet> /*p*/, CustomHeader &ch) {
     rx_qp->m_guard_last_cap_report_time = now;
     m_guardCapReportsReceived++;
     if (fabric_bound) m_guardFabricBoundReportsReceived++;
-    ApplyGuardCapAwareRates();
+    if (m_guardCapAwareReclaim) ApplyGuardCapAwareRates();
     return 0;
 }
 
@@ -2058,7 +2206,8 @@ void RdmaHw::QpComplete(Ptr<RdmaQueuePair> qp) {
     }
     if (qp->m_retransmit.IsRunning()) qp->m_retransmit.Cancel();
 
-    const char *binding = qp->m_guard_tail_bypass
+    const char *binding = (qp->m_guard_tail_bypass ||
+                           UsesGuardElephantReceiverAuthority(qp))
                               ? "grant"
                               : qp->hp.m_curRate < qp->hp.m_grantRate
                                     ? "reactive"
@@ -2447,9 +2596,19 @@ void RdmaHw::HyperIncreaseMlx(Ptr<RdmaQueuePair> q) {
  ***********************/
 void RdmaHw::SyncHwRate(Ptr<RdmaQueuePair> qp, DataRate target_cc_rate) {
     DataRate final_rate = target_cc_rate;
+    bool elephant_receiver_authority =
+        UsesGuardElephantReceiverAuthority(qp);
 
     if (m_cc_mode == CC_MODE_GUARD && qp->m_guard_tail_bypass) {
         final_rate = qp->hp.m_grantRate;
+    } else if (m_cc_mode == CC_MODE_GUARD && elephant_receiver_authority) {
+        final_rate = qp->hp.m_grantRate;
+        m_guardElephantReceiverAuthorityBindings++;
+        if (qp->hp.m_grantRate > target_cc_rate) {
+            m_guardElephantReceiverAuthorityMaxReleasedBps = std::max(
+                m_guardElephantReceiverAuthorityMaxReleasedBps,
+                qp->hp.m_grantRate.GetBitRate() - target_cc_rate.GetBitRate());
+        }
     } else if (qp->hp.m_grantRate < final_rate) {
         final_rate = qp->hp.m_grantRate;
     }
@@ -2457,12 +2616,17 @@ void RdmaHw::SyncHwRate(Ptr<RdmaQueuePair> qp, DataRate target_cc_rate) {
     if (final_rate < m_minRate) final_rate = m_minRate;
     if (final_rate > qp->m_max_rate) final_rate = qp->m_max_rate;
 
+    DataRate old_rate = qp->m_rate;
     ChangeRate(qp, final_rate);
+    if (elephant_receiver_authority && qp->m_rate != old_rate) {
+        m_guardElephantReceiverAuthorityRateChanges++;
+    }
     MaybeSendGuardCapReport(qp);
 }
 
 void RdmaHw::MaybeSendGuardCapReport(Ptr<RdmaQueuePair> qp) {
-    if (!m_guardCapAwareReclaim || m_cc_mode != CC_MODE_GUARD || qp == NULL ||
+    if ((!m_guardCapAwareReclaim && !m_guardElephantCapSpillover) ||
+        m_cc_mode != CC_MODE_GUARD || qp == NULL ||
         qp->IsFinishedConst()) {
         return;
     }
@@ -2769,6 +2933,7 @@ bool RdmaHw::HandleRccRemove(Ptr<RdmaRxQueuePair> rx_qp,
     } else if (closes_required_ack) {
         m_guardPendingGrantAcks--;
     }
+    rx_qp->m_guard_elephant_deferred_since_ns = -1;
     m_rate_flow_ctl_set.erase(PeekPointer(rx_qp));
     m_guardProgressDirtyFlows.erase(PeekPointer(rx_qp));
     m_guardProgressTransactionFlows.erase(PeekPointer(rx_qp));
@@ -3166,6 +3331,30 @@ void RdmaHw::RequestGuardProgressRefresh(RdmaRxQueuePair *flow,
         m_guardProgressRevision++;
         m_guardSerializedProgressRequests++;
     }
+    bool busy = m_guardProgressTransactionActive ||
+                m_guardFastpathPhase != GUARD_FASTPATH_IDLE ||
+                m_guardPendingGrantAcks != 0 || m_guardFrozenVectorActive ||
+                IsGuardMembershipDirty() || m_guardFastpathCollectionReady;
+    if (busy) {
+        m_guardProgressEventsCoalesced++;
+        m_guardSerializedProgressBusyDeferrals++;
+        return;
+    }
+    StartGuardProgressTransaction();
+}
+
+void RdmaHw::RequestGuardCapacityRefresh() {
+    NS_ABORT_MSG_IF(!m_guardElephantCapSpillover ||
+                        !m_guardSerializedProgressRefresh ||
+                        !m_guardMixedPgVectorFastpath,
+                    "GUARD elephant spillover escaped its vector coordinator");
+    if (m_rate_flow_ctl_set.empty() || m_guardCapacityDirty) return;
+    NS_ABORT_MSG_IF(
+        m_guardProgressRevision == std::numeric_limits<uint64_t>::max(),
+        "GUARD elephant spillover progress revision exhausted");
+    m_guardProgressRevision++;
+    m_guardCapacityDirty = true;
+    m_guardElephantSpilloverRefreshRequests++;
     bool busy = m_guardProgressTransactionActive ||
                 m_guardFastpathPhase != GUARD_FASTPATH_IDLE ||
                 m_guardPendingGrantAcks != 0 || m_guardFrozenVectorActive ||
@@ -3622,7 +3811,8 @@ void RdmaHw::FreezeGuardFastpathTargetVector(uint64_t membership_revision) {
                           flow->ReceiverNextExpectedSeq, 0, flow});
     }
     NS_ABORT_MSG_IF(
-        !ComputeGuardFrozenRequestedTargets(allocatable_bps, &inputs),
+        !ComputeGuardFrozenRequestedTargets(capacity_bps, allocatable_bps,
+                                             &inputs),
         "GUARD V14 frozen remaining-aware allocation is infeasible");
     NS_ABORT_MSG_IF(
         m_guardAllocationRevision == std::numeric_limits<uint64_t>::max(),
@@ -3821,10 +4011,71 @@ bool RdmaHw::CanReleaseGuardDraining(uint64_t flow_size_bytes,
     return flow_size_bytes > 0 && next_expected_seq >= flow_size_bytes;
 }
 
+bool RdmaHw::ComputeGuardElephantFabricTarget(
+    double base_target, bool enabled, uint64_t flow_size_bytes,
+    uint64_t path_bdp_bytes, double threshold_bdps, double scale,
+    double *effective_target, bool *eligible) {
+    if (effective_target == NULL || eligible == NULL ||
+        !std::isfinite(base_target) || base_target <= 0.0 ||
+        !std::isfinite(threshold_bdps) || threshold_bdps < 0.0 ||
+        !std::isfinite(scale) || scale < 1.0 || scale > 2.0 ||
+        (enabled && path_bdp_bytes == 0)) {
+        return false;
+    }
+    *eligible = enabled &&
+        static_cast<long double>(flow_size_bytes) >
+            static_cast<long double>(threshold_bdps) *
+                static_cast<long double>(path_bdp_bytes);
+    *effective_target = *eligible ? base_target * scale : base_target;
+    return std::isfinite(*effective_target) && *effective_target > 0.0;
+}
+
+bool RdmaHw::IsGuardElephantReceiverAuthorityEligible(
+    bool enabled, bool has_receiver_grant, bool tail_bypass,
+    uint64_t flow_size_bytes, uint64_t path_bdp_bytes,
+    double threshold_bdps, uint64_t grant_rate_bps,
+    uint64_t minimum_rate_bps) {
+    if (!enabled || !has_receiver_grant || tail_bypass ||
+        path_bdp_bytes == 0 || minimum_rate_bps == 0 ||
+        !std::isfinite(threshold_bdps) || threshold_bdps < 0.0) {
+        return false;
+    }
+    return grant_rate_bps > minimum_rate_bps &&
+        static_cast<long double>(flow_size_bytes) >
+            static_cast<long double>(threshold_bdps) *
+                static_cast<long double>(path_bdp_bytes);
+}
+
+bool RdmaHw::UsesGuardElephantReceiverAuthority(Ptr<RdmaQueuePair> qp) const {
+    return qp != NULL && IsGuardElephantReceiverAuthorityEligible(
+        m_guardElephantReceiverAuthority,
+        !qp->m_guard_wait_first_grant && qp->m_guard_last_grant_generation > 0,
+        qp->m_guard_tail_bypass, qp->m_size, qp->m_win,
+        m_guardConcurrencyMinBdps, qp->hp.m_grantRate.GetBitRate(),
+        m_minRate.GetBitRate());
+}
+
+uint32_t RdmaHw::ComputeGuardEffectiveElephantConcurrency(
+    uint32_t configured_max, size_t candidate_count, bool adaptive) {
+    if (configured_max == 0 || candidate_count == 0 || !adaptive) {
+        return configured_max;
+    }
+    uint32_t effective = 1;
+    while (effective < configured_max) {
+        uint64_t next = static_cast<uint64_t>(effective) + 1;
+        if (next > candidate_count / next) break;
+        effective++;
+    }
+    return effective;
+}
+
 bool RdmaHw::ComputeGuardFrozenRequestedTargets(
-    uint64_t allocatable_bps,
-    std::vector<GuardVectorTargetInput> *inputs) const {
-    if (inputs == NULL || inputs->empty() || allocatable_bps == 0) return false;
+    uint64_t receiver_capacity_bps, uint64_t allocatable_bps,
+    std::vector<GuardVectorTargetInput> *inputs) {
+    if (inputs == NULL || inputs->empty() || receiver_capacity_bps == 0 ||
+        allocatable_bps == 0 || allocatable_bps > receiver_capacity_bps) {
+        return false;
+    }
     uint64_t effective_min_mbps = m_minRate.GetBitRate() / 1000000ULL +
         (m_minRate.GetBitRate() % 1000000ULL != 0 ? 1 : 0);
     uint64_t effective_min_bps = effective_min_mbps * 1000000ULL;
@@ -3837,11 +4088,6 @@ bool RdmaHw::ComputeGuardFrozenRequestedTargets(
         return true;
     }
 
-    uint64_t minimum_remaining = std::numeric_limits<uint64_t>::max();
-    for (const auto &input : *inputs) {
-        minimum_remaining = std::min(
-            minimum_remaining, std::max<uint64_t>(input.remainingBytes, m_mtu));
-    }
     uint64_t configured_floor = static_cast<uint64_t>(
         static_cast<long double>(equal_share) * m_guardMinShareFraction);
     uint64_t floor_share = std::max(effective_min_bps, configured_floor);
@@ -3849,22 +4095,219 @@ bool RdmaHw::ComputeGuardFrozenRequestedTargets(
         static_cast<__uint128_t>(floor_share) * inputs->size();
     if (total_floor > allocatable_bps) return false;
     uint64_t residual = allocatable_bps - static_cast<uint64_t>(total_floor);
+
+    // The pre-V14 allocator already bounded simultaneous elephant service,
+    // but canonical frozen vectors initially omitted that policy.  Preserve
+    // every shorter registered flow in the residual allocation and admit at
+    // most K elephants, ordered deterministically by remaining bytes and the
+    // full flow identity.  Deferred elephants retain the same sender-enforced
+    // floor, so the resulting vector remains bounded by C-D.
+    std::vector<bool> receives_residual(inputs->size(), true);
+    std::vector<size_t> elephants;
+    if (m_guardReceiverConcurrency > 0) {
+        for (size_t index = 0; index < inputs->size(); ++index) {
+            RdmaRxQueuePair *flow = (*inputs)[index].flow;
+            if (flow == NULL || flow->m_guard_flow_size == 0) return false;
+            uint64_t bdp_bytes = 104000;
+            if (flow->m_base_rtt_sec > 0.0) {
+                long double computed =
+                    static_cast<long double>(flow->m_base_rtt_sec) *
+                    static_cast<long double>(receiver_capacity_bps) / 8.0L;
+                if (!(computed > 0.0L) ||
+                    computed > static_cast<long double>(
+                        std::numeric_limits<uint64_t>::max())) {
+                    return false;
+                }
+                bdp_bytes = static_cast<uint64_t>(computed);
+                if (bdp_bytes == 0) return false;
+            }
+            long double threshold_bytes =
+                static_cast<long double>(m_guardConcurrencyMinBdps) *
+                static_cast<long double>(bdp_bytes);
+            if (static_cast<long double>(flow->m_guard_flow_size) >
+                threshold_bytes) {
+                elephants.push_back(index);
+            }
+        }
+    }
+    uint32_t effective_concurrency = ComputeGuardEffectiveElephantConcurrency(
+        m_guardReceiverConcurrency, elephants.size(),
+        m_guardAdaptiveElephantConcurrency);
+    std::vector<bool> is_elephant(inputs->size(), false);
+    for (size_t index : elephants) is_elephant[index] = true;
+    for (size_t index = 0; index < inputs->size(); ++index) {
+        RdmaRxQueuePair *flow = (*inputs)[index].flow;
+        if (flow != NULL && (!is_elephant[index] || m_guardElephantAgingRtts == 0.0)) {
+            flow->m_guard_elephant_deferred_since_ns = -1;
+        }
+    }
+    if (m_guardAdaptiveElephantConcurrency && effective_concurrency > 1) {
+        m_guardAdaptiveConcurrencyPromotions++;
+        m_guardAdaptiveConcurrencyMaxEffective = std::max<uint64_t>(
+            m_guardAdaptiveConcurrencyMaxEffective, effective_concurrency);
+    }
+    if (elephants.size() > effective_concurrency && effective_concurrency > 0) {
+        std::sort(elephants.begin(), elephants.end(),
+                  [inputs](size_t left_index, size_t right_index) {
+                      const GuardVectorTargetInput &left = (*inputs)[left_index];
+                      const GuardVectorTargetInput &right = (*inputs)[right_index];
+                      if (left.remainingBytes != right.remainingBytes) {
+                          return left.remainingBytes < right.remainingBytes;
+                      }
+                      const GuardQpIdentity &a = left.identity;
+                      const GuardQpIdentity &b = right.identity;
+                      return std::tie(a.sip, a.dip, a.sport, a.dport, a.pg) <
+                             std::tie(b.sip, b.dip, b.sport, b.dport, b.pg);
+                  });
+        if (m_guardElephantAgingRtts > 0.0 && effective_concurrency == 1) {
+            int64_t now_ns = Simulator::Now().GetNanoSeconds();
+            if (now_ns < 0) return false;
+            size_t aged_rank = elephants.size();
+            int64_t oldest_since_ns = std::numeric_limits<int64_t>::max();
+            for (size_t rank = 1; rank < elephants.size(); ++rank) {
+                RdmaRxQueuePair *flow = (*inputs)[elephants[rank]].flow;
+                if (flow->m_guard_elephant_deferred_since_ns < 0) {
+                    flow->m_guard_elephant_deferred_since_ns = now_ns;
+                }
+                long double rtt_ns = flow->m_base_rtt_sec > 0.0
+                    ? static_cast<long double>(flow->m_base_rtt_sec) * 1.0e9L
+                    : 8320.0L;
+                long double threshold = rtt_ns * m_guardElephantAgingRtts;
+                if (!(threshold > 0.0L) ||
+                    threshold > static_cast<long double>(
+                        std::numeric_limits<int64_t>::max())) {
+                    return false;
+                }
+                if (flow->m_guard_elephant_deferred_since_ns > now_ns) return false;
+                int64_t waited_ns = now_ns - flow->m_guard_elephant_deferred_since_ns;
+                if (waited_ns >= static_cast<int64_t>(std::ceil(threshold)) &&
+                    flow->m_guard_elephant_deferred_since_ns < oldest_since_ns) {
+                    aged_rank = rank;
+                    oldest_since_ns = flow->m_guard_elephant_deferred_since_ns;
+                }
+            }
+            if (aged_rank < elephants.size()) {
+                int64_t waited_ns = now_ns - oldest_since_ns;
+                std::swap(elephants[0], elephants[aged_rank]);
+                m_guardElephantAgingRotations++;
+                m_guardElephantAgingMaxWaitNs = std::max<uint64_t>(
+                    m_guardElephantAgingMaxWaitNs,
+                    static_cast<uint64_t>(waited_ns));
+            }
+            for (size_t rank = 0; rank < elephants.size(); ++rank) {
+                RdmaRxQueuePair *flow = (*inputs)[elephants[rank]].flow;
+                if (rank < effective_concurrency) {
+                    flow->m_guard_elephant_deferred_since_ns = -1;
+                } else if (flow->m_guard_elephant_deferred_since_ns < 0) {
+                    flow->m_guard_elephant_deferred_since_ns = now_ns;
+                }
+            }
+        }
+        for (size_t index : elephants) receives_residual[index] = false;
+        for (size_t rank = 0; rank < effective_concurrency; ++rank) {
+            receives_residual[elephants[rank]] = true;
+        }
+        m_guardConcurrencyLimitedAllocations++;
+        m_guardConcurrencyMaxDeferredFlows = std::max<uint64_t>(
+            m_guardConcurrencyMaxDeferredFlows,
+            elephants.size() - effective_concurrency);
+    } else {
+        for (size_t index : elephants)
+            (*inputs)[index].flow->m_guard_elephant_deferred_since_ns = -1;
+    }
+
     std::vector<long double> weights;
-    weights.reserve(inputs->size());
+    weights.assign(inputs->size(), 0.0L);
     long double weight_sum = 0.0L;
-    for (const auto &input : *inputs) {
+    uint64_t minimum_remaining = std::numeric_limits<uint64_t>::max();
+    for (size_t index = 0; index < inputs->size(); ++index) {
+        if (!receives_residual[index]) continue;
+        const GuardVectorTargetInput &input = (*inputs)[index];
+        minimum_remaining = std::min(
+            minimum_remaining, std::max<uint64_t>(input.remainingBytes, m_mtu));
+    }
+    if (minimum_remaining == std::numeric_limits<uint64_t>::max()) return false;
+    for (size_t index = 0; index < inputs->size(); ++index) {
+        if (!receives_residual[index]) continue;
+        const GuardVectorTargetInput &input = (*inputs)[index];
         uint64_t remaining = std::max<uint64_t>(input.remainingBytes, m_mtu);
         long double weight = std::pow(
             static_cast<long double>(minimum_remaining) / remaining,
             m_guardRemainingExponent);
-        weights.push_back(weight);
+        weights[index] = weight;
         weight_sum += weight;
     }
     if (!(weight_sum > 0.0L)) return false;
     for (size_t index = 0; index < inputs->size(); ++index) {
-        (*inputs)[index].requestedBps = floor_share +
-            static_cast<uint64_t>(static_cast<long double>(residual) *
-                                  weights[index] / weight_sum);
+        (*inputs)[index].requestedBps = floor_share;
+        if (receives_residual[index]) {
+            (*inputs)[index].requestedBps +=
+                static_cast<uint64_t>(static_cast<long double>(residual) *
+                                      weights[index] / weight_sum);
+        }
+    }
+    if (m_guardElephantCapSpillover && effective_concurrency == 1) {
+        m_guardElephantSpilloverAllocatorChecks++;
+        if (elephants.size() < 2) {
+            m_guardElephantSpilloverNoPairChecks++;
+            return true;
+        }
+        size_t donor_index = elephants[0];
+        size_t recipient_index = elephants[1];
+        RdmaRxQueuePair *donor = (*inputs)[donor_index].flow;
+        if (donor == NULL) return false;
+        Time freshness = donor->m_base_rtt_sec > 0
+            ? Seconds(4.0 * donor->m_base_rtt_sec) : NanoSeconds(1);
+        bool fresh = !donor->m_guard_spillover_last_report_time.IsZero() &&
+            Simulator::Now() - donor->m_guard_spillover_last_report_time <=
+                freshness;
+        bool eligible = fresh && donor->m_guard_spillover_active &&
+            donor->m_guard_spillover_reported_cap_bps > 0;
+        if (!eligible) {
+            m_guardElephantSpilloverDonorInactiveChecks++;
+            if (donor->m_guard_spillover_active && !fresh) {
+                m_guardElephantSpilloverDonorStaleChecks++;
+            }
+            for (size_t rank = 1; rank < elephants.size(); ++rank) {
+                RdmaRxQueuePair *other = (*inputs)[elephants[rank]].flow;
+                if (other == NULL) return false;
+                Time other_freshness = other->m_base_rtt_sec > 0
+                    ? Seconds(4.0 * other->m_base_rtt_sec) : NanoSeconds(1);
+                bool other_fresh =
+                    !other->m_guard_spillover_last_report_time.IsZero() &&
+                    Simulator::Now() - other->m_guard_spillover_last_report_time <=
+                        other_freshness;
+                if (other_fresh && other->m_guard_spillover_active &&
+                    other->m_guard_spillover_reported_cap_bps > 0) {
+                    m_guardElephantSpilloverEligibleNonDonorChecks++;
+                    break;
+                }
+            }
+        }
+        if (eligible) {
+            __uint128_t headroom_numerator =
+                static_cast<__uint128_t>(
+                    donor->m_guard_spillover_reported_cap_bps) * 11U + 9U;
+            uint64_t conservative_cap_bps = static_cast<uint64_t>(
+                headroom_numerator / 10U);
+            uint64_t donor_target_bps = (*inputs)[donor_index].requestedBps;
+            uint64_t donor_new_bps = std::max(floor_share,
+                                              conservative_cap_bps);
+            if (donor_new_bps < donor_target_bps) {
+                uint64_t spillover_bps = donor_target_bps - donor_new_bps;
+                NS_ABORT_MSG_IF(
+                    (*inputs)[recipient_index].requestedBps >
+                        std::numeric_limits<uint64_t>::max() - spillover_bps,
+                    "GUARD elephant spillover target overflow");
+                (*inputs)[donor_index].requestedBps = donor_new_bps;
+                (*inputs)[recipient_index].requestedBps += spillover_bps;
+                m_guardElephantSpilloverVectors++;
+                m_guardElephantSpilloverMaxBps = std::max(
+                    m_guardElephantSpilloverMaxBps, spillover_bps);
+            } else {
+                m_guardElephantSpilloverCapAtOrAboveTargetChecks++;
+            }
+        }
     }
     return true;
 }
@@ -5774,11 +6217,19 @@ void RdmaHw::RedistributeGuardRates(const char *set_change, uint32_t generation)
                 concurrency_candidates++;
         }
     }
-    if (concurrency_candidates > m_guardReceiverConcurrency) {
+    uint32_t effective_concurrency = ComputeGuardEffectiveElephantConcurrency(
+        m_guardReceiverConcurrency, concurrency_candidates,
+        m_guardAdaptiveElephantConcurrency);
+    if (m_guardAdaptiveElephantConcurrency && effective_concurrency > 1) {
+        m_guardAdaptiveConcurrencyPromotions++;
+        m_guardAdaptiveConcurrencyMaxEffective = std::max<uint64_t>(
+            m_guardAdaptiveConcurrencyMaxEffective, effective_concurrency);
+    }
+    if (concurrency_candidates > effective_concurrency) {
         m_guardConcurrencyLimitedAllocations++;
         m_guardConcurrencyMaxDeferredFlows = std::max<uint64_t>(
             m_guardConcurrencyMaxDeferredFlows,
-            concurrency_candidates - m_guardReceiverConcurrency);
+            concurrency_candidates - effective_concurrency);
     }
     std::unordered_map<RdmaRxQueuePair*, uint32_t> encoded_rates;
     bool ack_required_generation = false;
@@ -5851,7 +6302,9 @@ std::unordered_map<RdmaRxQueuePair*, uint64_t> RdmaHw::ComputeGuardBaseTargets(
         }
     }
     size_t service_count = std::min<size_t>(
-        concurrency_candidates.size(), m_guardReceiverConcurrency);
+        concurrency_candidates.size(), ComputeGuardEffectiveElephantConcurrency(
+            m_guardReceiverConcurrency, concurrency_candidates.size(),
+            m_guardAdaptiveElephantConcurrency));
     std::unordered_set<RdmaRxQueuePair*> service_set;
     if (m_guardReceiverConcurrency > 0 &&
         service_count < concurrency_candidates.size()) {
@@ -7480,6 +7933,24 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
                 if (effective_target + 1e-12 < m_targetUtil)
                     m_guardAdaptiveTargetUpdates++;
             }
+            if (m_cc_mode == CC_MODE_GUARD && m_guardElephantFabricTarget) {
+                NS_ABORT_MSG_IF(m_guardAdaptiveFabricTarget,
+                                "GUARD elephant target requires a fixed base target");
+                bool elephant_target_eligible = false;
+                NS_ABORT_MSG_IF(
+                    !ComputeGuardElephantFabricTarget(
+                        effective_target, true, qp->m_size, qp->m_win,
+                        m_guardConcurrencyMinBdps,
+                        m_guardElephantFabricTargetScale,
+                        &effective_target, &elephant_target_eligible),
+                    "GUARD elephant fabric target is invalid");
+                if (elephant_target_eligible && updated_any) {
+                    m_guardElephantFabricTargetUpdates++;
+                    m_guardElephantFabricTargetMaxEffective = std::max(
+                        m_guardElephantFabricTargetMaxEffective,
+                        effective_target);
+                }
+            }
             if (!m_multipleRate) {
                 // for aggregate (single R)
                 if (updated_any) {
@@ -7574,7 +8045,10 @@ void RdmaHw::UpdateRateHp(Ptr<RdmaQueuePair> qp, Ptr<Packet> p, CustomHeader &ch
                 if (m_cc_mode == 11) {
                     DataRate old_rate = qp->m_rate;
                     const char *binding = "tie";
-                    if (new_rate < qp->hp.m_grantRate) {
+                    if (UsesGuardElephantReceiverAuthority(qp)) {
+                        m_guardGrantBindingUpdates++;
+                        binding = "grant";
+                    } else if (new_rate < qp->hp.m_grantRate) {
                         m_guardReactiveBindingUpdates++;
                         binding = "reactive";
                     } else if (qp->hp.m_grantRate < new_rate) {

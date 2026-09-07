@@ -1,0 +1,84 @@
+import json
+from pathlib import Path
+import tempfile
+import unittest
+
+from experiments.run_campaign import sha256_file
+from experiments.select_guard_v21_adaptive_elephant import SelectionError, select
+
+
+class GuardV21SelectionTests(unittest.TestCase):
+    def write_json(self, path, value):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value, sort_keys=True))
+
+    def campaign(self, root, queue_high=4.0):
+        spec = {
+            "mechanism_profile": "V21", "name": "v21",
+            "seeds": [175, 176, 177, 178, 179],
+            "arms": {"guard_k1": {}, "guard_adaptive": {}},
+            "selection": {
+                "require_gt_1MB_fct_us_mean_percent_ci95_high_at_most": -1.0,
+                "require_gt_1MB_fct_us_p95_percent_ci95_high_at_most": 0.0,
+                "require_overall_fct_us_mean_percent_ci95_high_at_most": 0.0,
+                "require_le_8KB_fct_us_p95_percent_ci95_high_at_most": 0.5,
+                "require_queue_mean_bytes_percent_ci95_high_at_most": 5.0,
+                "require_queue_p99_bytes_percent_ci95_high_at_most": 5.0,
+                "require_overall_flow_goodput_jain_difference_ci95_low_at_least": -0.005,
+            },
+        }
+        self.write_json(root / "campaign.json", spec)
+        self.write_json(root / "preflight.json", {
+            "spec_path": str(root / "campaign.json"),
+            "spec_sha256": sha256_file(root / "campaign.json")})
+        self.write_json(root / "summary/mechanism-formal.json", {
+            "phase": "formal", "passed": True, "performance_unsealed": True,
+            "expected_runs": 10, "admitted_runs": 10,
+            "preflight_sha256": sha256_file(root / "preflight.json"),
+        })
+        metrics = {}
+        for name in (
+                "gt_1MB_fct_us_mean", "gt_1MB_fct_us_p95",
+                "overall_fct_us_mean", "le_8KB_fct_us_p95",
+                "queue_bytes_mean", "queue_bytes_p99"):
+            high = queue_high if name == "queue_bytes_mean" else -2.0
+            metrics[name] = {"percent_vs_right": {
+                "n": 5, "mean": -3.0, "ci95_low": -4.0, "ci95_high": high,
+            }}
+        metrics["overall_flow_goodput_jain"] = {"difference": {
+            "n": 5, "mean": 0.0, "ci95_low": -0.001, "ci95_high": 0.001,
+        }}
+        self.write_json(root / "summary/general_report.json", {
+            "performance": {"AliStorage50": {"paired": {
+                "guard_adaptive_minus_guard_k1": metrics}}}})
+
+    def test_selects_adaptive_only_when_every_gate_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.campaign(root)
+            result = select(root)
+            self.assertTrue(result["all_frozen_gates_passed"])
+            self.assertEqual(result["selected_arm"], "guard_adaptive")
+
+    def test_retains_k1_when_queue_gate_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.campaign(root, queue_high=5.1)
+            result = select(root)
+            self.assertFalse(result["all_frozen_gates_passed"])
+            self.assertEqual(result["selected_arm"], "guard_k1")
+
+    def test_refuses_sealed_performance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.campaign(root)
+            path = root / "summary/mechanism-formal.json"
+            value = json.loads(path.read_text())
+            value["passed"] = False
+            path.write_text(json.dumps(value))
+            with self.assertRaisesRegex(SelectionError, "still sealed"):
+                select(root)
+
+
+if __name__ == "__main__":
+    unittest.main()

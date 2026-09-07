@@ -224,6 +224,7 @@ RdmaRxQueuePair::RdmaRxQueuePair() {
     m_guard_last_schedule_seq = 0;
     m_guard_pending_progress_seq = 0;
     m_guard_flow_size = 0;
+    m_guard_elephant_deferred_since_ns = -1;
     m_guard_register_ns = -1;
     m_guard_registration_membership_revision = 0;
     m_guard_first_grant_gate_bytes = 0;
@@ -239,6 +240,12 @@ RdmaRxQueuePair::RdmaRxQueuePair() {
     m_guard_report_fabric_bound = false;
     m_guard_cap_limited = false;
     m_guard_last_cap_report_time = Time(0);
+    m_guard_spillover_reported_cap_bps = 0;
+    m_guard_spillover_fabric_reports = 0;
+    m_guard_spillover_unbound_reports = 0;
+    m_guard_spillover_report_fabric_bound = false;
+    m_guard_spillover_active = false;
+    m_guard_spillover_last_report_time = Time(0);
 }
 
 uint32_t RdmaRxQueuePair::GetHash(void) {

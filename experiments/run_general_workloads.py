@@ -83,11 +83,24 @@ def read_spec(path: Path) -> Mapping[str, object]:
     if len(seeds) != 5 or seeds != list(range(seeds[0], seeds[0] + 5)) or seeds[0] < 1:
         raise CampaignError("formal general workload comparison requires five consecutive seeds")
     arm_names = set(spec["arms"])
-    supported = ({"full", "hpcc", "receiver"}, {"guard", "hpcc", "homa"})
+    supported = (
+        {"full", "hpcc", "receiver"},
+        {"guard", "hpcc", "homa"},
+        {"guard_k1", "guard_k2"},
+        {"guard_k1", "guard_adaptive"},
+        {"guard_k1", "guard_aging"},
+        {"guard_k1", "guard_spillover"},
+        {"guard_k1", "guard_elephant_target"},
+        {"guard_k1", "guard_elephant_authority"},
+    )
     if arm_names not in supported:
         raise CampaignError(
-            "formal general workload comparison requires full/hpcc/receiver "
-            "or guard/hpcc/homa"
+            "formal general workload comparison requires full/hpcc/receiver, "
+            "guard/hpcc/homa, the V20 guard_k1/guard_k2 pair, or the V21 "
+            "guard_k1/guard_adaptive pair, the V22 guard_k1/guard_aging pair, "
+            "the V23/V24 guard_k1/guard_spillover pair, or the V25 "
+            "guard_k1/guard_elephant_target pair, or the V26 "
+            "guard_k1/guard_elephant_authority pair"
         )
     limits = dict(spec["limits"])
     if int(limits["max_flows"]) != 10_000:
@@ -102,9 +115,149 @@ def read_spec(path: Path) -> Mapping[str, object]:
             if int(dict(spec["arms"])[arm].get("guard_size_priority", -1)) != 0:
                 raise CampaignError(f"{arm} must explicitly disable size-priority remapping")
     else:
-        guard = dict(dict(spec["arms"])["guard"])
-        if guard.get("cc") != "guard" or dict(spec["arms"])["homa"].get("cc") != "homa":
-            raise CampaignError("guard/hpcc/homa arm names must map to their matching cc modes")
+        if arm_names == {"guard_k1", "guard_k2"}:
+            if spec.get("mechanism_profile") != "V20":
+                raise CampaignError("guard_k1/guard_k2 is reserved for mechanism profile V20")
+            expected_k = {"guard_k1": 1, "guard_k2": 2}
+            for name, concurrency in expected_k.items():
+                arm = dict(dict(spec["arms"])[name])
+                if arm.get("cc") != "guard":
+                    raise CampaignError(f"{name} must select cc=guard")
+                if int(arm.get("guard_receiver_concurrency", -1)) != concurrency:
+                    raise CampaignError(f"{name} must freeze K={concurrency}")
+                unexpected = set(arm) - {"cc", "guard_receiver_concurrency"}
+                if unexpected:
+                    raise CampaignError(
+                        f"{name} changes controls other than K: {sorted(unexpected)}")
+            guard = dict(dict(spec["arms"])["guard_k1"])
+        elif arm_names == {"guard_k1", "guard_adaptive"}:
+            if spec.get("mechanism_profile") != "V21":
+                raise CampaignError(
+                    "guard_k1/guard_adaptive is reserved for mechanism profile V21")
+            expected = {
+                "guard_k1": (1, 0),
+                "guard_adaptive": (2, 1),
+            }
+            for name, (concurrency, adaptive) in expected.items():
+                arm = dict(dict(spec["arms"])[name])
+                if arm.get("cc") != "guard":
+                    raise CampaignError(f"{name} must select cc=guard")
+                if (int(arm.get("guard_receiver_concurrency", -1)) != concurrency or
+                        int(arm.get("guard_adaptive_elephant_concurrency", -1)) != adaptive):
+                    raise CampaignError(
+                        f"{name} must freeze K/adaptive={concurrency}/{adaptive}")
+                unexpected = set(arm) - {
+                    "cc", "guard_receiver_concurrency",
+                    "guard_adaptive_elephant_concurrency",
+                }
+                if unexpected:
+                    raise CampaignError(
+                        f"{name} changes controls other than adaptive K: "
+                        f"{sorted(unexpected)}")
+            guard = dict(dict(spec["arms"])["guard_k1"])
+        elif arm_names == {"guard_k1", "guard_aging"}:
+            if spec.get("mechanism_profile") != "V22":
+                raise CampaignError(
+                    "guard_k1/guard_aging is reserved for mechanism profile V22")
+            expected = {"guard_k1": 0.0, "guard_aging": 2.0}
+            for name, wait_rtts in expected.items():
+                arm = dict(dict(spec["arms"])[name])
+                if arm.get("cc") != "guard":
+                    raise CampaignError(f"{name} must select cc=guard")
+                if (int(arm.get("guard_receiver_concurrency", -1)) != 1 or
+                        float(arm.get("guard_elephant_aging_rtts", -1)) != wait_rtts):
+                    raise CampaignError(
+                        f"{name} must freeze K=1 and aging={wait_rtts} RTTs")
+                unexpected = set(arm) - {
+                    "cc", "guard_receiver_concurrency", "guard_elephant_aging_rtts",
+                }
+                if unexpected:
+                    raise CampaignError(
+                        f"{name} changes controls other than aging: {sorted(unexpected)}")
+            guard = dict(dict(spec["arms"])["guard_k1"])
+        elif arm_names == {"guard_k1", "guard_spillover"}:
+            profile = str(spec.get("mechanism_profile"))
+            if profile not in ("V23", "V24"):
+                raise CampaignError(
+                    "guard_k1/guard_spillover is reserved for V23/V24")
+            expected_reports = (3, 1) if profile == "V23" else (1, 2)
+            if (int(defaults.get("guard_elephant_spillover_enter_reports", 3)) !=
+                    expected_reports[0] or
+                    int(defaults.get("guard_elephant_spillover_exit_reports", 1)) !=
+                    expected_reports[1]):
+                raise CampaignError(
+                    f"{profile} must freeze spillover enter/exit reports to "
+                    f"{expected_reports[0]}/{expected_reports[1]}")
+            expected = {"guard_k1": 0, "guard_spillover": 1}
+            for name, enabled in expected.items():
+                arm = dict(dict(spec["arms"])[name])
+                if arm.get("cc") != "guard":
+                    raise CampaignError(f"{name} must select cc=guard")
+                if (int(arm.get("guard_receiver_concurrency", -1)) != 1 or
+                        int(arm.get("guard_elephant_cap_spillover", -1)) != enabled):
+                    raise CampaignError(
+                        f"{name} must freeze K=1 and spillover={enabled}")
+                unexpected = set(arm) - {
+                    "cc", "guard_receiver_concurrency",
+                    "guard_elephant_cap_spillover",
+                }
+                if unexpected:
+                    raise CampaignError(
+                        f"{name} changes controls other than spillover: "
+                        f"{sorted(unexpected)}")
+            guard = dict(dict(spec["arms"])["guard_k1"])
+        elif arm_names == {"guard_k1", "guard_elephant_target"}:
+            if spec.get("mechanism_profile") != "V25":
+                raise CampaignError(
+                    "guard_k1/guard_elephant_target is reserved for V25")
+            if float(defaults.get("guard_elephant_fabric_target_scale", 1.0)) != 11.0 / 9.0:
+                raise CampaignError("V25 must freeze elephant target scale to 11/9")
+            expected = {"guard_k1": 0, "guard_elephant_target": 1}
+            for name, enabled in expected.items():
+                arm = dict(dict(spec["arms"])[name])
+                if arm.get("cc") != "guard":
+                    raise CampaignError(f"{name} must select cc=guard")
+                if (int(arm.get("guard_receiver_concurrency", -1)) != 1 or
+                        int(arm.get("guard_elephant_fabric_target", -1)) != enabled):
+                    raise CampaignError(
+                        f"{name} must freeze K=1 and elephant target={enabled}")
+                unexpected = set(arm) - {
+                    "cc", "guard_receiver_concurrency",
+                    "guard_elephant_fabric_target",
+                }
+                if unexpected:
+                    raise CampaignError(
+                        f"{name} changes controls other than elephant target: "
+                        f"{sorted(unexpected)}")
+            guard = dict(dict(spec["arms"])["guard_k1"])
+        elif arm_names == {"guard_k1", "guard_elephant_authority"}:
+            if spec.get("mechanism_profile") != "V26":
+                raise CampaignError(
+                    "guard_k1/guard_elephant_authority is reserved for V26")
+            expected = {"guard_k1": 0, "guard_elephant_authority": 1}
+            for name, enabled in expected.items():
+                arm = dict(dict(spec["arms"])[name])
+                if arm.get("cc") != "guard":
+                    raise CampaignError(f"{name} must select cc=guard")
+                if (int(arm.get("guard_receiver_concurrency", -1)) != 1 or
+                        int(arm.get("guard_elephant_receiver_authority", -1)) != enabled):
+                    raise CampaignError(
+                        f"{name} must freeze K=1 and receiver authority={enabled}")
+                unexpected = set(arm) - {
+                    "cc", "guard_receiver_concurrency",
+                    "guard_elephant_receiver_authority",
+                }
+                if unexpected:
+                    raise CampaignError(
+                        f"{name} changes controls other than receiver authority: "
+                        f"{sorted(unexpected)}")
+            guard = dict(dict(spec["arms"])["guard_k1"])
+        else:
+            guard = dict(dict(spec["arms"])["guard"])
+            if (guard.get("cc") != "guard" or
+                    dict(spec["arms"])["homa"].get("cc") != "homa"):
+                raise CampaignError(
+                    "guard/hpcc/homa arm names must map to their matching cc modes")
         controls = dict(defaults)
         controls.update(guard)
         base_fields = (
@@ -424,7 +577,15 @@ def run_command(
         "guard_adaptive_target_max_bdps",
         "guard_ack_interval_packets", "guard_fixed_window", "guard_remaining_aware",
         "guard_min_share_fraction", "guard_remaining_exponent",
-        "guard_receiver_concurrency", "guard_concurrency_min_bdps",
+        "guard_receiver_concurrency", "guard_adaptive_elephant_concurrency",
+        "guard_elephant_aging_rtts",
+        "guard_elephant_cap_spillover",
+        "guard_elephant_spillover_enter_reports",
+        "guard_elephant_spillover_exit_reports",
+        "guard_elephant_fabric_target",
+        "guard_elephant_fabric_target_scale",
+        "guard_elephant_receiver_authority",
+        "guard_concurrency_min_bdps",
         "guard_grant_refresh_bdps",
         "guard_membership_coalesce_ns", "guard_membership_coalesce_max_windows",
         "guard_initial_collection_quiet_ns",

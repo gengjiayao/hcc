@@ -255,6 +255,95 @@ class SummaryTests(unittest.TestCase):
             self.assertEqual(stats["guard_concurrency_min_bdps"], 8.0)
             self.assertEqual(stats["guard_remaining_refresh_events"], 2065)
 
+    def test_guard_elephant_aging_stats_preserve_rotation_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            path.write_text(
+                "total 0 0 0 0\n"
+                "guard_elephant_aging enabled 1 wait_rtts 2.000000 "
+                "rotations 19 max_wait_ns 16640 active_deferred 0\n",
+                encoding="utf-8",
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["guard_elephant_aging_enabled"], 1)
+            self.assertEqual(stats["guard_elephant_aging_rtts"], 2.0)
+            self.assertEqual(stats["guard_elephant_aging_rotations"], 19)
+            self.assertEqual(stats["guard_elephant_aging_max_wait_ns"], 16640)
+            self.assertEqual(stats["guard_elephant_aging_active_deferred"], 0)
+
+    def test_guard_elephant_spillover_survives_later_receiver_row(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "guard.txt"
+            path.write_text(
+                "total " + " ".join("0" for _ in range(33)) + "\n"
+                "guard_elephant_spillover enabled 1 enter_reports 1 exit_reports 2 "
+                "under_grant_percent 5 headroom_percent 10 refresh_requests 8 "
+                "vectors 2 max_bps 27000000000\n"
+                "guard_receiver_scheduler remaining_aware 1 min_share_fraction 0 "
+                "remaining_exponent 1 concurrency 1 limited_allocations 4 "
+                "max_deferred 2 adaptive_concurrency 0 adaptive_promotions 0 "
+                "adaptive_max_effective 0 concurrency_min_bdps 12 "
+                "refresh_bdps 1 refresh_events 7\n"
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["guard_elephant_spillover_enabled"], 1)
+            self.assertEqual(stats["guard_elephant_spillover_enter_reports"], 1)
+            self.assertEqual(stats["guard_elephant_spillover_exit_reports"], 2)
+            self.assertEqual(stats["guard_elephant_spillover_refresh_requests"], 8)
+            self.assertEqual(stats["guard_elephant_spillover_vectors"], 2)
+            self.assertEqual(stats["guard_elephant_spillover_max_bps"], 27000000000)
+
+    def test_legacy_v23_spillover_stats_project_to_enter_exit_schema(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            path.write_text(
+                "total " + " ".join("0" for _ in range(33)) + "\n"
+                "guard_elephant_spillover enabled 1 confirmations 3 "
+                "under_grant_percent 5 headroom_percent 10 "
+                "refresh_requests 8 vectors 2 max_bps 27000000000\n"
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["guard_elephant_spillover_enabled"], 1)
+            self.assertEqual(stats["guard_elephant_spillover_enter_reports"], 3)
+            self.assertEqual(stats["guard_elephant_spillover_exit_reports"], 1)
+            self.assertEqual(stats["guard_elephant_spillover_vectors"], 2)
+
+    def test_elephant_fabric_target_stats_preserve_scope_and_updates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            path.write_text(
+                "total " + " ".join("0" for _ in range(33)) + "\n"
+                "guard_elephant_fabric_target enabled 1 scale 1.222222222 "
+                "threshold_bdps 12.000000 updates 87 "
+                "max_effective_target 2.090000000\n"
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["guard_elephant_fabric_target_enabled"], 1)
+            self.assertAlmostEqual(stats["guard_elephant_fabric_target_scale"], 11 / 9)
+            self.assertEqual(stats["guard_elephant_fabric_target_threshold_bdps"], 12.0)
+            self.assertEqual(stats["guard_elephant_fabric_target_updates"], 87)
+            self.assertEqual(stats["guard_elephant_fabric_target_max_effective"], 2.09)
+
+    def test_elephant_receiver_authority_stats_preserve_scope_and_activity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.txt"
+            path.write_text(
+                "total " + " ".join("0" for _ in range(33)) + "\n"
+                "guard_elephant_receiver_authority enabled 1 "
+                "threshold_bdps 12.000000 bindings 87 rate_changes 42 "
+                "max_released_bps 19000000000\n"
+            )
+            stats = parse_guard_stats(path)
+            self.assertEqual(stats["guard_elephant_receiver_authority_enabled"], 1)
+            self.assertEqual(
+                stats["guard_elephant_receiver_authority_threshold_bdps"], 12.0)
+            self.assertEqual(stats["guard_elephant_receiver_authority_bindings"], 87)
+            self.assertEqual(
+                stats["guard_elephant_receiver_authority_rate_changes"], 42)
+            self.assertEqual(
+                stats["guard_elephant_receiver_authority_max_released_bps"],
+                19000000000)
+
     def test_guard_short_flow_and_ack_stats_preserve_frozen_controls(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "stats.txt"

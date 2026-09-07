@@ -120,6 +120,54 @@ public:
   virtual void DoRun (void);
 };
 
+class GuardElephantAgingTest : public TestCase
+{
+public:
+  GuardElephantAgingTest ()
+    : TestCase ("GUARD V22 bounded elephant aging") {}
+  virtual void DoRun (void);
+
+private:
+  void EvaluateAfterWait (void);
+
+  Ptr<RdmaHw> m_allocator;
+  Ptr<RdmaRxQueuePair> m_longOne;
+  Ptr<RdmaRxQueuePair> m_longTwo;
+  Ptr<RdmaRxQueuePair> m_longThree;
+  std::vector<GuardVectorTargetInput> m_inputs;
+};
+
+class GuardElephantCapSpilloverTest : public TestCase
+{
+public:
+  GuardElephantCapSpilloverTest ()
+    : TestCase ("GUARD V23 cap-qualified elephant spillover") {}
+  virtual void DoRun (void);
+
+private:
+  void Evaluate (void);
+
+  Ptr<RdmaHw> m_allocator;
+  Ptr<RdmaRxQueuePair> m_donor;
+  std::vector<GuardVectorTargetInput> m_inputs;
+};
+
+class GuardElephantFabricTargetTest : public TestCase
+{
+public:
+  GuardElephantFabricTargetTest ()
+    : TestCase ("GUARD V25 class-scoped elephant fabric target") {}
+  virtual void DoRun (void);
+};
+
+class GuardElephantReceiverAuthorityTest : public TestCase
+{
+public:
+  GuardElephantReceiverAuthorityTest ()
+    : TestCase ("GUARD V26 selected-elephant receiver authority") {}
+  virtual void DoRun (void);
+};
+
 class GuardTerminalDrainCompletionTest : public TestCase
 {
 public:
@@ -555,6 +603,7 @@ GuardMixedPgVectorTest::DoRun (void)
   refresh.push_back ({second, GUARD_VECTOR_INCUMBENT, 3000, 7000, 0, 0});
   NS_TEST_ASSERT_MSG_EQ (
       allocator->ComputeGuardFrozenRequestedTargets (100000000000ULL,
+                                                       100000000000ULL,
                                                        &refresh),
       true, "50/50 progress refresh must fit the receiver capacity");
   NS_TEST_ASSERT_MSG_GT (refresh[0].requestedBps, 74000000000ULL,
@@ -565,6 +614,95 @@ GuardMixedPgVectorTest::DoRun (void)
     refresh[0].requestedBps + refresh[1].requestedBps <= 100000000000ULL;
   NS_TEST_ASSERT_MSG_EQ (refreshBounded, true,
                          "remaining-aware refresh must remain bounded by C");
+
+  allocator->m_guardReceiverConcurrency = 1;
+  allocator->m_guardConcurrencyMinBdps = 12.0;
+  Ptr<RdmaRxQueuePair> longOne = CreateObject<RdmaRxQueuePair> ();
+  Ptr<RdmaRxQueuePair> longTwo = CreateObject<RdmaRxQueuePair> ();
+  Ptr<RdmaRxQueuePair> longThree = CreateObject<RdmaRxQueuePair> ();
+  for (const auto &flow : {longOne, longTwo, longThree})
+    {
+      flow->m_guard_flow_size = 2000000;
+      flow->m_base_rtt_sec = 0.000008;
+    }
+  std::vector<GuardVectorTargetInput> boundedElephants;
+  boundedElephants.push_back (
+    {first, GUARD_VECTOR_INCUMBENT, 2000000, 0, 0, PeekPointer (longOne)});
+  boundedElephants.push_back (
+    {second, GUARD_VECTOR_INCUMBENT, 1000000, 0, 0, PeekPointer (longTwo)});
+  boundedElephants.push_back (
+    {third, GUARD_VECTOR_WAITER, 3000000, 0, 0, PeekPointer (longThree)});
+  NS_TEST_ASSERT_MSG_EQ (
+      allocator->ComputeGuardFrozenRequestedTargets (100000000000ULL,
+                                                       100000000000ULL,
+                                                       &boundedElephants),
+      true, "one of three >12-BDP elephants must receive residual service");
+  NS_TEST_ASSERT_MSG_EQ (boundedElephants[0].requestedBps, 100000000ULL,
+                         "larger elephant must retain the starvation floor");
+  NS_TEST_ASSERT_MSG_EQ (boundedElephants[1].requestedBps, 99800000000ULL,
+                         "shortest elephant must receive the residual capacity");
+  NS_TEST_ASSERT_MSG_EQ (boundedElephants[2].requestedBps, 100000000ULL,
+                         "largest elephant must retain the starvation floor");
+  NS_TEST_ASSERT_MSG_EQ (allocator->m_guardConcurrencyLimitedAllocations, 1,
+                         "bounded frozen allocation must be counted once");
+  NS_TEST_ASSERT_MSG_EQ (allocator->m_guardConcurrencyMaxDeferredFlows, 2,
+                         "two excess elephants must be recorded as deferred");
+
+  NS_TEST_ASSERT_MSG_EQ (
+      RdmaHw::ComputeGuardEffectiveElephantConcurrency (2, 3, true), 1,
+      "three elephants must retain the low-contention K=1 policy");
+  NS_TEST_ASSERT_MSG_EQ (
+      RdmaHw::ComputeGuardEffectiveElephantConcurrency (2, 4, true), 2,
+      "four elephants must promote to K=2 under the square-root rule");
+  NS_TEST_ASSERT_MSG_EQ (
+      RdmaHw::ComputeGuardEffectiveElephantConcurrency (3, 8, true), 2,
+      "sublinear concurrency must not promote before nine elephants");
+  NS_TEST_ASSERT_MSG_EQ (
+      RdmaHw::ComputeGuardEffectiveElephantConcurrency (3, 9, true), 3,
+      "nine elephants may use the configured K=3 ceiling");
+
+  allocator->m_guardReceiverConcurrency = 2;
+  allocator->m_guardAdaptiveElephantConcurrency = true;
+  allocator->m_guardConcurrencyLimitedAllocations = 0;
+  allocator->m_guardConcurrencyMaxDeferredFlows = 0;
+  allocator->m_guardAdaptiveConcurrencyPromotions = 0;
+  allocator->m_guardAdaptiveConcurrencyMaxEffective = 0;
+  for (auto &input : boundedElephants) input.requestedBps = 0;
+  NS_TEST_ASSERT_MSG_EQ (
+      allocator->ComputeGuardFrozenRequestedTargets (100000000000ULL,
+                                                       100000000000ULL,
+                                                       &boundedElephants),
+      true, "adaptive K must preserve a valid three-elephant vector");
+  NS_TEST_ASSERT_MSG_EQ (boundedElephants[0].requestedBps, 100000000ULL,
+                         "E=3 must not promote beyond the K=1 baseline");
+  NS_TEST_ASSERT_MSG_EQ (boundedElephants[1].requestedBps, 99800000000ULL,
+                         "E=3 must keep residual service on one elephant");
+  NS_TEST_ASSERT_MSG_EQ (allocator->m_guardAdaptiveConcurrencyPromotions, 0,
+                         "E=3 must not count a promotion");
+
+  Ptr<RdmaRxQueuePair> longFour = CreateObject<RdmaRxQueuePair> ();
+  longFour->m_guard_flow_size = 2000000;
+  longFour->m_base_rtt_sec = 0.000008;
+  GuardQpIdentity fourth = {8, 9, 16, 26, 5};
+  boundedElephants.push_back (
+    {fourth, GUARD_VECTOR_WAITER, 4000000, 0, 0, PeekPointer (longFour)});
+  for (auto &input : boundedElephants) input.requestedBps = 0;
+  NS_TEST_ASSERT_MSG_EQ (
+      allocator->ComputeGuardFrozenRequestedTargets (100000000000ULL,
+                                                       100000000000ULL,
+                                                       &boundedElephants),
+      true, "adaptive K must preserve a valid four-elephant vector");
+  uint32_t aboveFloor = 0;
+  for (const auto &input : boundedElephants)
+    {
+      if (input.requestedBps > 100000000ULL) aboveFloor++;
+    }
+  NS_TEST_ASSERT_MSG_EQ (aboveFloor, 2,
+                         "E=4 must admit exactly two elephants to residual service");
+  NS_TEST_ASSERT_MSG_EQ (allocator->m_guardAdaptiveConcurrencyPromotions, 1,
+                         "E=4 promotion must be counted once");
+  NS_TEST_ASSERT_MSG_EQ (allocator->m_guardAdaptiveConcurrencyMaxEffective, 2,
+                         "the maximum effective adaptive K must be observable");
 
   std::vector<GuardVectorTargetInput> afterDrain = {
     {first, GUARD_VECTOR_WAITER, 10000, 0, 100000000000ULL, 0}
@@ -688,6 +826,233 @@ GuardMixedPgVectorTest::DoRun (void)
       tombstoneHw->GetRxQp (1, 2, 3, 4, 5, true);
   NS_TEST_ASSERT_MSG_EQ (replay, 0,
                          "late DATA must not resurrect an exact RxQP tombstone");
+}
+
+void
+GuardElephantAgingTest::EvaluateAfterWait (void)
+{
+  for (auto &input : m_inputs) input.requestedBps = 0;
+  NS_TEST_ASSERT_MSG_EQ (
+      m_allocator->ComputeGuardFrozenRequestedTargets (100000000000ULL,
+                                                        100000000000ULL,
+                                                        &m_inputs),
+      true, "aged K=1 vector must remain capacity bounded");
+  NS_TEST_ASSERT_MSG_EQ (m_inputs[0].requestedBps, 99800000000ULL,
+                         "oldest deferred elephant must receive one residual quantum");
+  NS_TEST_ASSERT_MSG_EQ (m_inputs[1].requestedBps, 100000000ULL,
+                         "the shortest elephant yields only for the aged quantum");
+  NS_TEST_ASSERT_MSG_EQ (m_inputs[2].requestedBps, 100000000ULL,
+                         "other deferred elephants retain the bounded floor");
+  NS_TEST_ASSERT_MSG_EQ (m_allocator->m_guardElephantAgingRotations, 1,
+                         "one threshold crossing must produce one rotation");
+  NS_TEST_ASSERT_MSG_EQ (m_allocator->m_guardElephantAgingMaxWaitNs, 16000,
+                         "the observed wait must use the exact per-flow RTT threshold");
+
+  m_longOne->m_guard_flow_size = 1000000;
+  for (auto &input : m_inputs) input.requestedBps = 0;
+  NS_TEST_ASSERT_MSG_EQ (
+      m_allocator->ComputeGuardFrozenRequestedTargets (100000000000ULL,
+                                                        100000000000ULL,
+                                                        &m_inputs),
+      true, "a flow leaving the elephant cohort must remain allocatable");
+  NS_TEST_ASSERT_MSG_EQ (m_longOne->m_guard_elephant_deferred_since_ns, -1,
+                         "non-elephants must not retain a stale aging timestamp");
+}
+
+void
+GuardElephantAgingTest::DoRun (void)
+{
+  m_allocator = CreateObject<RdmaHw> ();
+  m_allocator->m_mtu = 1000;
+  m_allocator->m_minRate = DataRate (100000000ULL);
+  m_allocator->m_guardRemainingAware = true;
+  m_allocator->m_guardMinShareFraction = 0.0;
+  m_allocator->m_guardRemainingExponent = 1.0;
+  m_allocator->m_guardReceiverConcurrency = 1;
+  m_allocator->m_guardAdaptiveElephantConcurrency = false;
+  m_allocator->m_guardElephantAgingRtts = 2.0;
+  m_allocator->m_guardConcurrencyMinBdps = 12.0;
+
+  m_longOne = CreateObject<RdmaRxQueuePair> ();
+  m_longTwo = CreateObject<RdmaRxQueuePair> ();
+  m_longThree = CreateObject<RdmaRxQueuePair> ();
+  for (const auto &flow : {m_longOne, m_longTwo, m_longThree})
+    {
+      flow->m_guard_flow_size = 2000000;
+      flow->m_base_rtt_sec = 0.000008;
+    }
+  GuardQpIdentity first = {1, 2, 10, 20, 3};
+  GuardQpIdentity second = {3, 2, 11, 21, 3};
+  GuardQpIdentity third = {4, 2, 12, 22, 3};
+  m_inputs.push_back (
+      {first, GUARD_VECTOR_INCUMBENT, 2000000, 0, 0, PeekPointer (m_longOne)});
+  m_inputs.push_back (
+      {second, GUARD_VECTOR_INCUMBENT, 1000000, 0, 0, PeekPointer (m_longTwo)});
+  m_inputs.push_back (
+      {third, GUARD_VECTOR_WAITER, 3000000, 0, 0, PeekPointer (m_longThree)});
+
+  NS_TEST_ASSERT_MSG_EQ (
+      m_allocator->ComputeGuardFrozenRequestedTargets (100000000000ULL,
+                                                        100000000000ULL,
+                                                        &m_inputs),
+      true, "initial V22 vector must preserve the K=1 baseline");
+  NS_TEST_ASSERT_MSG_EQ (m_inputs[1].requestedBps, 99800000000ULL,
+                         "aging must not preempt before its threshold");
+  NS_TEST_ASSERT_MSG_EQ (m_allocator->m_guardElephantAgingRotations, 0,
+                         "initial deferral must not count as a rotation");
+  Simulator::Schedule (NanoSeconds (16000),
+                       &GuardElephantAgingTest::EvaluateAfterWait, this);
+  Simulator::Run ();
+  Simulator::Destroy ();
+}
+
+void
+GuardElephantCapSpilloverTest::Evaluate (void)
+{
+  NS_TEST_ASSERT_MSG_EQ (
+      m_allocator->ComputeGuardFrozenRequestedTargets (100000000000ULL,
+                                                        100000000000ULL,
+                                                        &m_inputs),
+      true, "V23 spillover vector must remain capacity bounded");
+  NS_TEST_ASSERT_MSG_EQ (m_inputs[0].requestedBps, 44000000000ULL,
+                         "the selected elephant keeps 1.1 times its confirmed cap");
+  NS_TEST_ASSERT_MSG_EQ (m_inputs[1].requestedBps, 55900000000ULL,
+                         "only the donor's unused receiver share reaches rank two");
+  NS_TEST_ASSERT_MSG_EQ (m_inputs[2].requestedBps, 100000000ULL,
+                         "other deferred elephants retain the fixed floor");
+  NS_TEST_ASSERT_MSG_EQ (
+      m_inputs[0].requestedBps + m_inputs[1].requestedBps +
+          m_inputs[2].requestedBps,
+      100000000000ULL, "spillover must preserve the frozen receiver budget");
+  NS_TEST_ASSERT_MSG_EQ (m_allocator->m_guardElephantSpilloverVectors, 1,
+                         "one qualified allocation must count one spillover vector");
+  NS_TEST_ASSERT_MSG_EQ (m_allocator->m_guardElephantSpilloverMaxBps,
+                         55800000000ULL,
+                         "the exact transferred rate must be auditable");
+
+  m_donor->m_guard_spillover_report_fabric_bound = false;
+  m_donor->m_guard_spillover_active = false;
+  for (auto &input : m_inputs) input.requestedBps = 0;
+  NS_TEST_ASSERT_MSG_EQ (
+      m_allocator->ComputeGuardFrozenRequestedTargets (100000000000ULL,
+                                                        100000000000ULL,
+                                                        &m_inputs),
+      true, "an unbound report must restore the K=1 baseline");
+  NS_TEST_ASSERT_MSG_EQ (m_inputs[0].requestedBps, 99800000000ULL,
+                         "V23 never replaces or permanently throttles the shortest flow");
+  NS_TEST_ASSERT_MSG_EQ (m_inputs[1].requestedBps, 100000000ULL,
+                         "rank two returns to the floor when the cap disappears");
+}
+
+void
+GuardElephantCapSpilloverTest::DoRun (void)
+{
+  m_allocator = CreateObject<RdmaHw> ();
+  m_allocator->m_mtu = 1000;
+  m_allocator->m_minRate = DataRate (100000000ULL);
+  m_allocator->m_guardRemainingAware = true;
+  m_allocator->m_guardMinShareFraction = 0.0;
+  m_allocator->m_guardRemainingExponent = 1.0;
+  m_allocator->m_guardReceiverConcurrency = 1;
+  m_allocator->m_guardAdaptiveElephantConcurrency = false;
+  m_allocator->m_guardElephantAgingRtts = 0.0;
+  m_allocator->m_guardElephantCapSpillover = true;
+  m_allocator->m_guardConcurrencyMinBdps = 12.0;
+
+  Ptr<RdmaRxQueuePair> second = CreateObject<RdmaRxQueuePair> ();
+  Ptr<RdmaRxQueuePair> third = CreateObject<RdmaRxQueuePair> ();
+  m_donor = CreateObject<RdmaRxQueuePair> ();
+  for (const auto &flow : {m_donor, second, third})
+    {
+      flow->m_guard_flow_size = 2000000;
+      flow->m_base_rtt_sec = 0.000008;
+    }
+  m_donor->m_guard_spillover_reported_cap_bps = 40000000000ULL;
+  m_donor->m_guard_spillover_fabric_reports = 3;
+  m_donor->m_guard_spillover_report_fabric_bound = true;
+  m_donor->m_guard_spillover_active = true;
+  m_donor->m_guard_spillover_last_report_time = NanoSeconds (1);
+  GuardQpIdentity firstId = {1, 2, 10, 20, 3};
+  GuardQpIdentity secondId = {3, 2, 11, 21, 3};
+  GuardQpIdentity thirdId = {4, 2, 12, 22, 3};
+  m_inputs.push_back (
+      {firstId, GUARD_VECTOR_INCUMBENT, 1000000, 0, 0, PeekPointer (m_donor)});
+  m_inputs.push_back (
+      {secondId, GUARD_VECTOR_INCUMBENT, 2000000, 0, 0, PeekPointer (second)});
+  m_inputs.push_back (
+      {thirdId, GUARD_VECTOR_WAITER, 3000000, 0, 0, PeekPointer (third)});
+  Simulator::Schedule (NanoSeconds (2),
+                       &GuardElephantCapSpilloverTest::Evaluate, this);
+  Simulator::Run ();
+  Simulator::Destroy ();
+}
+
+void
+GuardElephantFabricTargetTest::DoRun (void)
+{
+  double target = 0.0;
+  bool eligible = false;
+  const double base = 1.71;
+  const double scale = 11.0 / 9.0;
+  NS_TEST_ASSERT_MSG_EQ (
+      RdmaHw::ComputeGuardElephantFabricTarget (
+          base, true, 1248001, 104000, 12.0, scale, &target, &eligible),
+      true, "a valid V25 elephant target must be computable");
+  NS_TEST_ASSERT_MSG_EQ (eligible, true,
+                         "the size rule must be strict above twelve path BDPs");
+  NS_TEST_ASSERT_MSG_EQ_TOL (target, 2.09, 1e-12,
+                             "11/9 must map the lambda-1.8 target to lambda 2.2");
+  NS_TEST_ASSERT_MSG_EQ (
+      RdmaHw::ComputeGuardElephantFabricTarget (
+          base, true, 1248000, 104000, 12.0, scale, &target, &eligible),
+      true, "the exact threshold must remain a valid non-elephant input");
+  NS_TEST_ASSERT_MSG_EQ (eligible, false,
+                         "the exact twelve-BDP boundary must not be relaxed");
+  NS_TEST_ASSERT_MSG_EQ_TOL (target, base, 1e-12,
+                             "shorter flows must preserve the baseline target");
+  NS_TEST_ASSERT_MSG_EQ (
+      RdmaHw::ComputeGuardElephantFabricTarget (
+          base, false, 8000000, 104000, 12.0, scale, &target, &eligible),
+      true, "the default-off path must accept any flow size");
+  NS_TEST_ASSERT_MSG_EQ (eligible, false,
+                         "default-off must never classify a relaxed target");
+  NS_TEST_ASSERT_MSG_EQ_TOL (target, base, 1e-12,
+                             "default-off must be numerically identical");
+}
+
+void
+GuardElephantReceiverAuthorityTest::DoRun (void)
+{
+  NS_TEST_ASSERT_MSG_EQ (
+      RdmaHw::IsGuardElephantReceiverAuthorityEligible (
+          true, true, false, 1248001, 104000, 12.0,
+          25000000000ULL, 100000000ULL),
+      true, "a selected flow strictly above twelve path BDPs must qualify");
+  NS_TEST_ASSERT_MSG_EQ (
+      RdmaHw::IsGuardElephantReceiverAuthorityEligible (
+          true, true, false, 1248000, 104000, 12.0,
+          25000000000ULL, 100000000ULL),
+      false, "the exact twelve-BDP boundary must retain min-cap composition");
+  NS_TEST_ASSERT_MSG_EQ (
+      RdmaHw::IsGuardElephantReceiverAuthorityEligible (
+          true, false, false, 8000000, 104000, 12.0,
+          25000000000ULL, 100000000ULL),
+      false, "authority must not precede a real versioned receiver grant");
+  NS_TEST_ASSERT_MSG_EQ (
+      RdmaHw::IsGuardElephantReceiverAuthorityEligible (
+          true, true, false, 8000000, 104000, 12.0,
+          100000000ULL, 100000000ULL),
+      false, "a deferred minimum-rate elephant must retain its fabric cap");
+  NS_TEST_ASSERT_MSG_EQ (
+      RdmaHw::IsGuardElephantReceiverAuthorityEligible (
+          true, true, true, 8000000, 104000, 12.0,
+          25000000000ULL, 100000000ULL),
+      false, "tail bypass must remain a distinct policy path");
+  NS_TEST_ASSERT_MSG_EQ (
+      RdmaHw::IsGuardElephantReceiverAuthorityEligible (
+          false, true, false, 8000000, 104000, 12.0,
+          25000000000ULL, 100000000ULL),
+      false, "default-off must preserve baseline min-cap composition");
 }
 
 void
@@ -1301,6 +1666,10 @@ PointToPointTestSuite::PointToPointTestSuite ()
   AddTestCase (new GuardTransitionPrefixWireBudgetTest);
   AddTestCase (new GuardTransitionAuditSinkTest);
   AddTestCase (new GuardMixedPgVectorTest);
+  AddTestCase (new GuardElephantAgingTest);
+  AddTestCase (new GuardElephantCapSpilloverTest);
+  AddTestCase (new GuardElephantFabricTargetTest);
+  AddTestCase (new GuardElephantReceiverAuthorityTest);
   AddTestCase (new GuardTerminalDrainCompletionTest);
   AddTestCase (new GuardGrantTraceProvenanceTest);
   AddTestCase (new GuardFrozenCohortProvenanceTest);

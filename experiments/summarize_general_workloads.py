@@ -50,7 +50,13 @@ except ModuleNotFoundError:  # Direct execution from experiments/.
 
 
 ARMS = ("full", "hpcc", "receiver")
-CC_MODES = {"full": 11, "guard": 11, "hpcc": 3, "receiver": 13, "homa": 12}
+CC_MODES = {
+    "full": 11, "guard": 11, "guard_k1": 11, "guard_k2": 11,
+    "guard_adaptive": 11, "guard_aging": 11,
+    "guard_spillover": 11, "guard_elephant_target": 11,
+    "guard_elephant_authority": 11,
+    "hpcc": 3, "receiver": 13, "homa": 12,
+}
 T95_DF4 = 2.7764451051977987
 ZERO_RECOVERY_FIELDS = (
     "switch_drops_ingress", "switch_drops_egress", "switch_drops_total",
@@ -76,6 +82,28 @@ GUARD_OPTIMIZATION_FIELDS = (
     "guard_adaptive_target_min_observed", "guard_adaptive_target_max_queue_bdps",
     "guard_remaining_aware", "guard_min_share_fraction",
     "guard_remaining_exponent", "guard_receiver_concurrency",
+    "guard_adaptive_elephant_concurrency",
+    "guard_adaptive_concurrency_promotions",
+    "guard_adaptive_concurrency_max_effective",
+    "guard_elephant_aging_enabled", "guard_elephant_aging_rtts",
+    "guard_elephant_aging_rotations", "guard_elephant_aging_max_wait_ns",
+    "guard_elephant_aging_active_deferred",
+    "guard_elephant_spillover_enabled", "guard_elephant_spillover_enter_reports",
+    "guard_elephant_spillover_exit_reports",
+    "guard_elephant_spillover_under_grant_percent",
+    "guard_elephant_spillover_headroom_percent",
+    "guard_elephant_spillover_refresh_requests", "guard_elephant_spillover_vectors",
+    "guard_elephant_spillover_max_bps",
+    "guard_elephant_fabric_target_enabled",
+    "guard_elephant_fabric_target_scale",
+    "guard_elephant_fabric_target_threshold_bdps",
+    "guard_elephant_fabric_target_updates",
+    "guard_elephant_fabric_target_max_effective",
+    "guard_elephant_receiver_authority_enabled",
+    "guard_elephant_receiver_authority_threshold_bdps",
+    "guard_elephant_receiver_authority_bindings",
+    "guard_elephant_receiver_authority_rate_changes",
+    "guard_elephant_receiver_authority_max_released_bps",
     "guard_concurrency_min_bdps", "guard_concurrency_limited_allocations",
     "guard_concurrency_max_deferred_flows", "guard_grant_refresh_bdps",
     "guard_remaining_refresh_events",
@@ -111,6 +139,14 @@ def scoped_fct(rows: Sequence[Mapping[str, object]], scope: str) -> Dict[str, fl
         return {}
     fcts = [float(row["fct_us"]) for row in rows]
     slowdowns = [float(row["slowdown"]) for row in rows]
+    rates = [
+        float(row["size"]) * 8.0 /
+        float(row.get("duration_ns", float(row["fct_us"]) * 1000.0))
+        for row in rows
+    ]
+    if any(not math.isfinite(rate) or rate <= 0 for rate in rates):
+        raise AnalysisError(f"{scope} has a non-positive or non-finite flow goodput")
+    rate_square_sum = sum(rate * rate for rate in rates)
     return {
         f"{scope}_flow_count": float(len(rows)),
         f"{scope}_fct_us_mean": statistics.fmean(fcts),
@@ -119,6 +155,8 @@ def scoped_fct(rows: Sequence[Mapping[str, object]], scope: str) -> Dict[str, fl
         f"{scope}_slowdown_mean": statistics.fmean(slowdowns),
         f"{scope}_slowdown_p95": percentile(slowdowns, 95),
         f"{scope}_slowdown_p99": percentile(slowdowns, 99),
+        f"{scope}_flow_goodput_jain": (
+            sum(rates) ** 2 / (len(rates) * rate_square_sum)),
     }
 
 
@@ -265,6 +303,19 @@ def validate_config(
             "guard_min_share_fraction": "GUARD_MIN_SHARE_FRACTION",
             "guard_remaining_exponent": "GUARD_REMAINING_EXPONENT",
             "guard_receiver_concurrency": "GUARD_RECEIVER_CONCURRENCY",
+            "guard_adaptive_elephant_concurrency":
+                "GUARD_ADAPTIVE_ELEPHANT_CONCURRENCY",
+            "guard_elephant_aging_rtts": "GUARD_ELEPHANT_AGING_RTTS",
+            "guard_elephant_cap_spillover": "GUARD_ELEPHANT_CAP_SPILLOVER",
+            "guard_elephant_spillover_enter_reports":
+                "GUARD_ELEPHANT_SPILLOVER_ENTER_REPORTS",
+            "guard_elephant_spillover_exit_reports":
+                "GUARD_ELEPHANT_SPILLOVER_EXIT_REPORTS",
+            "guard_elephant_fabric_target": "GUARD_ELEPHANT_FABRIC_TARGET",
+            "guard_elephant_fabric_target_scale":
+                "GUARD_ELEPHANT_FABRIC_TARGET_SCALE",
+            "guard_elephant_receiver_authority":
+                "GUARD_ELEPHANT_RECEIVER_AUTHORITY",
             "guard_concurrency_min_bdps": "GUARD_CONCURRENCY_MIN_BDPS",
             "guard_grant_refresh_bdps": "GUARD_GRANT_REFRESH_BDPS",
             "guard_membership_coalesce_ns": "GUARD_MEMBERSHIP_COALESCE_NS",
@@ -315,14 +366,26 @@ def validate_config(
 def mechanism_checks(arm: str, stats: Mapping[str, object]) -> Dict[str, bool]:
     grants_sent = int(stats["grants_sent"])
     grants_received = int(stats["grants_received"])
-    if arm in ("full", "guard"):
+    if arm in ("full", "guard", "guard_k1", "guard_k2", "guard_adaptive",
+               "guard_aging", "guard_spillover", "guard_elephant_target",
+               "guard_elephant_authority"):
         checks = {
             "full_grants": grants_sent > 0,
             "full_valid_hpcc": int(stats["hpcc_valid_feedback"]) > 0,
             "full_actual_rate_change": int(stats["hpcc_actual_rate_changes"]) > 0,
             "full_reactive_binding": int(stats["reactive_binding_updates"]) > 0,
         }
-        if arm == "guard":
+        if arm == "guard_elephant_authority":
+            # V26 intentionally lets a qualified receiver decision dominate
+            # the HPCC cap.  HPCC feedback must still be computed, but it need
+            # not bind or change the final pacing rate in every frozen seed.
+            checks.pop("full_actual_rate_change")
+            checks.pop("full_reactive_binding")
+            checks["authority_receiver_binding"] = (
+                int(stats["guard_elephant_receiver_authority_bindings"]) > 0)
+        if arm in ("guard", "guard_k1", "guard_k2", "guard_adaptive",
+                   "guard_aging", "guard_spillover", "guard_elephant_target",
+                   "guard_elephant_authority"):
             checks.update({
                 "guard_sender_srpt_enabled": int(stats["guard_sender_srpt_enabled"]) == 1,
                 "guard_sender_srpt_selected": int(stats["guard_sender_srpt_selections"]) > 0,
@@ -442,7 +505,10 @@ def analyze_run(
         checks.update(mechanism_checks(arm, stats))
         controls = dict(spec["defaults"])
         controls.update(dict(spec["arms"])[arm])
-        if arm == "guard" and int(controls.get("guard_receiver_concurrency", 0)) > 0:
+        if (arm in ("guard", "guard_k1", "guard_k2", "guard_adaptive",
+                    "guard_aging", "guard_spillover", "guard_elephant_target",
+                    "guard_elephant_authority") and
+                int(controls.get("guard_receiver_concurrency", 0)) > 0):
             checks["guard_concurrency_limited"] = (
                 int(stats["guard_concurrency_limited_allocations"]) > 0
                 and int(stats["guard_concurrency_max_deferred_flows"]) > 0

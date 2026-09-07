@@ -453,6 +453,8 @@ class RdmaHw : public Object {
     double m_guardMinShareFraction;
     double m_guardRemainingExponent;
     uint32_t m_guardReceiverConcurrency;
+    bool m_guardAdaptiveElephantConcurrency;
+    double m_guardElephantAgingRtts;
     double m_guardConcurrencyMinBdps;
     double m_guardGrantRefreshBdps;
     Time m_guardMembershipCoalesceWindow;
@@ -463,6 +465,12 @@ class RdmaHw : public Object {
     uint32_t m_guardSrptQuantumPackets;
     bool m_guardWorkConserving;
     bool m_guardCapAwareReclaim;
+    bool m_guardElephantCapSpillover;
+    uint32_t m_guardElephantSpilloverEnterReports;
+    uint32_t m_guardElephantSpilloverExitReports;
+    bool m_guardElephantFabricTarget;
+    double m_guardElephantFabricTargetScale;
+    bool m_guardElephantReceiverAuthority;
     double m_guardCapHeadroom;
     double m_guardCapMinShareFraction;
     Time m_guardRebalanceInterval;
@@ -505,6 +513,20 @@ class RdmaHw : public Object {
     uint64_t m_guardCapRebalanceEvents;
     uint64_t m_guardCapGrantUpdates;
     uint64_t m_guardCapMaxReclaimedBps;
+    uint64_t m_guardElephantSpilloverRefreshRequests;
+    uint64_t m_guardElephantSpilloverVectors;
+    uint64_t m_guardElephantSpilloverMaxBps;
+    uint64_t m_guardElephantSpilloverAllocatorChecks;
+    uint64_t m_guardElephantSpilloverNoPairChecks;
+    uint64_t m_guardElephantSpilloverDonorInactiveChecks;
+    uint64_t m_guardElephantSpilloverEligibleNonDonorChecks;
+    uint64_t m_guardElephantSpilloverDonorStaleChecks;
+    uint64_t m_guardElephantSpilloverCapAtOrAboveTargetChecks;
+    uint64_t m_guardElephantFabricTargetUpdates;
+    double m_guardElephantFabricTargetMaxEffective;
+    uint64_t m_guardElephantReceiverAuthorityBindings;
+    uint64_t m_guardElephantReceiverAuthorityRateChanges;
+    uint64_t m_guardElephantReceiverAuthorityMaxReleasedBps;
     uint64_t m_guardRemainingRefreshEvents;
     uint64_t m_guardMembershipChangesDeferred;
     uint64_t m_guardMembershipBatches;
@@ -642,6 +664,10 @@ class RdmaHw : public Object {
     bool m_guardTransitionPrefixWatchdogNonReconstructable;
     uint64_t m_guardConcurrencyLimitedAllocations;
     uint64_t m_guardConcurrencyMaxDeferredFlows;
+    uint64_t m_guardAdaptiveConcurrencyPromotions;
+    uint64_t m_guardAdaptiveConcurrencyMaxEffective;
+    uint64_t m_guardElephantAgingRotations;
+    uint64_t m_guardElephantAgingMaxWaitNs;
     uint64_t m_guardOneRttBypassFlows;
     uint64_t m_guardOneRttBypassFeedbacks;
     uint64_t m_guardOneRttAcksSuppressed;
@@ -876,6 +902,7 @@ class RdmaHw : public Object {
     void RequestGuardFastpathMembershipUpdate(const char *set_change);
     void RequestGuardProgressRefresh(RdmaRxQueuePair *flow,
                                      uint64_t progress_seq);
+    void RequestGuardCapacityRefresh();
     void StartGuardProgressTransaction();
     void CloseGuardProgressTransaction();
     uint64_t CommitGuardPendingDrains();
@@ -936,8 +963,20 @@ class RdmaHw : public Object {
         std::vector<GuardFrozenTargetRecord> *records,
         uint64_t *vector_hash);
     bool ComputeGuardFrozenRequestedTargets(
-        uint64_t allocatable_bps,
-        std::vector<GuardVectorTargetInput> *inputs) const;
+        uint64_t receiver_capacity_bps, uint64_t allocatable_bps,
+        std::vector<GuardVectorTargetInput> *inputs);
+    static bool ComputeGuardElephantFabricTarget(
+        double base_target, bool enabled, uint64_t flow_size_bytes,
+        uint64_t path_bdp_bytes, double threshold_bdps, double scale,
+        double *effective_target, bool *eligible);
+    static bool IsGuardElephantReceiverAuthorityEligible(
+        bool enabled, bool has_receiver_grant, bool tail_bypass,
+        uint64_t flow_size_bytes, uint64_t path_bdp_bytes,
+        double threshold_bdps, uint64_t grant_rate_bps,
+        uint64_t minimum_rate_bps);
+    bool UsesGuardElephantReceiverAuthority(Ptr<RdmaQueuePair> qp) const;
+    static uint32_t ComputeGuardEffectiveElephantConcurrency(
+        uint32_t configured_max, size_t candidate_count, bool adaptive);
     void StartGuardTransitionPrefixBarrier();
     void CheckGuardTransitionPrefixBarrier();
     void HandleGuardTransitionPrefixDeadline();

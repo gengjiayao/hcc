@@ -58,6 +58,22 @@ class MechanismError(RuntimeError):
     """A frozen run does not meet its non-performance admission contract."""
 
 
+def prefix_fallback_closes(prefix: Mapping[str, object]) -> bool:
+    timeouts = int(prefix["timeouts"])
+    remaining = int(prefix["remaining_bytes"])
+    accounting_closes = (
+        int(prefix["target_bytes"]) ==
+        int(prefix["received_bytes"]) + remaining)
+    return (
+        int(prefix["degraded"]) == timeouts and
+        int(prefix["fallback_batches"]) ==
+            int(prefix["fallback_closed_batches"]) and
+        (timeouts == 0 or int(prefix["fallback_batches"]) >= timeouts) and
+        ((timeouts == 0 and remaining == 0) or
+         (timeouts > 0 and remaining > 0)) and
+        accounting_closes)
+
+
 def read_json(path: Path) -> Mapping[str, object]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
@@ -84,7 +100,16 @@ def completion_from_log(path: Path, expected: int) -> Dict[str, int]:
 
 
 def guard_v17_checks(stats_path: Path, stats: Mapping[str, object],
-                     profile: str) -> Dict[str, object]:
+                     profile: str,
+                     expected_concurrency: int | None = None,
+                     expected_adaptive: int | None = None,
+                     expected_aging_rtts: float | None = None,
+                     expected_spillover: int | None = None,
+                     expected_spillover_enter: int | None = None,
+                     expected_spillover_exit: int | None = None,
+                     expected_elephant_target: int | None = None,
+                     expected_elephant_target_scale: float | None = None,
+                     expected_elephant_authority: int | None = None) -> Dict[str, object]:
     membership = parse_coalescing_stats(stats_path, 13)
     small = parse_small_set_stats(stats_path)
     prefix = parse_transition_prefix_stats(stats_path)
@@ -97,7 +122,8 @@ def guard_v17_checks(stats_path: Path, stats: Mapping[str, object],
     ack_clock = _named_stats(
         stats_path, "guard_transition_prefix_ack_clock_fallback", ("enabled",))
     capacity_admission = None
-    if profile == "V18":
+    if profile in ("V18", "V19", "V20", "V21", "V22", "V23", "V24", "V25",
+                   "V26"):
         capacity_admission = _named_stats(
             stats_path, "guard_capacity_admission",
             ("enabled", "deferrals", "resumes", "max_waiters",
@@ -120,12 +146,9 @@ def guard_v17_checks(stats_path: Path, stats: Mapping[str, object],
         raise MechanismError("small-set/vector wire accounting did not close")
     if (int(prefix["enabled"]) != 1 or int(prefix["order_violations"]) != 0 or
             int(prefix["barrier_violations"]) != 0 or
-            int(prefix["timeouts"]) != int(prefix["degraded"]) or
-            int(prefix["fallback_batches"]) != int(prefix["fallback_closed_batches"]) or
-            (int(prefix["timeouts"]) == 0 and int(prefix["fallback_batches"]) != 0) or
-            (int(prefix["timeouts"]) > 0 and
-             int(prefix["fallback_batches"]) < int(prefix["timeouts"])) or
-            int(prefix["remaining_bytes"]) != 0):
+            (int(prefix["timeouts"]) == 0 and
+             int(prefix["fallback_batches"]) != 0) or
+            not prefix_fallback_closes(prefix)):
         raise MechanismError("prefix/ACK-clock fallback did not close")
     if int(watchdog["enabled"]) != 1 or int(ack_clock["enabled"]) != 1:
         raise MechanismError("V17 watchdog or ACK-clock fallback is disabled")
@@ -149,6 +172,124 @@ def guard_v17_checks(stats_path: Path, stats: Mapping[str, object],
             int(capacity_admission["max_waiters"]) <= 0 or
             int(capacity_admission["terminal_blocked"]) != 0):
         raise MechanismError("V18 capacity admission did not defer and close")
+    if profile == "V19" and (
+            int(stats["guard_receiver_concurrency"]) != 1 or
+            float(stats["guard_concurrency_min_bdps"]) != 12.0 or
+            int(stats["guard_concurrency_limited_allocations"]) <= 0 or
+            int(stats["guard_concurrency_max_deferred_flows"]) <= 0):
+        raise MechanismError("V19 frozen bounded-elephant service did not trigger")
+    if profile == "V20" and (
+            expected_concurrency not in (1, 2) or
+            int(stats["guard_receiver_concurrency"]) != expected_concurrency or
+            float(stats["guard_concurrency_min_bdps"]) != 12.0 or
+            int(stats["guard_concurrency_limited_allocations"]) <= 0 or
+            int(stats["guard_concurrency_max_deferred_flows"]) <= 0):
+        raise MechanismError(
+            "V20 frozen K=1/K=2 bounded-elephant service did not trigger")
+    if profile == "V21" and (
+            expected_concurrency not in (1, 2) or expected_adaptive not in (0, 1) or
+            int(stats["guard_receiver_concurrency"]) != expected_concurrency or
+            int(stats["guard_adaptive_elephant_concurrency"]) != expected_adaptive or
+            float(stats["guard_concurrency_min_bdps"]) != 12.0 or
+            int(stats["guard_concurrency_limited_allocations"]) <= 0 or
+            int(stats["guard_concurrency_max_deferred_flows"]) <= 0 or
+            (expected_adaptive == 1 and (
+                int(stats["guard_adaptive_concurrency_promotions"]) <= 0 or
+                int(stats["guard_adaptive_concurrency_max_effective"]) != 2)) or
+            (expected_adaptive == 0 and (
+                int(stats["guard_adaptive_concurrency_promotions"]) != 0 or
+                int(stats["guard_adaptive_concurrency_max_effective"]) != 0))):
+        raise MechanismError(
+            "V21 adaptive elephant concurrency did not match its frozen arm")
+    if profile == "V22" and (
+            expected_concurrency != 1 or expected_aging_rtts not in (0.0, 2.0) or
+            int(stats["guard_receiver_concurrency"]) != 1 or
+            int(stats["guard_adaptive_elephant_concurrency"]) != 0 or
+            float(stats["guard_concurrency_min_bdps"]) != 12.0 or
+            int(stats["guard_concurrency_limited_allocations"]) <= 0 or
+            int(stats["guard_concurrency_max_deferred_flows"]) <= 0 or
+            int(stats["guard_elephant_aging_enabled"]) !=
+                (1 if expected_aging_rtts > 0.0 else 0) or
+            float(stats["guard_elephant_aging_rtts"]) != expected_aging_rtts or
+            (expected_aging_rtts > 0.0 and (
+                int(stats["guard_elephant_aging_rotations"]) <= 0 or
+                int(stats["guard_elephant_aging_max_wait_ns"]) <= 0)) or
+            (expected_aging_rtts == 0.0 and (
+                int(stats["guard_elephant_aging_rotations"]) != 0 or
+                int(stats["guard_elephant_aging_max_wait_ns"]) != 0)) or
+            int(stats["guard_elephant_aging_active_deferred"]) != 0):
+        raise MechanismError(
+            "V22 fixed-K aging did not match its frozen arm or close terminal state")
+    if profile in ("V23", "V24") and (
+            expected_concurrency != 1 or expected_spillover not in (0, 1) or
+            expected_spillover_enter not in range(1, 9) or
+            expected_spillover_exit not in range(1, 9) or
+            int(stats["guard_receiver_concurrency"]) != 1 or
+            int(stats["guard_adaptive_elephant_concurrency"]) != 0 or
+            float(stats["guard_elephant_aging_rtts"]) != 0.0 or
+            float(stats["guard_concurrency_min_bdps"]) != 12.0 or
+            int(stats["guard_concurrency_limited_allocations"]) <= 0 or
+            int(stats["guard_concurrency_max_deferred_flows"]) <= 0 or
+            int(stats["guard_elephant_spillover_enabled"]) != expected_spillover or
+            int(stats["guard_elephant_spillover_enter_reports"]) !=
+                expected_spillover_enter or
+            int(stats["guard_elephant_spillover_exit_reports"]) !=
+                expected_spillover_exit or
+            int(stats["guard_elephant_spillover_under_grant_percent"]) != 5 or
+            int(stats["guard_elephant_spillover_headroom_percent"]) != 10 or
+            (expected_spillover == 1 and (
+                int(stats["guard_cap_reports_sent"]) <= 0 or
+                int(stats["guard_fabric_bound_reports"]) <= 0 or
+                int(stats["guard_elephant_spillover_refresh_requests"]) <= 0 or
+                int(stats["guard_elephant_spillover_vectors"]) <= 0 or
+                int(stats["guard_elephant_spillover_max_bps"]) <= 0)) or
+            (expected_spillover == 0 and (
+                int(stats["guard_cap_reports_sent"]) != 0 or
+                int(stats["guard_elephant_spillover_refresh_requests"]) != 0 or
+                int(stats["guard_elephant_spillover_vectors"]) != 0 or
+                int(stats["guard_elephant_spillover_max_bps"]) != 0))):
+        raise MechanismError(
+            f"{profile} cap-qualified spillover did not match its frozen arm")
+    if profile == "V25" and (
+            expected_concurrency != 1 or expected_elephant_target not in (0, 1) or
+            expected_elephant_target_scale != 11.0 / 9.0 or
+            int(stats["guard_receiver_concurrency"]) != 1 or
+            int(stats["guard_adaptive_elephant_concurrency"]) != 0 or
+            float(stats["guard_elephant_aging_rtts"]) != 0.0 or
+            int(stats["guard_elephant_spillover_enabled"]) != 0 or
+            int(stats["guard_elephant_fabric_target_enabled"]) !=
+                expected_elephant_target or
+            abs(float(stats["guard_elephant_fabric_target_scale"]) -
+                expected_elephant_target_scale) > 1e-9 or
+            float(stats["guard_elephant_fabric_target_threshold_bdps"]) != 12.0 or
+            (expected_elephant_target == 1 and (
+                int(stats["guard_elephant_fabric_target_updates"]) <= 0 or
+                float(stats["guard_elephant_fabric_target_max_effective"]) <= 0.0)) or
+            (expected_elephant_target == 0 and (
+                int(stats["guard_elephant_fabric_target_updates"]) != 0 or
+                float(stats["guard_elephant_fabric_target_max_effective"]) != 0.0))):
+        raise MechanismError(
+            "V25 class-scoped fabric target did not match its frozen arm")
+    if profile == "V26" and (
+            expected_concurrency != 1 or expected_elephant_authority not in (0, 1) or
+            int(stats["guard_receiver_concurrency"]) != 1 or
+            int(stats["guard_adaptive_elephant_concurrency"]) != 0 or
+            float(stats["guard_elephant_aging_rtts"]) != 0.0 or
+            int(stats["guard_elephant_spillover_enabled"]) != 0 or
+            int(stats["guard_elephant_fabric_target_enabled"]) != 0 or
+            int(stats["guard_elephant_receiver_authority_enabled"]) !=
+                expected_elephant_authority or
+            float(stats["guard_elephant_receiver_authority_threshold_bdps"]) != 12.0 or
+            (expected_elephant_authority == 1 and (
+                int(stats["guard_elephant_receiver_authority_bindings"]) <= 0 or
+                int(stats["guard_elephant_receiver_authority_rate_changes"]) <= 0 or
+                int(stats["guard_elephant_receiver_authority_max_released_bps"]) <= 0)) or
+            (expected_elephant_authority == 0 and (
+                int(stats["guard_elephant_receiver_authority_bindings"]) != 0 or
+                int(stats["guard_elephant_receiver_authority_rate_changes"]) != 0 or
+                int(stats["guard_elephant_receiver_authority_max_released_bps"]) != 0))):
+        raise MechanismError(
+            "V26 selected-elephant receiver authority did not match its frozen arm")
     return {
         "membership": membership, "safe_activation": small,
         "transition_prefix": prefix, "watchdog": watchdog,
@@ -193,9 +334,22 @@ def validate_run(campaign: Path, spec: Mapping[str, object], preflight: Mapping[
     if not all(base_checks.values()):
         raise MechanismError(f"base mechanism gate failed: {base_checks}")
     detail: Mapping[str, object] = {}
-    if arm == "guard":
+    if arm in ("guard", "guard_k1", "guard_k2", "guard_adaptive", "guard_aging",
+               "guard_spillover", "guard_elephant_target",
+               "guard_elephant_authority"):
+        controls = dict(spec["defaults"])
+        controls.update(dict(spec["arms"])[arm])
         detail = guard_v17_checks(
-            stats_path, stats, str(spec["mechanism_profile"]))
+            stats_path, stats, str(spec["mechanism_profile"]),
+            int(controls.get("guard_receiver_concurrency", 0)),
+            int(controls.get("guard_adaptive_elephant_concurrency", 0)),
+            float(controls.get("guard_elephant_aging_rtts", 0.0)),
+            int(controls.get("guard_elephant_cap_spillover", 0)),
+            int(controls.get("guard_elephant_spillover_enter_reports", 3)),
+            int(controls.get("guard_elephant_spillover_exit_reports", 1)),
+            int(controls.get("guard_elephant_fabric_target", 0)),
+            float(controls.get("guard_elephant_fabric_target_scale", 1.0)),
+            int(controls.get("guard_elephant_receiver_authority", 0)))
     elif arm == "homa":
         homa_checks = homa_completion_checks(stats, int(trace["flow_count"]))
         if not all(homa_checks.values()):
@@ -219,8 +373,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     spec = read_json(campaign / "campaign.json")
     preflight = read_json(campaign / "preflight.json")
     if (spec.get("development_only") is not True or
-            spec.get("mechanism_profile") not in ("V17", "V18")):
-        raise MechanismError("this analyzer only admits a frozen V17/V18 development spec")
+            spec.get("mechanism_profile") not in (
+                "V17", "V18", "V19", "V20", "V21", "V22", "V23", "V24", "V25",
+                "V26")):
+        raise MechanismError(
+            "this analyzer only admits a frozen V17--V26 development spec")
     seeds = [int(spec["seeds"][0])] if args.phase == "admission" else list(map(int, spec["seeds"]))
     workloads = [row for row in preflight["workloads"] if row["decision"] == "included"]
     rows: List[Dict[str, object]] = []
