@@ -233,3 +233,82 @@ payload 比例约为 91.74%。因此，如果项目验收条件实际是“应�
 该结论仅证明 128-host 环境中的接入链路饱和能力。本负载为机架内均衡流量，不证明
 跨 ToR fabric、2:1 超售拓扑或应用 payload goodput 能够达到同样的 95% 指标；这些场景
 应作为独立验收项目测试和报告。
+
+## 11. 1024 节点扩展验证
+
+仿真日期：2026-09-07。
+
+1024 节点验证保持第 2、3、5 节的统计口径、硬门槛和负载不变。使用
+`config/leaf_spine_1024_100G_OS1.txt`：
+
+- 1024 台服务器；
+- 64 个 ToR，每个 ToR 连接 16 台服务器；
+- 16 个 Spine，每个 ToR 分别通过一条 100 Gbps 链路连接每个 Spine；
+- 每个 ToR 的服务器侧容量与 fabric 侧容量均为 1.6 Tbps，订阅比为 1:1；
+- 1104 个总节点、80 个交换机、2048 条链路。
+
+拓扑生成命令：
+
+```bash
+python3 config/leaf_spine_topology_gen.py \
+  --hosts 1024 --hosts-per-tor 16 --spines 16 \
+  --rate-gbps 100 --delay-ns 1000 \
+  --output config/leaf_spine_1024_100G_OS1.txt
+```
+
+每个 seed 生成 4096 条 64 MiB 长流，每台服务器仍恰好有 4 条发送流和 4 条接收流，
+总 payload 为 256 GiB。除节点数和 `max_flows` 外，运行参数与 128 节点验收相同：
+
+```bash
+python3 experiments/generate_workload.py \
+  --workload access-saturation \
+  --output /tmp/guard-util-1024/access-s1.flow \
+  --manifest /tmp/guard-util-1024/access-s1.json \
+  --hosts 1024 --duration-ms 30 \
+  --priority-group 4 --max-flows 5000 \
+  --seed 1 --flow-bytes 67108864 \
+  --access-hosts-per-tor 16 --access-fanout 4 \
+  --access-jitter-us 10
+
+python3 run.py \
+  --cc guard --lb fecmp --pfc 1 --irn 0 \
+  --topo leaf_spine_1024_100G_OS1 \
+  --bw 100 --simul_time 0.03 \
+  --monitor_profile full \
+  --qlen_monitoring_interval 100000 \
+  --sw_monitoring_interval 100000 \
+  --max_flows 5000 \
+  --flow_file /tmp/guard-util-1024/access-s1.flow \
+  --seed 1
+```
+
+五轮实测结果如下。每个最低值、P5、平均值和最高值均由固定 5–15 ms 窗口内每条
+NIC→ToR 上行的 100 个样本先求平均，再在 1024 条链路间汇总。
+
+| Seed | Run ID | 最低 TX 平均值 | TX P5 | 全网 TX 平均值 | 最高 TX 平均值 | 达标链路 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 696671277 | 99.872860 Gbps | 99.908370 Gbps | 99.953136 Gbps | 100.000000 Gbps | 1024/1024 |
+| 2 | 372823244 | 99.872550 Gbps | 99.908020 Gbps | 99.952174 Gbps | 100.000000 Gbps | 1024/1024 |
+| 3 | 502891325 | 99.887860 Gbps | 99.909560 Gbps | 99.953266 Gbps | 100.000000 Gbps | 1024/1024 |
+| 4 | 403406717 | 99.881690 Gbps | 99.910410 Gbps | 99.951866 Gbps | 100.000000 Gbps | 1024/1024 |
+| 5 | 585487356 | 99.873340 Gbps | 99.908680 Gbps | 99.952520 Gbps | 100.000000 Gbps | 1024/1024 |
+
+跨五个 seed 的汇总结果：
+
+- 全部运行中的最低逐链路利用率：99.872550%；
+- 五个 seed 的全网平均利用率：99.952593%；
+- 五个 seed 平均值的 95% t 置信区间：`[99.951844%, 99.953342%]`；
+- 512,000 个 100 us 正式样本中低于 95 Gbps 的数量：0；
+- TX 和 RX 超过 100 Gbps 的样本数量均为 0；
+- 五轮 RX 最低逐链路平均值范围：99.914540–99.920110 Gbps；
+- 20,480/20,480 条流完成；
+- switch drop、PFC pause、IRN retransmission 和 timeout recovery 均为 0；
+- 正式窗口内 active-QP 检查：五轮共 5120/5120 台主机通过；
+- 每轮峰值内存约 8.14 GiB，单轮墙钟时间约 65–79 分钟。
+
+原始带宽 trace 和完整 workload 汇总保存在各 Run ID 对应的 `mix/output/<RUN_ID>/`
+目录中。
+
+因此，在相同的机架内接入链路饱和负载下，1024 节点扩展验证也满足每条
+NIC→ToR 上行平均利用率大于 95% 的验收条件。本验证仍然隔离了 fabric 瓶颈，不能
+解释为跨 ToR 业务或应用 payload goodput 达到 95%。
